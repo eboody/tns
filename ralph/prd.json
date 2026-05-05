@@ -221,7 +221,7 @@
       "Observe the text-first Markdown contract remains intact while extraction confidence boundaries are made more honest"
     ],
     "passes": false,
-    "notes": "Started with a bounded extraction-honesty slice: extracted `[OMITTED_NON_TEXT_CONTENT]` placeholders are now surfaced as first-class non-text omission signals in single-file review output, batch summaries, and machine-readable audit flags."
+    "notes": "Two bounded extraction-honesty slices now exist: (1) extracted `[OMITTED_NON_TEXT_CONTENT]` placeholders surface as first-class non-text omission signals in single-file review output, batch summaries, and machine-readable audit flags; and (2) extraction status is now modeled explicitly as `clean_text` vs `non_text_omissions` in both run summaries and audit review flags."
   },
   {
     "id": "issue-19",

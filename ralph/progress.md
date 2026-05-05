@@ -342,3 +342,14 @@
 ## Next likely task
 
 - Continue issue #18 with the next bounded extraction-confidence slice, likely distinguishing weak extraction from clean text extraction more explicitly for supported formats.
+
+## Iteration 32 (GitHub issue #18)
+
+- Continued issue #18 with a machine-readable extraction-status slice rather than inventing heuristic OCR-confidence claims.
+- Added explicit extraction status modeling as `clean_text` vs `non_text_omissions` and threaded it through run summaries, review output, and audit review flags.
+- Kept the slice honest by representing only states the current pipeline can actually observe, rather than pretending to measure weak OCR or semantic extraction quality.
+- Verified the slice with `cargo fmt --check`, `cargo test`, and the existing sample CLI fallback run.
+
+## Next likely task
+
+- Decide whether issue #18 needs one more bounded slice for extraction-failure reporting symmetry, or whether the current extraction-status and omission signaling is sufficient to move on to issue #19.

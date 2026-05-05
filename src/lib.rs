@@ -10,7 +10,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use audit::{AuditReport, Finding, FindingSource, ReviewFlags};
+use audit::{AuditReport, ExtractionStatus, Finding, FindingSource, ReviewFlags};
 use config::Config;
 use deidentify::{DeidentifyResult, apply_rules, build_rules};
 use error::{AppError, Result};
@@ -45,6 +45,7 @@ pub struct RunSummary {
     pub audit_output_path: Option<PathBuf>,
     pub replacements: usize,
     pub non_text_omissions_detected: bool,
+    pub extraction_status: ExtractionStatus,
     pub review_summary: String,
     pub coverage_note: &'static str,
 }
@@ -73,6 +74,11 @@ fn run_single(options: RunOptions) -> Result<RunSummary> {
 
     let input_text = load_input_as_markdown(&options.input)?;
     let non_text_omissions_detected = input_text.contains(OMITTED_NON_TEXT_CONTENT);
+    let extraction_status = if non_text_omissions_detected {
+        ExtractionStatus::NonTextOmissions
+    } else {
+        ExtractionStatus::CleanText
+    };
 
     let structured = apply_deidentification_pipeline(&input_text, options.config.as_deref())?;
     let review_summary = build_review_summary(
@@ -89,6 +95,7 @@ fn run_single(options: RunOptions) -> Result<RunSummary> {
             audit_output_path: None,
             replacements: structured.findings.len(),
             non_text_omissions_detected,
+            extraction_status,
             review_summary,
             coverage_note: COVERAGE_NOTE,
         });
@@ -114,6 +121,7 @@ fn run_single(options: RunOptions) -> Result<RunSummary> {
             .iter()
             .any(|finding| finding.source == FindingSource::Ml),
         non_text_omissions_detected,
+        extraction_status,
         residual_review_gaps: RESIDUAL_GAPS.iter().map(|gap| (*gap).to_string()).collect(),
     };
 
@@ -133,6 +141,7 @@ fn run_single(options: RunOptions) -> Result<RunSummary> {
         audit_output_path: Some(audit_output_path),
         replacements: audit_report.replacements.len(),
         non_text_omissions_detected,
+        extraction_status,
         review_summary,
         coverage_note: COVERAGE_NOTE,
     })
@@ -245,6 +254,11 @@ fn run_directory(options: RunOptions) -> Result<RunSummary> {
         },
         replacements: replacement_total,
         non_text_omissions_detected: !non_text_omission_files.is_empty(),
+        extraction_status: if non_text_omission_files.is_empty() {
+            ExtractionStatus::CleanText
+        } else {
+            ExtractionStatus::NonTextOmissions
+        },
         review_summary,
         coverage_note: COVERAGE_NOTE,
     })
@@ -370,6 +384,14 @@ fn build_review_summary(
     if non_text_omissions_detected {
         lines.push("non-text extraction omissions detected: yes".to_string());
     }
+    lines.push(format!(
+        "extraction status: {}",
+        if non_text_omissions_detected {
+            "non_text_omissions"
+        } else {
+            "clean_text"
+        }
+    ));
 
     let mut policy_categories = Vec::new();
     let mut raw_structured_categories = Vec::new();
@@ -741,7 +763,7 @@ mod tests {
     use redact_core::recognizers::Recognizer;
     use redact_core::{RecognizerResult, types::EntityType};
 
-    use super::{COVERAGE_NOTE, FindingSource, RunMode, RunOptions, run};
+    use super::{COVERAGE_NOTE, ExtractionStatus, FindingSource, RunMode, RunOptions, run};
     use crate::audit::{AuditReport, ReviewFlags};
     use std::fs;
     use std::io::Write;
@@ -879,6 +901,7 @@ mod tests {
         assert!(audit.contains("\"ml_active\": false"));
         assert!(audit.contains("\"has_ml_findings\": false"));
         assert!(audit.contains("\"residual_review_gaps\""));
+        assert!(audit.contains("\"extraction_status\": \"clean_text\""));
         assert_eq!(summary.replacements, 2);
     }
 
@@ -1347,6 +1370,7 @@ mod tests {
                 ml_active: true,
                 has_ml_findings: true,
                 non_text_omissions_detected: false,
+                extraction_status: ExtractionStatus::CleanText,
                 residual_review_gaps: vec!["names and contextual person references".into()],
             },
         );
@@ -1593,10 +1617,19 @@ mod tests {
         .unwrap();
 
         assert!(summary.non_text_omissions_detected);
+        assert_eq!(
+            summary.extraction_status,
+            ExtractionStatus::NonTextOmissions
+        );
         assert!(
             summary
                 .review_summary
                 .contains("non-text extraction omissions detected: yes")
+        );
+        assert!(
+            summary
+                .review_summary
+                .contains("extraction status: non_text_omissions")
         );
     }
 
@@ -1622,6 +1655,10 @@ mod tests {
         .unwrap();
 
         assert!(summary.non_text_omissions_detected);
+        assert_eq!(
+            summary.extraction_status,
+            ExtractionStatus::NonTextOmissions
+        );
         assert!(
             summary
                 .review_summary
@@ -2211,6 +2248,7 @@ mod tests {
 
         let audit = fs::read_to_string(summary.audit_output_path.unwrap()).unwrap();
         assert!(audit.contains("\"non_text_omissions_detected\": true"));
+        assert!(audit.contains("\"extraction_status\": \"non_text_omissions\""));
     }
 
     #[test]
