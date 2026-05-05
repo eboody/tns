@@ -71,7 +71,8 @@ fn run_single(options: RunOptions) -> Result<RunSummary> {
     let input_text = load_input_as_markdown(&options.input)?;
 
     let structured = apply_deidentification_pipeline(&input_text, options.config.as_deref())?;
-    let review_summary = build_review_summary(&options.input, &structured.findings);
+    let review_summary =
+        build_review_summary(&options.input, &structured.findings, structured.ml_active);
 
     if options.mode != RunMode::Replace {
         return Ok(RunSummary {
@@ -226,6 +227,7 @@ fn run_directory(options: RunOptions) -> Result<RunSummary> {
 struct StructuredRun {
     text: String,
     findings: Vec<Finding>,
+    ml_active: bool,
 }
 
 type SharedRecognizer = Arc<dyn Recognizer>;
@@ -281,7 +283,13 @@ fn apply_redact_core_with_recognizers(
     let (text, mut findings) = safe_harbor_policy::apply(input_text, &analysis.detected_entities);
     findings.sort_by_key(|record| (record.start, record.end));
 
-    Ok(StructuredRun { text, findings })
+    Ok(StructuredRun {
+        text,
+        findings,
+        ml_active: config
+            .and_then(|config| config.ner.as_ref())
+            .is_some_and(|ner| ner.enabled),
+    })
 }
 
 fn apply_redact_core_with_config(
@@ -318,11 +326,15 @@ fn apply_deidentification_pipeline(
     Ok(structured)
 }
 
-fn build_review_summary(input: &Path, findings: &[Finding]) -> String {
+fn build_review_summary(input: &Path, findings: &[Finding], ml_active: bool) -> String {
     let mut lines = vec![
         format!("input: {}", input.display()),
         format!("proposed structured replacements: {}", findings.len()),
     ];
+
+    if ml_active {
+        lines.push("ml-assisted contextual recognition: enabled".to_string());
+    }
 
     let mut policy_categories = Vec::new();
     let mut raw_structured_categories = Vec::new();
@@ -1209,9 +1221,13 @@ mod tests {
                     && finding.reason.contains("FakeNerRecognizer"))
         );
 
-        let review_summary =
-            super::build_review_summary(std::path::Path::new("/tmp/fake.md"), &structured.findings);
+        let review_summary = super::build_review_summary(
+            std::path::Path::new("/tmp/fake.md"),
+            &structured.findings,
+            true,
+        );
         assert!(review_summary.contains("[ml:PERSON] John Doe -> [PERSON]"));
+        assert!(review_summary.contains("ml-assisted contextual recognition: enabled"));
         assert!(review_summary.contains("Currently ML-assisted contextual coverage:"));
         assert!(review_summary.contains("- PERSON"));
     }

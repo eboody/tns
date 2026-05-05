@@ -239,3 +239,14 @@
 ## Next likely task
 
 - Continue issue #15 with the smallest honest real-model-facing path, or explicitly decide that the remaining real-model proof belongs outside this repo if no model assets can be checked in or provisioned locally.
+
+## Iteration 23 (GitHub issue #15)
+
+- Continued issue #15 with a run-level observability slice rather than widening detection semantics.
+- Added explicit `ml-assisted contextual recognition: enabled` reporting to review summaries when the NER path is active, so operators can tell that contextual ML was actually enabled for the run rather than inferring it only from individual findings.
+- Kept the slice narrow by plumbing the activation state through the existing structured-run summary path without changing deterministic fallback behavior.
+- Verified the slice with `cargo fmt --check`, `cargo test`, and the existing sample CLI fallback run.
+
+## Next likely task
+
+- Decide whether issue #15 needs a real local-model acceptance path inside this repo, or whether the remaining gap should be documented explicitly so work can move honestly to issue #16.
