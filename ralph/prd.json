@@ -235,6 +235,6 @@
       "Observe the matrix covers unavailable-model or misconfigured-model scenarios with explicit failure or fallback behavior"
     ],
     "passes": false,
-    "notes": "Final verification slice from GitHub issue #19; depends on the completion of issues #16, #17, and #18 so the matrix reflects the intended product contract."
+    "notes": "Started with a bounded regression-surface slice: the fixture matrix now covers non-text omission review/audit behavior and explicit NER model-misconfiguration failure, extending the public workflow contract without widening runtime scope."
   }
 ]

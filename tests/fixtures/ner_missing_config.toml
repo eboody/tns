@@ -1,0 +1,8 @@
+[client]
+replacement = "CLIENT"
+variants = ["Jane Doe"]
+
+[ner]
+enabled = true
+model_path = "/tmp/opencode/tns-missing-model.onnx"
+min_confidence = 0.7

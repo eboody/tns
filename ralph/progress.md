@@ -353,3 +353,14 @@
 ## Next likely task
 
 - Decide whether issue #18 needs one more bounded slice for extraction-failure reporting symmetry, or whether the current extraction-status and omission signaling is sufficient to move on to issue #19.
+
+## Iteration 33 (GitHub issue #19)
+
+- Reassessed issue #18 after the extraction-status slice and treated it as complete enough for the current bounded extraction-honesty scope.
+- Began issue #19 with a narrow regression-contract slice rather than changing runtime behavior.
+- Extended the fixture matrix to cover docx non-text omission review/audit expectations and explicit NER model-misconfiguration failure via config fixtures.
+- Verified the slice with `cargo fmt --check` and `cargo test`, including the end-to-end fixture harness.
+
+## Next likely task
+
+- Continue issue #19 with the next bounded contract-verification slice, likely fixture coverage for the newer psychology-specific labeled-context behavior or the machine-readable review flags.

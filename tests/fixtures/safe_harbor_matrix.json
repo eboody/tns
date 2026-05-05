@@ -52,6 +52,21 @@
     "expected_output_contains": [
       "CLIENT emailed [EMAIL_ADDRESS].",
       "Image follows [OMITTED_NON_TEXT_CONTENT]"
+    ],
+    "expected_audit_contains": [
+      "\"non_text_omissions_detected\": true",
+      "\"extraction_status\": \"non_text_omissions\""
+    ]
+  },
+  {
+    "name": "docx_review_surfaces_nontext_omission_status",
+    "kind": "docx",
+    "input": "docx_document.xml",
+    "config": "client_config.toml",
+    "mode": "review",
+    "expected_review_contains": [
+      "non-text extraction omissions detected: yes",
+      "extraction status: non_text_omissions"
     ]
   },
   {
@@ -61,6 +76,14 @@
     "config": "client_config.toml",
     "mode": "replace",
     "expected_output_contains": ["CLIENT emailed [EMAIL_ADDRESS]."]
+  },
+  {
+    "name": "ner_missing_model_fails_explicitly",
+    "kind": "text",
+    "input": "client_email.md",
+    "config": "ner_missing_config.toml",
+    "mode": "replace",
+    "expected_error_contains": "failed to initialize NER"
   },
   {
     "name": "pdf_invalid_fails_explicitly",
