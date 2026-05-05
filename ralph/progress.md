@@ -309,3 +309,14 @@
 ## Next likely task
 
 - Continue issue #17 with the next bounded review-surface improvement, likely an explicit residual-risk summary section or clearer distinction between low-confidence ML findings and deterministic findings.
+
+## Iteration 29 (GitHub issue #17)
+
+- Continued issue #17 with a machine-readable audit slice instead of adding more prose-only review output.
+- Added serialized `review_flags` to audit artifacts, currently covering whether ML was active, whether any ML findings were present, and the current residual review-gap list.
+- Kept the slice honest by reusing the existing residual-gap framing rather than inventing new confidence semantics for deterministic findings.
+- Verified the slice with `cargo fmt --check`, `cargo test`, and the existing sample CLI fallback run.
+
+## Next likely task
+
+- Continue issue #17 with one more bounded review-surface improvement, likely a clearer residual-risk summary section for dry-run/review mode or a dedicated low-confidence ML subsection if the current evidence justifies it.

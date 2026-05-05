@@ -69,14 +69,28 @@ pub struct AuditRecord {
 pub struct AuditReport {
     pub input_path: PathBuf,
     pub output_path: PathBuf,
+    pub review_flags: ReviewFlags,
     pub replacements: Vec<AuditRecord>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct ReviewFlags {
+    pub ml_active: bool,
+    pub has_ml_findings: bool,
+    pub residual_review_gaps: Vec<String>,
+}
+
 impl AuditReport {
-    pub fn new(input_path: PathBuf, output_path: PathBuf, findings: Vec<Finding>) -> Self {
+    pub fn new(
+        input_path: PathBuf,
+        output_path: PathBuf,
+        findings: Vec<Finding>,
+        review_flags: ReviewFlags,
+    ) -> Self {
         Self {
             input_path,
             output_path,
+            review_flags,
             replacements: findings
                 .into_iter()
                 .map(Finding::into_audit_record)

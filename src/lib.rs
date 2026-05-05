@@ -10,7 +10,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use audit::{AuditReport, Finding, FindingSource};
+use audit::{AuditReport, Finding, FindingSource, ReviewFlags};
 use config::Config;
 use deidentify::{DeidentifyResult, apply_rules, build_rules};
 use error::{AppError, Result};
@@ -98,10 +98,20 @@ fn run_single(options: RunOptions) -> Result<RunSummary> {
 
     write_text_file(&output_path, &structured.text)?;
 
+    let review_flags = ReviewFlags {
+        ml_active: structured.ml_active,
+        has_ml_findings: structured
+            .findings
+            .iter()
+            .any(|finding| finding.source == FindingSource::Ml),
+        residual_review_gaps: RESIDUAL_GAPS.iter().map(|gap| (*gap).to_string()).collect(),
+    };
+
     let audit_report = AuditReport::new(
         options.input.clone(),
         output_path.clone(),
         structured.findings,
+        review_flags,
     );
     let audit_json =
         serde_json::to_string_pretty(&audit_report).map_err(AppError::SerializeAuditReport)?;
@@ -668,6 +678,7 @@ mod tests {
     use redact_core::{RecognizerResult, types::EntityType};
 
     use super::{COVERAGE_NOTE, FindingSource, RunMode, RunOptions, run};
+    use crate::audit::{AuditReport, ReviewFlags};
     use std::fs;
     use std::io::Write;
     use std::path::Path;
@@ -800,6 +811,10 @@ mod tests {
         assert!(audit.contains("PHONE_NUMBER"));
         assert!(audit.contains("\"source\": \"redact_core\""));
         assert!(audit.contains("\"score\": 0.8"));
+        assert!(audit.contains("\"review_flags\""));
+        assert!(audit.contains("\"ml_active\": false"));
+        assert!(audit.contains("\"has_ml_findings\": false"));
+        assert!(audit.contains("\"residual_review_gaps\""));
         assert_eq!(summary.replacements, 2);
     }
 
@@ -1244,6 +1259,32 @@ mod tests {
         assert!(review_summary.contains("Currently ML-assisted contextual coverage:"));
         assert!(review_summary.contains("- PERSON"));
         assert!(review_summary.contains("score=0.95"));
+    }
+
+    #[test]
+    fn audit_report_marks_ml_findings_in_machine_readable_flags() {
+        let structured = super::apply_redact_core_with_recognizers(
+            "John Doe emailed john@example.com.",
+            None,
+            vec![Arc::new(FakeNerRecognizer)],
+        )
+        .unwrap();
+
+        let audit_report = AuditReport::new(
+            PathBuf::from("input.md"),
+            PathBuf::from("output.md"),
+            structured.findings,
+            ReviewFlags {
+                ml_active: true,
+                has_ml_findings: true,
+                residual_review_gaps: vec!["names and contextual person references".into()],
+            },
+        );
+        let audit_json = serde_json::to_string(&audit_report).unwrap();
+
+        assert!(audit_json.contains("\"ml_active\":true"));
+        assert!(audit_json.contains("\"has_ml_findings\":true"));
+        assert!(audit_json.contains("\"residual_review_gaps\""));
     }
 
     #[test]
