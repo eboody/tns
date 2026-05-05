@@ -65,7 +65,16 @@
               <h2>Preview</h2>
               <p id="previewTitle" class="preview-title">No file selected</p>
             </div>
-            <p id="previewNote" class="preview-note" hidden></p>
+            <div class="preview-meta">
+              <p id="previewHighlightCount" class="preview-highlight-count">0 highlighted spans</p>
+              <button id="toggleHighlights" type="button" class="secondary-button">Hide highlights</button>
+              <p id="previewNote" class="preview-note" hidden></p>
+            </div>
+          </div>
+
+          <div class="highlight-legend" aria-label="Preview highlight legend">
+            <span class="legend-chip legend-before">Original text flagged for redaction</span>
+            <span class="legend-chip legend-after">Redacted replacement output</span>
           </div>
 
           <div class="preview-grid">

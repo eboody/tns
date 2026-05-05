@@ -118,7 +118,12 @@ impl Segment {
 }
 
 fn collect_segments(input_text: &str, entities: &[RecognizerResult]) -> Vec<Segment> {
-    let mut segments: Vec<Segment> = entities.iter().cloned().map(Segment::Library).collect();
+    let mut segments: Vec<Segment> = entities
+        .iter()
+        .filter(|entity| should_keep_library_entity(input_text, entity))
+        .cloned()
+        .map(Segment::Library)
+        .collect();
     segments.extend(
         detect_custom_segments(input_text)
             .into_iter()
@@ -204,6 +209,80 @@ fn detect_custom_segments(input_text: &str) -> Vec<CustomSegment> {
     }
 
     if has_line_breaks {
+        let labeled_name_regex = Regex::new(r"(?im)^(?:name):\s*(?P<value>[^\r\n]+)")
+            .expect("custom report name regex should compile");
+        for captures in labeled_name_regex.captures_iter(input_text) {
+            let Some(value) = captures.name("value") else {
+                continue;
+            };
+            let text = value.as_str().trim().to_string();
+            if text.is_empty() {
+                continue;
+            }
+            segments.push(CustomSegment {
+                entity_type: "CLIENT_NAME".to_string(),
+                matched_text: text,
+                replacement: "[CLIENT]".to_string(),
+                reason: "custom labeled report name classification".to_string(),
+                start: value.start(),
+                end: value.end(),
+            });
+        }
+
+        let labeled_referral_source_regex =
+            Regex::new(r"(?im)^(?:referral source):\s*(?P<value>[^\r\n]+)")
+                .expect("custom referral source regex should compile");
+        for captures in labeled_referral_source_regex.captures_iter(input_text) {
+            let Some(value) = captures.name("value") else {
+                continue;
+            };
+            let text = value.as_str().trim().to_string();
+            if text.is_empty() {
+                continue;
+            }
+            segments.push(CustomSegment {
+                entity_type: "INSTITUTION_NAME".to_string(),
+                matched_text: text,
+                replacement: "[INSTITUTION]".to_string(),
+                reason: "custom labeled referral source classification".to_string(),
+                start: value.start(),
+                end: value.end(),
+            });
+        }
+
+        let labeled_date_regex = Regex::new(
+            r"(?im)^(?:date of birth|evaluation date\(s\)|evaluation dates|reportdate|report date):\s*(?P<value>[^\r\n]+)",
+        )
+        .expect("custom labeled report date regex should compile");
+        for captures in labeled_date_regex.captures_iter(input_text) {
+            let Some(value) = captures.name("value") else {
+                continue;
+            };
+            let text = value.as_str().trim().to_string();
+            if text.is_empty() {
+                continue;
+            }
+            let full_match = captures
+                .get(0)
+                .expect("regex should provide a full match")
+                .as_str()
+                .to_ascii_lowercase();
+            let (entity_type, replacement) = if full_match.starts_with("date of birth:") {
+                ("DATE_OF_BIRTH", "[DATE_OF_BIRTH]")
+            } else {
+                ("DATE_TIME", "[DATE_TIME]")
+            };
+
+            segments.push(CustomSegment {
+                entity_type: entity_type.to_string(),
+                matched_text: text,
+                replacement: replacement.to_string(),
+                reason: "custom labeled report date classification".to_string(),
+                start: value.start(),
+                end: value.end(),
+            });
+        }
+
         let labeled_client_regex = Regex::new(r"(?im)^(?:client|patient):\s*(?P<value>[^\r\n]+)")
             .expect("custom client label regex should compile");
         for captures in labeled_client_regex.captures_iter(input_text) {
@@ -299,6 +378,8 @@ fn detect_custom_segments(input_text: &str) -> Vec<CustomSegment> {
         }
     }
 
+    segments.extend(propagate_custom_exact_matches(input_text, &segments));
+
     let address_regex = Regex::new(
         r"(?i)\b\d{1,5}\s+[A-Z0-9][A-Za-z0-9.'-]*(?:\s+[A-Z0-9][A-Za-z0-9.'-]*)*\s+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Court|Ct)(?:,\s*[A-Za-z .'-]+,\s*[A-Z]{2}\s+\d{5})?\b",
     )
@@ -317,6 +398,78 @@ fn detect_custom_segments(input_text: &str) -> Vec<CustomSegment> {
     }
 
     segments
+}
+
+fn should_keep_library_entity(input_text: &str, entity: &RecognizerResult) -> bool {
+    let matched_text = entity
+        .text
+        .clone()
+        .unwrap_or_else(|| input_text[entity.start..entity.end].to_string());
+
+    match entity.entity_type.as_str() {
+        "DOMAIN_NAME" => looks_like_real_domain(&matched_text),
+        _ => true,
+    }
+}
+
+fn looks_like_real_domain(text: &str) -> bool {
+    let trimmed = text.trim();
+    if trimmed.is_empty() || trimmed.chars().any(|ch| ch.is_whitespace()) {
+        return false;
+    }
+    if trimmed
+        .chars()
+        .any(|ch| !(ch.is_ascii_alphanumeric() || ch == '.' || ch == '-'))
+    {
+        return false;
+    }
+    if trimmed.chars().any(|ch| ch.is_ascii_uppercase()) {
+        return false;
+    }
+
+    let mut labels = trimmed.split('.');
+    let Some(tld) = labels.next_back() else {
+        return false;
+    };
+    if tld.len() < 2 || tld.len() > 10 || !tld.chars().all(|ch| ch.is_ascii_lowercase()) {
+        return false;
+    }
+
+    labels.any(|label| !label.is_empty())
+}
+
+fn propagate_custom_exact_matches(input_text: &str, seeds: &[CustomSegment]) -> Vec<CustomSegment> {
+    let mut propagated = Vec::new();
+
+    for seed in seeds.iter().filter(|seed| {
+        matches!(
+            seed.entity_type.as_str(),
+            "CLIENT_NAME"
+                | "PROVIDER_NAME"
+                | "FAMILY_NAME"
+                | "INSTITUTION_NAME"
+                | "STUDENT_NAME"
+                | "CERTIFIER_NAME"
+                | "BIRTH_PLACE"
+                | "DATE_OF_BIRTH"
+        )
+    }) {
+        let mut search_from = 0usize;
+        while let Some(relative_start) = input_text[search_from..].find(&seed.matched_text) {
+            let start = search_from + relative_start;
+            let end = start + seed.matched_text.len();
+            if start != seed.start {
+                propagated.push(CustomSegment {
+                    start,
+                    end,
+                    ..seed.clone()
+                });
+            }
+            search_from = end;
+        }
+    }
+
+    propagated
 }
 
 fn push_labeled_segments(

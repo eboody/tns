@@ -11,6 +11,8 @@ const resultsPanel = document.getElementById('resultsPanel')
 const resultFiles = document.getElementById('resultFiles')
 const previewPanel = document.getElementById('previewPanel')
 const previewTitle = document.getElementById('previewTitle')
+const previewHighlightCount = document.getElementById('previewHighlightCount')
+const toggleHighlights = document.getElementById('toggleHighlights')
 const previewNote = document.getElementById('previewNote')
 const beforePreview = document.getElementById('beforePreview')
 const afterPreview = document.getElementById('afterPreview')
@@ -26,6 +28,13 @@ renderSelectedInput()
 renderPreview(null)
 
 let currentFilePreviews = []
+let highlightsVisible = true
+
+setHighlightVisibility(true)
+
+toggleHighlights.addEventListener('click', () => {
+  setHighlightVisibility(!highlightsVisible)
+})
 
 function setResultActionsEnabled(enabled) {
   openOutput.disabled = !enabled
@@ -102,10 +111,21 @@ function fileListItem(primary, badge, secondary) {
   return item
 }
 
+function countHighlights(html) {
+  return (html.match(/<mark\b/g) ?? []).length
+}
+
+function setHighlightVisibility(visible) {
+  highlightsVisible = visible
+  previewPanel.classList.toggle('highlights-hidden', !visible)
+  toggleHighlights.textContent = visible ? 'Hide highlights' : 'Show highlights'
+}
+
 function renderPreview(preview) {
   if (!preview) {
     previewPanel.hidden = false
     previewTitle.textContent = 'Select a processed file to inspect its before/after preview.'
+    previewHighlightCount.textContent = '0 highlighted spans'
     previewNote.hidden = true
     previewNote.textContent = ''
     beforePreview.textContent = 'Original content preview will appear here.'
@@ -115,10 +135,15 @@ function renderPreview(preview) {
 
   previewTitle.textContent = preview.path ?? ''
   const note = preview.previewNote ?? preview.preview_note ?? ''
+  const beforeHtml = preview.originalHtml ?? preview.original_html ?? 'Original preview unavailable.'
+  const afterHtml = preview.redactedHtml ?? preview.redacted_html ?? ''
+  const highlightCount = countHighlights(beforeHtml) + countHighlights(afterHtml)
+
+  previewHighlightCount.textContent = `${highlightCount} highlighted spans`
   previewNote.hidden = !note
   previewNote.textContent = note
-  beforePreview.innerHTML = preview.originalHtml ?? preview.original_html ?? 'Original preview unavailable.'
-  afterPreview.innerHTML = preview.redactedHtml ?? preview.redacted_html ?? ''
+  beforePreview.innerHTML = beforeHtml
+  afterPreview.innerHTML = afterHtml
 }
 
 function selectPreview(item, preview) {

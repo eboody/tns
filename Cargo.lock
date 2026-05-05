@@ -1702,8 +1702,6 @@ dependencies = [
 [[package]]
 name = "redact-ner"
 version = "0.8.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "abe6e7b0401bbea85aa90ec5cd554f886813e55453e5284156f36d017a7149bd"
 dependencies = [
  "anyhow",
  "ndarray",
@@ -2074,6 +2072,7 @@ dependencies = [
  "clap",
  "globset",
  "lopdf",
+ "ort",
  "quick-xml",
  "redact-core",
  "redact-ner",

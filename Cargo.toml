@@ -4,9 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+anyhow = "1.0"
 clap = { version = "4.5.8", features = ["derive"] }
 globset = "0.4.15"
 lopdf = "0.40.0"
+ort = "2.0.0-rc.12"
 quick-xml = "0.39.3"
 regex = "1.10.5"
 redact-core = "0.8.3"
@@ -18,5 +20,7 @@ walkdir = "2.5.0"
 zip = { version = "2.2.0", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
-anyhow = "1.0"
 tempfile = "3.10.1"
+
+[patch.crates-io]
+redact-ner = { path = "vendor/redact-ner" }

@@ -8,18 +8,21 @@ pub mod pdf_extract;
 mod safe_harbor_policy;
 
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::Arc;
 
 use audit::{AuditReport, ExtractionStatus, Finding, FindingSource, ReviewFlags};
-use config::Config;
+use config::{Config, NerConfig};
 use deidentify::{DeidentifyResult, apply_rules, build_rules};
 use error::{AppError, Result};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use redact_core::AnalyzerEngine;
 use redact_core::recognizers::Recognizer;
+use redact_core::{EntityType, RecognizerResult};
 use redact_ner::{NerConfig as NerRecognizerConfig, NerRecognizer};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use walkdir::WalkDir;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -357,6 +360,115 @@ struct StructuredRun {
 
 type SharedRecognizer = Arc<dyn Recognizer>;
 
+const BUNDLED_NER_DIR: &str = "ml/ner";
+
+#[derive(Debug, Clone)]
+struct BundledPythonNerRecognizer {
+    model_path: PathBuf,
+    tokenizer_path: PathBuf,
+    script_path: PathBuf,
+    python_path: PathBuf,
+    min_confidence: f32,
+}
+
+#[derive(Debug, Deserialize)]
+struct PythonNerResponse {
+    results: Vec<PythonNerResult>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PythonNerResult {
+    entity_type: String,
+    start: usize,
+    end: usize,
+    score: f32,
+}
+
+impl BundledPythonNerRecognizer {
+    fn discover() -> Option<Self> {
+        if cfg!(test) || std::env::var_os("TNS_ENABLE_BUNDLED_NER").is_none() {
+            return None;
+        }
+
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let ner_dir = root.join(BUNDLED_NER_DIR);
+        let model_path = ner_dir.join("model.onnx");
+        let tokenizer_path = ner_dir.join("tokenizer.json");
+        let script_path = ner_dir.join("ner_infer.py");
+
+        if !(model_path.is_file() && tokenizer_path.is_file() && script_path.is_file()) {
+            return None;
+        }
+
+        Some(Self {
+            model_path,
+            tokenizer_path,
+            script_path,
+            python_path: PathBuf::from("python3"),
+            min_confidence: 0.7,
+        })
+    }
+}
+
+impl Recognizer for BundledPythonNerRecognizer {
+    fn name(&self) -> &str {
+        "BundledPythonNerRecognizer"
+    }
+
+    fn supported_entities(&self) -> &[EntityType] {
+        &[
+            EntityType::Person,
+            EntityType::Organization,
+            EntityType::Location,
+            EntityType::DateTime,
+        ]
+    }
+
+    fn analyze(&self, text: &str, _language: &str) -> anyhow::Result<Vec<RecognizerResult>> {
+        let mut child = Command::new(&self.python_path)
+            .arg(&self.script_path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()?;
+
+        let payload = serde_json::json!({
+            "model_path": self.model_path,
+            "tokenizer_path": self.tokenizer_path,
+            "text": text,
+            "min_confidence": self.min_confidence,
+        });
+
+        if let Some(stdin) = child.stdin.as_mut() {
+            stdin.write_all(payload.to_string().as_bytes())?;
+        }
+
+        let output = child.wait_with_output()?;
+        if !output.status.success() {
+            return Err(anyhow::anyhow!(
+                "bundled python NER failed with status {}",
+                output.status
+            ));
+        }
+
+        let response: PythonNerResponse = serde_json::from_slice(&output.stdout)?;
+        Ok(response
+            .results
+            .into_iter()
+            .map(|result| {
+                RecognizerResult::new(
+                    EntityType::from(result.entity_type),
+                    result.start,
+                    result.end,
+                    result.score,
+                    self.name(),
+                )
+                .with_text(text)
+            })
+            .collect())
+    }
+}
+
 fn apply_redact_core_with_recognizers(
     input_text: &str,
     config: Option<&Config>,
@@ -367,9 +479,17 @@ fn apply_redact_core_with_recognizers(
         engine.recognizer_registry_mut().add_recognizer(recognizer);
     }
 
-    if let Some(ner) = config
-        .and_then(|config| config.ner.as_ref())
-        .filter(|ner| ner.enabled)
+    let bundled_python_ner = BundledPythonNerRecognizer::discover();
+    if let Some(recognizer) = bundled_python_ner.clone() {
+        engine
+            .recognizer_registry_mut()
+            .add_recognizer(Arc::new(recognizer));
+    }
+
+    let active_ner = resolve_active_ner_config(config);
+
+    if bundled_python_ner.is_none()
+        && let Some(ner) = active_ner.as_ref()
     {
         if !ner.model_path.is_file() {
             return Err(AppError::NerInitialization(format!(
@@ -411,9 +531,32 @@ fn apply_redact_core_with_recognizers(
     Ok(StructuredRun {
         text,
         findings,
-        ml_active: config
-            .and_then(|config| config.ner.as_ref())
-            .is_some_and(|ner| ner.enabled),
+        ml_active: bundled_python_ner.is_some() || active_ner.is_some(),
+    })
+}
+
+fn resolve_active_ner_config(config: Option<&Config>) -> Option<NerConfig> {
+    match config.and_then(|config| config.ner.as_ref()) {
+        Some(ner) if ner.enabled => Some(ner.clone()),
+        Some(_) => None,
+        None => auto_ner_config_if_available(),
+    }
+}
+
+fn auto_ner_config_if_available() -> Option<NerConfig> {
+    let model_path = std::env::var_os("TNS_DEID_AUTO_NER_MODEL_PATH").map(PathBuf::from)?;
+
+    let tokenizer_path = std::env::var_os("TNS_DEID_AUTO_NER_TOKENIZER_PATH").map(PathBuf::from)?;
+
+    if !model_path.is_file() || !tokenizer_path.is_file() {
+        return None;
+    }
+
+    Some(NerConfig {
+        enabled: true,
+        model_path,
+        tokenizer_path: Some(tokenizer_path),
+        min_confidence: 0.7,
     })
 }
 
@@ -1366,6 +1509,39 @@ mod tests {
 
         let output = fs::read_to_string(summary.output_path.unwrap()).unwrap();
         assert_eq!(output, "CLIENT emailed [EMAIL_ADDRESS].");
+    }
+
+    #[test]
+    fn auto_ner_config_is_disabled_when_assets_are_missing() {
+        let temp = tempdir().unwrap();
+        let old_model = std::env::var_os("TNS_DEID_AUTO_NER_MODEL_PATH");
+        let old_tokenizer = std::env::var_os("TNS_DEID_AUTO_NER_TOKENIZER_PATH");
+
+        unsafe {
+            std::env::set_var(
+                "TNS_DEID_AUTO_NER_MODEL_PATH",
+                temp.path().join("missing-model.onnx"),
+            );
+            std::env::set_var(
+                "TNS_DEID_AUTO_NER_TOKENIZER_PATH",
+                temp.path().join("missing-tokenizer.json"),
+            );
+        }
+
+        assert!(super::auto_ner_config_if_available().is_none());
+
+        unsafe {
+            if let Some(value) = old_model {
+                std::env::set_var("TNS_DEID_AUTO_NER_MODEL_PATH", value);
+            } else {
+                std::env::remove_var("TNS_DEID_AUTO_NER_MODEL_PATH");
+            }
+            if let Some(value) = old_tokenizer {
+                std::env::set_var("TNS_DEID_AUTO_NER_TOKENIZER_PATH", value);
+            } else {
+                std::env::remove_var("TNS_DEID_AUTO_NER_TOKENIZER_PATH");
+            }
+        }
     }
 
     #[test]
@@ -2420,6 +2596,57 @@ mod tests {
         assert!(!output.contains("(202) 456-1111"));
         assert!(!output.contains("October 27, 1858"));
         assert!(!output.contains("Manhattan, NY"));
+    }
+
+    #[test]
+    fn run_redacts_labeled_report_entities_and_propagates_name_mentions() {
+        let temp = tempdir().unwrap();
+        let input = temp.path().join("report.txt");
+        fs::write(
+            &input,
+            "Name: Jane Doe\nDate of Birth: 1/23/2006\nReferral Source: Pacific Ocean Pediatrics\n\nJane Doe returned for follow up with Jane Doe's mother.",
+        )
+        .unwrap();
+
+        let summary = run(RunOptions {
+            input,
+            output: None,
+            audit_output: None,
+            config: None,
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+            mode: RunMode::Replace,
+        })
+        .unwrap();
+
+        let output = fs::read_to_string(summary.output_path.unwrap()).unwrap();
+        assert!(output.contains("Name: [CLIENT]"));
+        assert!(output.contains("Date of Birth: [DATE_OF_BIRTH]"));
+        assert!(output.contains("Referral Source: [INSTITUTION]"));
+        assert!(output.contains("[CLIENT] returned for follow up"));
+        assert!(!output.contains("Jane Doe"));
+    }
+
+    #[test]
+    fn run_ignores_sentence_boundary_domain_false_positives() {
+        let temp = tempdir().unwrap();
+        let input = temp.path().join("domain-false-positive.txt");
+        fs::write(&input, "This started in childhood.She later improved.").unwrap();
+
+        let summary = run(RunOptions {
+            input,
+            output: None,
+            audit_output: None,
+            config: None,
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+            mode: RunMode::Replace,
+        })
+        .unwrap();
+
+        let output = fs::read_to_string(summary.output_path.unwrap()).unwrap();
+        assert!(!output.contains("[DOMAIN_NAME]"));
+        assert!(output.contains("childhood.She later improved."));
     }
 
     fn write_test_docx(path: &Path, document_xml: &str) {

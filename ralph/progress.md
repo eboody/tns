@@ -556,3 +556,26 @@
 ## Next likely task
 
 - If broader transcript de-identification is needed, continue with the next bounded policy slice: transcript-wide date and person-name coverage beyond the explicitly labeled fields, while keeping false positives controlled.
+
+## Iteration 51 (report-default aggressiveness follow-up)
+
+- Investigated a real-user DOCX case (`Fake ID Report.docx`) where the default path missed many obvious identifiers and over-redacted extracted sentence boundaries.
+- Confirmed ML was not active in that run (`ml_active: false`) and that no usable local NER model assets were provisioned, so the honest default improvement had to be deterministic rather than pretending ML was available.
+- Tightened default library behavior by filtering obvious false-positive `DOMAIN_NAME` detections and strengthened default report-style coverage with labeled `Name`, `Referral Source`, `Date of Birth`, `Evaluation Date(s)`, and `ReportDate` handling plus exact-match propagation of labeled person/institution identifiers through the rest of the document.
+- Verified the change with `cargo fmt`, `cargo test`, `cargo check --manifest-path desktop/src-tauri/Cargo.toml`, and a real rerun on `Fake ID Report.docx`, which now redacts the report header identifiers and repeated patient-name mentions much more aggressively by default.
+
+## Next likely task
+
+- If even stronger defaults are needed, the next honest step is another bounded policy slice for unlabeled contextual identifiers in long-form reports, or provisioning a real local NER model so ML-assisted contextual detection can be enabled by default when assets are present.
+
+## Iteration 52 (repo-contained ML runtime)
+
+- Reached the point where missing assets were no longer the blocker: the upstream recommended NER model (`dslim/bert-base-NER`) was exported successfully, but the Rust `redact-ner` / `ort` path still hung during ONNX session initialization on this machine.
+- Kept the initiative self-contained by bundling the exported model and tokenizer under `ml/ner/`, plus a repo-local Python ONNX inference runner and its inference-only dependencies under `ml/ner/site/`.
+- Integrated that bundled runner as the preferred ML recognizer path for normal app runs, while leaving tests deterministic and green by gating the bundled recognizer behind `TNS_ENABLE_BUNDLED_NER`.
+- Verified the bundled runner itself detects `PERSON`, `ORGANIZATION`, and `LOCATION` on a smoke sample, and verified a real rerun of `Fake ID Report.docx` now reports `ml_active: true` in the audit output.
+- The report still shows `has_ml_findings: false` for that specific document, which means the bundled model is active but did not add contextual entities beyond the current deterministic/report-specific rules for that input.
+
+## Next likely task
+
+- If the current bundled NER model still underperforms on neuropsychological reports, the next honest ML slice is to swap to a stronger or domain-better ONNX NER model while keeping the same repo-contained runner boundary.
