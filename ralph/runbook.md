@@ -2,7 +2,7 @@
 
 ## Current initiative
 
-- ML-assisted folder-to-Markdown de-identification CLI for psychologist workflows
+- Local installable desktop app for clinician-friendly de-identification
 
 ## Iteration guardrails
 
@@ -18,6 +18,7 @@
 
 ## Current scope note
 
-- Current repo code already has the deterministic/redact-core foundation, Safe Harbor policy shaping, configured supplementation, directory processing, DOCX/PDF extraction, and fixture-based regression coverage.
-- The active GitHub-backed backlog now begins at issue `#14`, where the next architectural seam is a provenance-aware finding model that can support optional ONNX NER without forking the rest of the pipeline.
-- For PRD/backlog-only iterations, keep the Ralph artifacts synchronized with the GitHub issue stack and avoid inventing implementation progress that has not yet landed in code.
+- Current repo code already has the CLI engine foundation: extraction, redaction, audit generation, review summaries, optional NER, and regression coverage.
+- The active GitHub-backed desktop backlog begins at issue `#20` under parent PRD `#28`.
+- The highest-value architectural constraint is to keep the CLI engine as the source of truth and introduce a narrow desktop-facing service boundary above it rather than duplicating workflow logic in the UI layer.
+- For desktop work, prefer the smallest installable/local-first slices over broad UI polish.

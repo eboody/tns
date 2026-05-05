@@ -1,0 +1,51 @@
+body {
+  font-family: system-ui, sans-serif;
+  margin: 0;
+  background: #f6f7fb;
+  color: #1f2937;
+}
+
+main {
+  max-width: 720px;
+  margin: 2rem auto;
+  padding: 1.5rem;
+  background: white;
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+}
+
+label {
+  display: block;
+  margin-bottom: 1rem;
+  font-weight: 600;
+}
+
+.picker-row {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+input {
+  width: 100%;
+  padding: 0.75rem;
+  box-sizing: border-box;
+}
+
+button {
+  padding: 0.8rem 1.2rem;
+  font-size: 1rem;
+}
+
+.actions-row {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+pre {
+  white-space: pre-wrap;
+  background: #f3f4f6;
+  padding: 1rem;
+  border-radius: 8px;
+}

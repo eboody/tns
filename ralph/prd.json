@@ -1,240 +1,114 @@
 [
   {
-    "id": "issue-01",
+    "id": "issue-20",
     "category": "integration",
     "priority": "high",
     "risk": "high",
-    "description": "Integrate redact-core into the single-file Markdown tracer bullet as the primary structured-identifier engine.",
+    "description": "Build the first installable desktop shell so a clinician can choose a local folder and run the existing review workflow without the terminal.",
     "verify": [
-      "Run the CLI on one Markdown file through redact-core",
-      "Observe de-identified Markdown output plus structured-identifier audit output",
-      "Observe no false claim of full Safe Harbor coverage yet"
+      "Launch the desktop shell locally",
+      "Choose a folder through the UI",
+      "Trigger the existing non-writing review workflow and observe a basic summary"
     ],
     "passes": true,
-    "notes": "Completed in the pivoted iteration by wiring single-file replace/review/dry-run flows through redact-core for built-in structured identifiers, with explicit coverage warnings."
+    "notes": "Completed through bounded slices that established a stable desktop-facing review service boundary, a minimal Tauri shell, native folder selection, and a Vite-backed frontend. The shell is now verified end-to-end through the real `tauri dev` path: it launches locally, accepts a chosen folder, and runs the real non-writing review workflow while surfacing a real summary in the UI."
   },
   {
-    "id": "issue-02",
-    "category": "policy",
-    "priority": "high",
-    "risk": "high",
-    "description": "Add a Safe Harbor policy mapping layer for redact-core detections.",
-    "verify": [
-      "Map built-in redact-core detections to explicit Safe Harbor policy categories",
-      "Express date handling as Safe Harbor policy rather than raw detector output",
-      "Differentiate covered identifiers from residual review-required gaps"
-    ],
-    "passes": true,
-    "notes": "Completed through bounded policy slices that map structured detections to explicit Safe Harbor-oriented behavior, including year-only date handling, age-over-89 handling, source-aware review summaries, category mapping, and explicit residual-gap reporting."
-  },
-  {
-    "id": "issue-03",
+    "id": "issue-21",
     "category": "integration",
     "priority": "high",
     "risk": "high",
-    "description": "Add configured known-entity replacement for names and known geographic/institutional identifiers that non-AI detection cannot guarantee.",
+    "description": "Run the real replace workflow from the desktop UI and produce local redacted outputs and audit artifacts.",
     "verify": [
-      "Run configured name/provider/institution/location replacement deterministically",
-      "Observe configured replacements distinguished from library detections",
-      "Observe residual review signaling for unknown contextual identifiers"
+      "Trigger a replace run from the desktop UI",
+      "Observe local redacted outputs and audit artifacts on disk",
+      "Open or inspect the output location from the app"
     ],
     "passes": true,
-    "notes": "Completed through bounded slices covering configured client, provider, institution, and location replacement with review-mode distinction from raw redact-core structured coverage and explicit residual-gap signaling."
+    "notes": "Completed through bounded slices that verified the shared desktop service, Tauri bridge, and shell UI can run the real replace workflow, write local redacted outputs and audit artifacts, and surface output/audit paths in the UI summary. The final opener slice adds output/audit folder buttons backed by Tauri-owned last-run artifact state rather than arbitrary frontend path opening, and live desktop automation verified the buttons invoke successfully after a real replace run."
   },
   {
-    "id": "issue-04",
-    "category": "integration",
-    "priority": "high",
-    "risk": "medium",
-    "description": "Provide dry-run and review modes with source-aware replacement summaries.",
-    "verify": [
-      "Run the CLI in dry-run mode without writing final outputs",
-      "Observe review summaries showing whether a replacement came from redact-core, config, or custom policy",
-      "Observe clear mode-specific CLI behavior"
-    ],
-    "passes": true,
-    "notes": "Completed through bounded slices that aligned replace/dry-run/review mode behavior to the pivoted redact-core architecture, surfaced replacement source in summaries, and verified non-writing dry-run/review flows through the public CLI." 
-  },
-  {
-    "id": "issue-05",
-    "category": "integration",
-    "priority": "high",
-    "risk": "medium",
-    "description": "Process whole directories into de-identified Markdown with include/exclude policy and run summaries.",
-    "verify": [
-      "Run the CLI across a directory of supported inputs",
-      "Observe include/exclude filtering",
-      "Observe processed/skipped/unsupported/review-sensitive run summary"
-    ],
-    "passes": true,
-    "notes": "Completed with directory input support, include/exclude filtering, mirrored Markdown outputs, per-file audit outputs in replace mode, and run-level processed/skipped/unsupported/review-sensitive summaries."
-  },
-  {
-    "id": "issue-06",
-    "category": "extraction",
-    "priority": "medium",
-    "risk": "medium",
-    "description": "Add DOCX to Markdown extraction plus Safe Harbor de-identification.",
-    "verify": [
-      "Extract supported DOCX content to Markdown",
-      "Apply the de-identification pipeline end-to-end",
-      "Surface unsupported/non-text content explicitly"
-    ],
-    "passes": true,
-    "notes": "Completed with DOCX to Markdown extraction through word/document.xml, end-to-end de-identification on extracted text, Markdown output for DOCX inputs, and explicit non-text placeholder surfacing for unsupported drawing/object content." 
-  },
-  {
-    "id": "issue-07",
-    "category": "policy",
-    "priority": "high",
-    "risk": "high",
-    "description": "Add custom Safe Harbor gap recognizers and deterministic overlap resolution.",
-    "verify": [
-      "Cover agreed Safe Harbor gaps beyond stock redact-core support",
-      "Resolve overlaps predictably among library/config/custom detections",
-      "Surface residual review-required cases explicitly"
-    ],
-    "passes": true,
-    "notes": "Completed through bounded custom-gap slices covering fax-number and address/sub-state-geography classification layered on top of redact-core, with deterministic overlap suppression and explicit residual-gap reporting in review output."
-  },
-  {
-    "id": "issue-08",
+    "id": "issue-22",
     "category": "integration",
     "priority": "medium",
     "risk": "medium",
-    "description": "De-identify filenames and generated artifact names.",
+    "description": "Add a desktop results screen with run summary and per-file statuses.",
     "verify": [
-      "Output filenames are de-identified deterministically",
-      "Review/audit artifacts do not leak raw identifiers in names",
-      "Run output explains naming transformations"
+      "Complete a desktop run",
+      "Observe processed/skipped/failed/review-sensitive counts",
+      "Observe a per-file status list in the UI"
     ],
-    "passes": true,
-    "notes": "Completed with deterministic filename and artifact-name de-identification in batch workflows, plus run-summary reporting of renamed outputs." 
+    "passes": false,
+    "notes": "Build on top of real desktop-triggered runs rather than mock data. Early slices now expose typed per-file statuses from the real run summary, render them in the desktop UI alongside a selected-input list, and provide a first selected-file before/after preview pane for replace runs using real output and audit artifacts. Remaining work is true verification-centered review UX breadth: file-drop/file-multi-select ergonomics, richer diff/highlight polish, and broader preview coverage for non-plain-text source formats."
   },
   {
-    "id": "issue-09",
-    "category": "extraction",
+    "id": "issue-23",
+    "category": "integration",
     "priority": "medium",
-    "risk": "high",
-    "description": "Add text-extractable PDF to Markdown extraction plus Safe Harbor de-identification.",
+    "risk": "medium",
+    "description": "Support optional config-file selection and validation in the desktop UI.",
     "verify": [
-      "Extract text-extractable PDFs into Markdown",
-      "Apply the de-identification pipeline end-to-end",
-      "Report non-extractable or low-confidence PDFs explicitly"
+      "Choose an optional config file from the UI",
+      "Run the real workflow with that config applied",
+      "Observe user-friendly validation for invalid config states"
     ],
-    "passes": true,
-    "notes": "Completed with text-extractable PDF ingestion via lopdf text extraction into Markdown-like text, end-to-end de-identification on extracted text, and explicit failure for PDFs with no extractable text or invalid/low-confidence extraction." 
+    "passes": false,
+    "notes": "Keep config selection as a UI-facing service boundary, not direct engine coupling from the frontend."
   },
   {
-    "id": "issue-10",
+    "id": "issue-24",
+    "category": "integration",
+    "priority": "medium",
+    "risk": "medium",
+    "description": "Expose optional local NER setup and validation in the desktop UI.",
+    "verify": [
+      "Enable or disable NER from the UI",
+      "Select local model/tokenizer assets",
+      "Observe explicit enabled/disabled/misconfigured states"
+    ],
+    "passes": false,
+    "notes": "NER remains optional advanced setup; deterministic mode stays the default baseline."
+  },
+  {
+    "id": "issue-25",
+    "category": "integration",
+    "priority": "medium",
+    "risk": "low",
+    "description": "Persist safe local defaults such as recent paths and first-run settings.",
+    "verify": [
+      "Reopen the app after a run",
+      "Observe recent selections or defaults are remembered",
+      "Observe deterministic mode remains the safe first-run default"
+    ],
+    "passes": false,
+    "notes": "Only store non-sensitive workflow preferences."
+  },
+  {
+    "id": "issue-26",
+    "category": "packaging",
+    "priority": "medium",
+    "risk": "medium",
+    "description": "Produce a locally installable desktop build that runs without a Rust toolchain on another computer.",
+    "verify": [
+      "Build a local installer or installable app bundle",
+      "Install it on a fresh local machine",
+      "Launch the app without a Rust development setup"
+    ],
+    "passes": false,
+    "notes": "This is local installation, not public distribution infrastructure."
+  },
+  {
+    "id": "issue-27",
     "category": "test",
     "priority": "medium",
     "risk": "medium",
-    "description": "Build a Safe Harbor fixture matrix and regression harness.",
+    "description": "Add installer-backed smoke testing and a release-readiness checklist for the desktop app.",
     "verify": [
-      "Fixture coverage spans supported Safe Harbor categories and formats",
-      "Regression tests verify Markdown output plus audit/review behavior",
-      "Explicit unsupported and residual-review cases are tested"
-    ],
-    "passes": true,
-    "notes": "Completed with a fixture-driven integration harness spanning supported Safe Harbor categories, configured supplementation, DOCX extraction, extractable PDF ingestion, and explicit failure behavior for invalid/non-extractable PDFs."
-  },
-  {
-    "id": "issue-13",
-    "category": "integration",
-    "priority": "high",
-    "risk": "medium",
-    "description": "Default clinician directory runs should write Markdown outputs into a predictable redacted folder without reprocessing generated artifacts.",
-    "verify": [
-      "Run the CLI on a directory without explicit output overrides",
-      "Observe de-identified Markdown outputs under input/redacted and audit artifacts under input/redacted/.audit",
-      "Observe batch summaries remain correct and preexisting generated outputs are not reprocessed"
-    ],
-    "passes": true,
-    "notes": "Completed by changing the default batch output root to `input/redacted`, colocating default audit artifacts under `input/redacted/.audit`, and skipping generated output paths during traversal so reruns do not ingest prior artifacts."
-  },
-  {
-    "id": "issue-14",
-    "category": "architecture",
-    "priority": "high",
-    "risk": "high",
-    "description": "Unify structured-library detections, policy transforms, and configured replacements behind one provenance-aware finding model.",
-    "verify": [
-      "Run the CLI with a sample that triggers library, policy, and configured replacements together",
-      "Observe output, audit artifacts, and review summaries all reflect one stable finding shape with source provenance",
-      "Observe current public behavior is preserved while detector provenance becomes consistent across replace, dry-run, and review flows"
-    ],
-    "passes": true,
-    "notes": "Completed through two bounded slices: first, explicit provenance labels were added; second, a shared `Finding` model was pushed through policy application, configured replacement, review summarization, and audit generation before rendering final audit records. The public behavior remained stable while detector provenance became an explicit shared abstraction."
-  },
-  {
-    "id": "issue-15",
-    "category": "integration",
-    "priority": "high",
-    "risk": "high",
-    "description": "Add optional local ONNX NER so the tool can run in deterministic-only or ML-assisted mode with explicit model configuration and honest failure surfacing.",
-    "verify": [
-      "Run the CLI in deterministic-only mode and observe current fallback behavior remains intact",
-      "Run the CLI with valid local model assets and observe contextual ML detections flow through the public pipeline",
-      "Run the CLI with missing or invalid model assets and observe explicit failure or disabled-model reporting rather than silent degradation"
+      "Run the packaged app through a real local smoke test",
+      "Verify local run behavior and results presentation",
+      "Capture a repeatable release-readiness checklist"
     ],
     "passes": false,
-    "notes": "Issue #15 now has four bounded slices: optional `[ner]` config plus explicit fallback/failure behavior; a testable recognizer-loading seam for positive ML-style detections; dedicated review-surface reporting for ML-assisted coverage; and an ignored real-local-model acceptance test gated by `TNS_DEID_NER_MODEL_PATH` / `TNS_DEID_NER_TOKENIZER_PATH`. This is enough to keep the repo honest about the remaining asset-dependent gap while preserving a real path to positive local-model verification."
-  },
-  {
-    "id": "issue-16",
-    "category": "policy",
-    "priority": "high",
-    "risk": "medium",
-    "description": "Layer psychology-specific contextual coverage on top of the hybrid redaction pipeline for client, provider, school, clinic, guardian, and sub-state location identifiers.",
-    "verify": [
-      "Run the CLI on realistic clinical text containing psychology-specific contextual identifiers",
-      "Observe improved redaction coverage in output Markdown and provenance-aware review artifacts",
-      "Observe the tool still surfaces residual review-sensitive cases instead of claiming perfect contextual coverage"
-    ],
-    "passes": true,
-    "notes": "Completed for the current bounded psychology-specific scope through three deterministic labeled-context slices: (1) client/patient and provider/examiner/clinician/therapist/psychologist fields, (2) family-role fields such as mother/father/parent/guardian/caregiver/spouse/sibling, and (3) institution-style fields such as school/clinic/hospital/institution/employer/workplace/university/college. The product still surfaces residual review-sensitive gaps for broader unlabeled free-text context."
-  },
-  {
-    "id": "issue-17",
-    "category": "integration",
-    "priority": "medium",
-    "risk": "medium",
-    "description": "Strengthen audit JSON, dry-run output, and review summaries so they clearly surface ML-assisted detections, confidence boundaries, and residual review risk.",
-    "verify": [
-      "Run review mode on a sample with mixed deterministic and ML-assisted detections",
-      "Observe clinician-facing summaries distinguish detector provenance and residual review risk clearly",
-      "Observe audit artifacts remain machine-readable while carrying enough provenance for downstream inspection"
-    ],
-    "passes": true,
-    "notes": "Completed for the current audit/review scope through three bounded slices: (1) optional detector confidence flows through findings, audit JSON, and review summaries when available; (2) audit artifacts include machine-readable review flags for `ml_active`, `has_ml_findings`, `non_text_omissions_detected`, and the residual review-gap list; and (3) dry-run/review summaries include an explicit residual-review-risk section with open-gap counts, low-confidence ML counts when applicable, and deterministic custom-contextual counts."
-  },
-  {
-    "id": "issue-18",
-    "category": "extraction",
-    "priority": "medium",
-    "risk": "medium",
-    "description": "Deepen extraction reporting so omitted non-text content, weak extraction, and review-sensitive ingestion boundaries are surfaced more clearly to clinicians.",
-    "verify": [
-      "Run the CLI on representative DOCX/PDF inputs with strong, weak, and non-text-heavy extraction outcomes",
-      "Observe run summaries and review output distinguish omitted non-text content and weak extraction states explicitly",
-      "Observe the text-first Markdown contract remains intact while extraction confidence boundaries are made more honest"
-    ],
-    "passes": false,
-    "notes": "Two bounded extraction-honesty slices now exist: (1) extracted `[OMITTED_NON_TEXT_CONTENT]` placeholders surface as first-class non-text omission signals in single-file review output, batch summaries, and machine-readable audit flags; and (2) extraction status is now modeled explicitly as `clean_text` vs `non_text_omissions` in both run summaries and audit review flags."
-  },
-  {
-    "id": "issue-19",
-    "category": "test",
-    "priority": "medium",
-    "risk": "medium",
-    "description": "Extend the end-to-end fixture matrix so it proves deterministic-only and ML-assisted workflows together, including model-misconfiguration and review-risk surfacing.",
-    "verify": [
-      "Run the fixture matrix across representative mixed-document inputs in deterministic-only mode and ML-assisted mode",
-      "Observe tests verify output Markdown, audit artifacts, and review summaries as one public workflow contract",
-      "Observe the matrix covers unavailable-model or misconfigured-model scenarios with explicit failure or fallback behavior"
-    ],
-    "passes": true,
-    "notes": "Completed for the current public contract through bounded regression slices that cover: deterministic structured/configured/custom behavior; policy/category reporting; non-text omission review/audit behavior; explicit NER model-misconfiguration failure; combined psychology-specific labeled-context replace/review flows; machine-readable review flags; and asset-gated real-local-model acceptance outside the default fixture run."
+    "notes": "Final desktop-app contract verification slice."
   }
 ]

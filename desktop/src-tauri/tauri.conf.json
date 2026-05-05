@@ -1,0 +1,24 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "TNS De-ID Desktop",
+  "version": "0.1.0",
+  "identifier": "com.eboody.tnsdeid.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "TNS De-ID Desktop",
+        "width": 900,
+        "height": 700
+      }
+    ]
+  },
+  "bundle": {
+    "active": false
+  }
+}

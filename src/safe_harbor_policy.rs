@@ -129,96 +129,174 @@ fn collect_segments(input_text: &str, entities: &[RecognizerResult]) -> Vec<Segm
 
 fn detect_custom_segments(input_text: &str) -> Vec<CustomSegment> {
     let mut segments = Vec::new();
+    let has_line_breaks = input_text.contains(['\n', '\r']);
 
-    let labeled_client_regex = Regex::new(r"(?im)^(?:client|patient):\s*(?P<value>[^\r\n]+)")
-        .expect("custom client label regex should compile");
-    for captures in labeled_client_regex.captures_iter(input_text) {
-        let Some(value) = captures.name("value") else {
-            continue;
-        };
-        let text = value.as_str().trim().to_string();
-        if text.is_empty() {
-            continue;
-        }
-        segments.push(CustomSegment {
-            entity_type: "CLIENT_NAME".to_string(),
-            matched_text: text,
-            replacement: "[CLIENT]".to_string(),
-            reason: "custom labeled client field classification for psychology-specific context"
-                .to_string(),
-            start: value.start(),
-            end: value.end(),
-        });
+    if !has_line_breaks {
+        push_labeled_segments(
+            &mut segments,
+            input_text,
+            &["student"],
+            transcript_label_terminators(),
+            "STUDENT_NAME",
+            "[STUDENT]",
+            "custom labeled student field classification for transcript-style context",
+        );
+
+        push_labeled_segments(
+            &mut segments,
+            input_text,
+            &["school"],
+            transcript_label_terminators(),
+            "INSTITUTION_NAME",
+            "[INSTITUTION]",
+            "custom labeled school field classification for transcript-style context",
+        );
+
+        push_labeled_segments(
+            &mut segments,
+            input_text,
+            &["school address", "street address", "city/state/zip"],
+            transcript_label_terminators(),
+            "ADDRESS",
+            "[ADDRESS]",
+            "custom labeled address field classification for transcript-style context",
+        );
+
+        push_labeled_segments(
+            &mut segments,
+            input_text,
+            &["phone"],
+            transcript_label_terminators(),
+            "PHONE_NUMBER",
+            "[PHONE_NUMBER]",
+            "custom labeled phone field classification for transcript-style context",
+        );
+
+        push_labeled_segments(
+            &mut segments,
+            input_text,
+            &["date of birth"],
+            transcript_label_terminators(),
+            "DATE_OF_BIRTH",
+            "[DATE_OF_BIRTH]",
+            "custom labeled date-of-birth field classification for transcript-style context",
+        );
+
+        push_labeled_segments(
+            &mut segments,
+            input_text,
+            &["place of birth"],
+            transcript_label_terminators(),
+            "BIRTH_PLACE",
+            "[BIRTH_PLACE]",
+            "custom labeled place-of-birth field classification for transcript-style context",
+        );
+
+        push_labeled_segments(
+            &mut segments,
+            input_text,
+            &["certified by"],
+            transcript_label_terminators(),
+            "CERTIFIER_NAME",
+            "[CERTIFIER]",
+            "custom labeled certifier field classification for transcript-style context",
+        );
     }
 
-    let labeled_provider_regex = Regex::new(
-        r"(?im)^(?:provider|examiner|clinician|therapist|psychologist):\s*(?P<value>[^\r\n]+)",
-    )
-    .expect("custom provider label regex should compile");
-    for captures in labeled_provider_regex.captures_iter(input_text) {
-        let Some(value) = captures.name("value") else {
-            continue;
-        };
-        let text = value.as_str().trim().to_string();
-        if text.is_empty() {
-            continue;
+    if has_line_breaks {
+        let labeled_client_regex = Regex::new(r"(?im)^(?:client|patient):\s*(?P<value>[^\r\n]+)")
+            .expect("custom client label regex should compile");
+        for captures in labeled_client_regex.captures_iter(input_text) {
+            let Some(value) = captures.name("value") else {
+                continue;
+            };
+            let text = value.as_str().trim().to_string();
+            if text.is_empty() {
+                continue;
+            }
+            segments.push(CustomSegment {
+                entity_type: "CLIENT_NAME".to_string(),
+                matched_text: text,
+                replacement: "[CLIENT]".to_string(),
+                reason:
+                    "custom labeled client field classification for psychology-specific context"
+                        .to_string(),
+                start: value.start(),
+                end: value.end(),
+            });
         }
-        segments.push(CustomSegment {
-            entity_type: "PROVIDER_NAME".to_string(),
-            matched_text: text,
-            replacement: "[PROVIDER]".to_string(),
-            reason: "custom labeled provider field classification for psychology-specific context"
-                .to_string(),
-            start: value.start(),
-            end: value.end(),
-        });
-    }
 
-    let labeled_family_regex = Regex::new(
-        r"(?im)^(?:mother|father|parent|guardian|caregiver|spouse|sibling):\s*(?P<value>[^\r\n]+)",
-    )
-    .expect("custom family label regex should compile");
-    for captures in labeled_family_regex.captures_iter(input_text) {
-        let Some(value) = captures.name("value") else {
-            continue;
-        };
-        let text = value.as_str().trim().to_string();
-        if text.is_empty() {
-            continue;
+        let labeled_provider_regex = Regex::new(
+            r"(?im)^(?:provider|examiner|clinician|therapist|psychologist):\s*(?P<value>[^\r\n]+)",
+        )
+        .expect("custom provider label regex should compile");
+        for captures in labeled_provider_regex.captures_iter(input_text) {
+            let Some(value) = captures.name("value") else {
+                continue;
+            };
+            let text = value.as_str().trim().to_string();
+            if text.is_empty() {
+                continue;
+            }
+            segments.push(CustomSegment {
+                entity_type: "PROVIDER_NAME".to_string(),
+                matched_text: text,
+                replacement: "[PROVIDER]".to_string(),
+                reason:
+                    "custom labeled provider field classification for psychology-specific context"
+                        .to_string(),
+                start: value.start(),
+                end: value.end(),
+            });
         }
-        segments.push(CustomSegment {
-            entity_type: "FAMILY_NAME".to_string(),
-            matched_text: text,
-            replacement: "[FAMILY_MEMBER]".to_string(),
-            reason: "custom labeled family field classification for psychology-specific context"
-                .to_string(),
-            start: value.start(),
-            end: value.end(),
-        });
-    }
 
-    let labeled_institution_regex = Regex::new(
-        r"(?im)^(?:school|clinic|hospital|institution|employer|workplace|university|college):\s*(?P<value>[^\r\n]+)",
-    )
-    .expect("custom institution label regex should compile");
-    for captures in labeled_institution_regex.captures_iter(input_text) {
-        let Some(value) = captures.name("value") else {
-            continue;
-        };
-        let text = value.as_str().trim().to_string();
-        if text.is_empty() {
-            continue;
+        let labeled_family_regex = Regex::new(
+            r"(?im)^(?:mother|father|parent|guardian|caregiver|spouse|sibling):\s*(?P<value>[^\r\n]+)",
+        )
+        .expect("custom family label regex should compile");
+        for captures in labeled_family_regex.captures_iter(input_text) {
+            let Some(value) = captures.name("value") else {
+                continue;
+            };
+            let text = value.as_str().trim().to_string();
+            if text.is_empty() {
+                continue;
+            }
+            segments.push(CustomSegment {
+                entity_type: "FAMILY_NAME".to_string(),
+                matched_text: text,
+                replacement: "[FAMILY_MEMBER]".to_string(),
+                reason:
+                    "custom labeled family field classification for psychology-specific context"
+                        .to_string(),
+                start: value.start(),
+                end: value.end(),
+            });
         }
-        segments.push(CustomSegment {
-            entity_type: "INSTITUTION_NAME".to_string(),
-            matched_text: text,
-            replacement: "[INSTITUTION]".to_string(),
-            reason:
-                "custom labeled institution field classification for psychology-specific context"
-                    .to_string(),
-            start: value.start(),
-            end: value.end(),
-        });
+
+        let labeled_institution_regex = Regex::new(
+            r"(?im)^(?:school|clinic|hospital|institution|employer|workplace|university|college):\s*(?P<value>[^\r\n]+)",
+        )
+        .expect("custom institution label regex should compile");
+        for captures in labeled_institution_regex.captures_iter(input_text) {
+            let Some(value) = captures.name("value") else {
+                continue;
+            };
+            let text = value.as_str().trim().to_string();
+            if text.is_empty() {
+                continue;
+            }
+            segments.push(CustomSegment {
+                entity_type: "INSTITUTION_NAME".to_string(),
+                matched_text: text,
+                replacement: "[INSTITUTION]".to_string(),
+                reason:
+                    "custom labeled institution field classification for psychology-specific context"
+                        .to_string(),
+                start: value.start(),
+                end: value.end(),
+            });
+        }
     }
 
     let address_regex = Regex::new(
@@ -239,6 +317,88 @@ fn detect_custom_segments(input_text: &str) -> Vec<CustomSegment> {
     }
 
     segments
+}
+
+fn push_labeled_segments(
+    segments: &mut Vec<CustomSegment>,
+    input_text: &str,
+    labels: &[&str],
+    terminators: &[&str],
+    entity_type: &str,
+    replacement: &str,
+    reason: &str,
+) {
+    let lowercase = input_text.to_ascii_lowercase();
+
+    for label in labels {
+        let marker = format!("{label}:");
+        let marker = marker.to_ascii_lowercase();
+        let mut search_from = 0usize;
+
+        while let Some(relative_start) = lowercase[search_from..].find(&marker) {
+            let label_start = search_from + relative_start;
+            let value_start = label_start + marker.len();
+            let value_end = next_terminator_index(&lowercase, value_start, terminators)
+                .unwrap_or(input_text.len());
+
+            let raw_value = &input_text[value_start..value_end];
+            let trimmed = raw_value.trim();
+            if !trimmed.is_empty() {
+                let leading_ws = raw_value.len() - raw_value.trim_start().len();
+                let trailing_ws = raw_value.len() - raw_value.trim_end().len();
+                segments.push(CustomSegment {
+                    entity_type: entity_type.to_string(),
+                    matched_text: trimmed.to_string(),
+                    replacement: replacement.to_string(),
+                    reason: reason.to_string(),
+                    start: value_start + leading_ws,
+                    end: value_end - trailing_ws,
+                });
+            }
+
+            search_from = value_start;
+        }
+    }
+}
+
+fn next_terminator_index(
+    input_text: &str,
+    search_from: usize,
+    terminators: &[&str],
+) -> Option<usize> {
+    terminators
+        .iter()
+        .filter_map(|label| {
+            let marker = format!("{label}:").to_ascii_lowercase();
+            input_text[search_from..]
+                .find(&marker)
+                .map(|relative| search_from + relative)
+        })
+        .min()
+}
+
+fn transcript_label_terminators() -> &'static [&'static str] {
+    &[
+        "school",
+        "school address",
+        "student",
+        "street address",
+        "city/state/zip",
+        "phone",
+        "date of birth",
+        "place of birth",
+        "gender",
+        "graduated",
+        "credits earned",
+        "gpa",
+        "unweighted gpa",
+        "class record",
+        "course record",
+        "exams / tests",
+        "activities / honors",
+        "certified by",
+        "notes",
+    ]
 }
 
 fn classify_entity_type(

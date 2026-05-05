@@ -1,6 +1,7 @@
 pub mod audit;
 pub mod config;
 pub mod deidentify;
+pub mod desktop;
 pub mod docx_extract;
 pub mod error;
 pub mod pdf_extract;
@@ -18,6 +19,7 @@ use globset::{Glob, GlobSet, GlobSetBuilder};
 use redact_core::AnalyzerEngine;
 use redact_core::recognizers::Recognizer;
 use redact_ner::{NerConfig as NerRecognizerConfig, NerRecognizer};
+use serde::Serialize;
 use walkdir::WalkDir;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,8 +48,30 @@ pub struct RunSummary {
     pub replacements: usize,
     pub non_text_omissions_detected: bool,
     pub extraction_status: ExtractionStatus,
+    pub file_statuses: Vec<RunFileStatus>,
     pub review_summary: String,
     pub coverage_note: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RunFileStatusKind {
+    Reviewed,
+    Processed,
+    Skipped,
+    Unsupported,
+    ExtractionFailed,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RunFileStatus {
+    pub path: PathBuf,
+    pub status: RunFileStatusKind,
+    pub replacements: usize,
+    pub review_sensitive: bool,
+    pub non_text_omissions_detected: bool,
+    pub output_path: Option<PathBuf>,
+    pub audit_output_path: Option<PathBuf>,
 }
 
 const COVERAGE_NOTE: &str = "Structured identifiers were processed with redact-core. Full HIPAA Safe Harbor coverage still requires policy mapping, configured known-entity replacement, and custom gap recognizers.";
@@ -96,6 +120,15 @@ fn run_single(options: RunOptions) -> Result<RunSummary> {
             replacements: structured.findings.len(),
             non_text_omissions_detected,
             extraction_status,
+            file_statuses: vec![RunFileStatus {
+                path: options.input,
+                status: RunFileStatusKind::Reviewed,
+                replacements: structured.findings.len(),
+                review_sensitive: !structured.findings.is_empty() || non_text_omissions_detected,
+                non_text_omissions_detected,
+                output_path: None,
+                audit_output_path: None,
+            }],
             review_summary,
             coverage_note: COVERAGE_NOTE,
         });
@@ -137,11 +170,20 @@ fn run_single(options: RunOptions) -> Result<RunSummary> {
 
     Ok(RunSummary {
         mode: options.mode,
-        output_path: Some(output_path),
-        audit_output_path: Some(audit_output_path),
+        output_path: Some(output_path.clone()),
+        audit_output_path: Some(audit_output_path.clone()),
         replacements: audit_report.replacements.len(),
         non_text_omissions_detected,
         extraction_status,
+        file_statuses: vec![RunFileStatus {
+            path: options.input,
+            status: RunFileStatusKind::Processed,
+            replacements: audit_report.replacements.len(),
+            review_sensitive: !audit_report.replacements.is_empty() || non_text_omissions_detected,
+            non_text_omissions_detected,
+            output_path: Some(output_path.clone()),
+            audit_output_path: Some(audit_output_path.clone()),
+        }],
         review_summary,
         coverage_note: COVERAGE_NOTE,
     })
@@ -166,6 +208,7 @@ fn run_directory(options: RunOptions) -> Result<RunSummary> {
     let mut review_sensitive = Vec::new();
     let mut non_text_omission_files = Vec::new();
     let mut renamed = Vec::new();
+    let mut file_statuses = Vec::new();
     let mut replacement_total = 0usize;
 
     for entry in WalkDir::new(&options.input) {
@@ -188,11 +231,29 @@ fn run_directory(options: RunOptions) -> Result<RunSummary> {
             .to_path_buf();
 
         if !matcher.allows(&relative) {
+            file_statuses.push(RunFileStatus {
+                path: relative.clone(),
+                status: RunFileStatusKind::Skipped,
+                replacements: 0,
+                review_sensitive: false,
+                non_text_omissions_detected: false,
+                output_path: None,
+                audit_output_path: None,
+            });
             skipped.push(relative);
             continue;
         }
 
         if !is_supported_input(&path) {
+            file_statuses.push(RunFileStatus {
+                path: relative.clone(),
+                status: RunFileStatusKind::Unsupported,
+                replacements: 0,
+                review_sensitive: false,
+                non_text_omissions_detected: false,
+                output_path: None,
+                audit_output_path: None,
+            });
             unsupported.push(relative);
             continue;
         }
@@ -214,6 +275,15 @@ fn run_directory(options: RunOptions) -> Result<RunSummary> {
         }) {
             Ok(summary) => summary,
             Err(AppError::Analysis(_)) => {
+                file_statuses.push(RunFileStatus {
+                    path: relative.clone(),
+                    status: RunFileStatusKind::ExtractionFailed,
+                    replacements: 0,
+                    review_sensitive: true,
+                    non_text_omissions_detected: false,
+                    output_path: None,
+                    audit_output_path: None,
+                });
                 extraction_failed.push(relative.clone());
                 review_sensitive.push(relative);
                 continue;
@@ -222,6 +292,19 @@ fn run_directory(options: RunOptions) -> Result<RunSummary> {
         };
 
         replacement_total += summary.replacements;
+        file_statuses.push(RunFileStatus {
+            path: relative.clone(),
+            status: if options.mode == RunMode::Replace {
+                RunFileStatusKind::Processed
+            } else {
+                RunFileStatusKind::Reviewed
+            },
+            replacements: summary.replacements,
+            review_sensitive: summary.replacements > 0 || summary.non_text_omissions_detected,
+            non_text_omissions_detected: summary.non_text_omissions_detected,
+            output_path: summary.output_path,
+            audit_output_path: summary.audit_output_path,
+        });
         processed.push(relative.clone());
         if summary.non_text_omissions_detected {
             non_text_omission_files.push(relative.clone());
@@ -259,6 +342,7 @@ fn run_directory(options: RunOptions) -> Result<RunSummary> {
         } else {
             ExtractionStatus::NonTextOmissions
         },
+        file_statuses,
         review_summary,
         coverage_note: COVERAGE_NOTE,
     })
@@ -2299,6 +2383,43 @@ mod tests {
         assert!(error.to_string().contains(
             "PDF contains no extractable text; treat as non-extractable or low-confidence"
         ));
+    }
+
+    #[test]
+    fn run_redacts_labeled_transcript_fields_in_flattened_text() {
+        let temp = tempdir().unwrap();
+        let input = temp.path().join("transcript.txt");
+        fs::write(
+            &input,
+            "School: The White HouseSchool Address: 1600 Pennsylvania AveStudent: Teddy RooseveltStreet Address: 1900 Pennsylvania AvePhone: (202) 456-1111Date of Birth: October 27, 1858Place of Birth: Manhattan, NYCertified By: William McKinley",
+        )
+        .unwrap();
+
+        let summary = run(RunOptions {
+            input,
+            output: None,
+            audit_output: None,
+            config: None,
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+            mode: RunMode::Replace,
+        })
+        .unwrap();
+
+        let output = fs::read_to_string(summary.output_path.unwrap()).unwrap();
+        assert!(output.contains("School: [INSTITUTION]"));
+        assert!(output.contains("School Address: [ADDRESS]"));
+        assert!(output.contains("Student: [STUDENT]"));
+        assert!(output.contains("Street Address: [ADDRESS]"));
+        assert!(output.contains("Phone: [PHONE_NUMBER]"));
+        assert!(output.contains("Date of Birth: [DATE_OF_BIRTH]"));
+        assert!(output.contains("Place of Birth: [BIRTH_PLACE]"));
+        assert!(output.contains("Certified By: [CERTIFIER]"));
+        assert!(!output.contains("Teddy Roosevelt"));
+        assert!(!output.contains("William McKinley"));
+        assert!(!output.contains("(202) 456-1111"));
+        assert!(!output.contains("October 27, 1858"));
+        assert!(!output.contains("Manhattan, NY"));
     }
 
     fn write_test_docx(path: &Path, document_xml: &str) {

@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TNS De-ID Desktop</title>
+  </head>
+  <body>
+    <main>
+      <header class="app-header">
+        <div>
+          <h1>TNS De-ID Desktop</h1>
+          <p>Pick files, run de-identification locally, then review the before/after side by side.</p>
+        </div>
+        <div class="result-actions" aria-label="Replace output actions">
+          <button id="openOutput" type="button" disabled>Open output folder</button>
+          <button id="openAudit" type="button" disabled>Open audit folder</button>
+        </div>
+      </header>
+
+      <section class="controls-panel">
+        <label class="field-group field-group-grow">
+          <span>Input file or folder</span>
+          <div class="picker-row">
+            <input id="inputPath" type="text" placeholder="/path/to/file-or-folder" />
+            <button id="pickInput" type="button">Choose file</button>
+            <button id="pickFolder" type="button">Choose folder</button>
+          </div>
+        </label>
+
+        <label class="field-group">
+          <span>Optional config path</span>
+          <input id="configPath" type="text" placeholder="/path/to/deid.toml" />
+        </label>
+
+        <div class="actions-row">
+          <button id="runReview">Run review</button>
+          <button id="runReplace" type="button">Run replace</button>
+        </div>
+      </section>
+
+      <section class="workspace">
+        <aside class="sidebar">
+          <section class="selection-panel">
+            <h2>Selected input</h2>
+            <ul id="selectedFiles" class="file-list compact-list">
+              <li>No file or folder selected yet.</li>
+            </ul>
+          </section>
+
+          <section id="resultsPanel" class="results-panel" hidden>
+            <h2>Files</h2>
+            <ul id="resultFiles" class="file-list"></ul>
+          </section>
+
+          <section class="summary-panel">
+            <h2>Run details</h2>
+            <pre id="summary">No run yet.</pre>
+          </section>
+        </aside>
+
+        <section id="previewPanel" class="preview-panel">
+          <div class="preview-header">
+            <div>
+              <h2>Preview</h2>
+              <p id="previewTitle" class="preview-title">No file selected</p>
+            </div>
+            <p id="previewNote" class="preview-note" hidden></p>
+          </div>
+
+          <div class="preview-grid">
+            <section class="preview-column">
+              <h3>Before</h3>
+              <pre id="beforePreview" class="preview-text"></pre>
+            </section>
+            <section class="preview-column">
+              <h3>After</h3>
+              <pre id="afterPreview" class="preview-text"></pre>
+            </section>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

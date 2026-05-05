@@ -385,3 +385,174 @@
 ## Next likely task
 
 - The GitHub backlog through issue #19 is now complete for the current scoped initiative. Next work would be new backlog creation or hardening beyond the agreed slices.
+
+## Iteration 36 (backlog reconciliation)
+
+- Reconciled the Ralph backlog state with the actual scoped work delivered across issues #15 through #19.
+- Marked issue #15 complete because the remaining limitation is local model asset availability, not missing in-repo integration work.
+- Marked issue #18 complete because the current extraction-honesty scope is satisfied by non-text omission signaling plus explicit extraction-status reporting, without pretending to measure OCR or semantic extraction quality.
+- The Ralph backlog is now internally consistent with the completed scoped initiative.
+
+## Next likely task
+
+- No further scoped PRD tasks remain. Any next step would be a new backlog or follow-on initiative rather than unfinished work from this one.
+
+## Iteration 37 (desktop AFK loop setup)
+
+- Closed the prior CLI initiative and reset the Ralph backlog to the new desktop-app initiative under parent PRD issue `#28`.
+- Replaced the completed CLI-oriented `ralph/prd.json` with a fresh desktop backlog covering issues `#20` through `#27`.
+- Updated `ralph/runbook.md` so the current initiative, architectural constraint, and workflow emphasis now match the local installable desktop-app goal.
+- Chose not to edit product code yet in this iteration; the honest first desktop slice is to restore bounded loop memory before touching the Tauri/app-service surface.
+
+## Next likely task
+
+- Begin issue `#20` with the smallest honest technical slice: introduce a stable desktop-facing app-service boundary that can run the existing review workflow locally before any substantial UI shell work.
+
+## Iteration 38 (GitHub issue #20)
+
+- Began issue `#20` with the smallest honest technical slice instead of jumping straight into a Tauri shell.
+- Added a stable desktop-facing review service boundary that wraps the existing local review workflow behind desktop-specific request/result structs.
+- Verified that the new service path drives the real non-writing review flow and does not create output files, giving the future desktop shell a real backend call surface without duplicating engine logic.
+- Verified the slice with `cargo fmt --check` and `cargo test`.
+
+## Next likely task
+
+- Continue issue `#20` with the next bounded slice: add a lightweight desktop-runner boundary for basic folder selection / shell bootstrap, or the minimal Tauri scaffold needed to invoke the new review service honestly.
+
+## Iteration 39 (GitHub issue #20)
+
+- Continued issue `#20` with the minimal Tauri shell scaffold rather than jumping straight to polished folder-picking UX.
+- Added a small desktop frontend/static shell plus a `src-tauri` crate that invokes the shared desktop review service through a real Tauri command.
+- Verified that the root Rust crate still passes its existing feedback loops and that the new desktop crate compiles successfully with `cargo check --manifest-path desktop/src-tauri/Cargo.toml`.
+- Kept the slice bounded: the shell can call the real backend review command, but native folder-picker UX is still the next honest missing piece.
+
+## Next likely task
+
+- Continue issue `#20` with native folder selection in the desktop shell so the clinician can choose a local folder through the UI instead of typing a path manually.
+
+## Iteration 40 (GitHub issue #20)
+
+- Implemented the next bounded issue-20 slice: native folder-selection wiring in the desktop shell using the Tauri dialog plugin.
+- Updated the desktop frontend to populate the input path from a folder picker instead of requiring manual path entry only, and wired the plugin into the Tauri shell/capability setup.
+- Kept the slice narrow: no attempt yet to add polished config picking, richer progress UX, or replace-mode behavior.
+- Verified the root crate still passes `cargo fmt --check` and `cargo test`.
+- Desktop-crate verification is still pending: the Tauri `cargo check --manifest-path desktop/src-tauri/Cargo.toml` did not complete within a normal short timeout, so this slice should be treated as implemented-but-not-fully-verified rather than complete.
+
+## Next likely task
+
+- Get a reliable short-window confirmation path for the desktop crate (or otherwise tighten the scaffold so verification is faster), then continue issue `#20` toward a fully verified first shell slice.
+
+## Iteration 41 (GitHub issue #20)
+
+- Tried the smallest honest verification-focused iteration before widening the desktop shell further.
+- Re-ran the root `cargo fmt --check` successfully.
+- Re-ran the desktop-crate check with the normal short timeout and it still did not complete within that window, even after dependencies had already been built.
+- Chose not to expand the desktop scope further in this iteration because the shell baseline is still only partially verified under the current timeout constraint.
+
+## Next likely task
+
+- Find a verification path for the desktop crate that fits the no-long-timeout constraint, or accept that the desktop-shell work needs a relaxed timeout before issue `#20` can be advanced honestly.
+
+## Iteration 42 (desktop shell debugging + replace path)
+
+- Used the running desktop shell itself as the verification surface and found two concrete frontend/backend mismatches: the Tauri command bridge had an inconsistent command/import state, and the frontend logic was still relying on module-style imports / inline-script patterns that were not executing reliably in the static shell.
+- Fixed the Tauri command bridge for both review and replace workflows, switched the shell to a plain external script using the Tauri global API, and added a first replace-mode path through the desktop service, Tauri command layer, and shell summary UI.
+- Added backend tests for the shared desktop replace service and kept the existing root feedback loops green.
+- The desktop shell is materially closer to usable now, but because the direct UI verification path is still awkward in this environment, I am not yet marking issue `#20` or `#21` complete solely from this iteration.
+
+## Next likely task
+
+- Continue desktop-shell verification and, if the replace path is confirmed, either close issue `#20` or move directly into the next bounded issue `#21` shell ergonomics slice (for example opening the output folder from the app).
+
+## Iteration 43 (desktop frontend hardening)
+
+- Reassessed the shell debugging path and concluded the most honest next move was not more ad hoc DOM patching, but a bounded frontend hardening slice.
+- Migrated the desktop shell from the fragile static/global-loading setup to a proper Vite frontend structure, while preserving the existing review and replace command bridges.
+- Verified the root Rust crate still passes the required feedback loops and that the desktop frontend now has a successful short-window `npm run build` path.
+- This does not yet close issue `#20`, because the full `tauri dev` path still needs end-to-end verification through the new frontend, but it meaningfully improves the odds that the shell will behave reliably.
+
+## Next likely task
+
+- Re-run `npm run tauri dev` against the Vite-based shell and verify the working desktop review path directly; if that passes, issue `#20` can likely be closed and issue `#21` can be advanced honestly.
+
+## Iteration 44 (desktop live verification)
+
+- Verified the Vite-backed desktop shell through the real `npm run tauri dev` path instead of relying on speculative shell state.
+- Confirmed that the shell now loads its frontend correctly, shows the expected summary startup text, accepts a chosen folder, and runs the real non-writing review workflow end-to-end.
+- Then advanced the next bounded replace slice and verified that replace mode writes the expected `redacted/` outputs and `.audit/` artifacts on disk while surfacing the output and audit paths in the UI summary.
+- Marked issue `#20` complete and advanced issue `#21` to the next remaining ergonomics gap.
+
+## Next likely task
+
+- Continue issue `#21` with opener/results ergonomics so the user can open or inspect the generated output location directly from the desktop shell.
+
+## Iteration 45 (GitHub issue #21)
+
+- Continued issue `#21` with a bounded opener ergonomics slice after the replace path had already been verified end-to-end.
+- Added Tauri-owned last-run artifact state so the app can open only the most recent generated output and audit directories, instead of granting the frontend a broad arbitrary-path opener capability.
+- Added output/audit folder buttons to the desktop results surface and enabled them only after a successful replace run.
+- Verified the slice with `cargo fmt --check`, `cargo test`, `cargo fmt --check --manifest-path desktop/src-tauri/Cargo.toml`, `cargo check --manifest-path desktop/src-tauri/Cargo.toml`, and `npm run build`.
+- Did not mark issue `#21` complete yet because the final opener behavior still needs live running-app verification.
+
+## Next likely task
+
+- Launch the desktop shell and verify the new output/audit buttons open the generated folders after a real replace run; if that passes, mark issue `#21` complete and move to issue `#22` results-screen detail.
+
+## Iteration 46 (GitHub issue #21)
+
+- Completed the live opener verification slice for issue `#21`.
+- Launched the rebuilt desktop app through `tauri-driver`, ran a real replace workflow against a temporary local sample folder, and confirmed the UI summary reported the generated `redacted/` output path and `.audit/` path.
+- Verified the output and audit opener buttons are enabled only after the successful replace run and that both button commands invoke without surfacing frontend or Tauri command errors.
+- Verified the generated output and audit artifacts exist on disk.
+- Marked issue `#21` complete because its remaining opener/results ergonomics acceptance criterion is now satisfied.
+
+## Next likely task
+
+- Begin issue `#22` with the smallest honest results-screen slice: derive and render per-file statuses from the real desktop run summary rather than introducing mock results data.
+
+## Iteration 47 (GitHub issue #22)
+
+- Began issue `#22` with the smallest honest results-screen slice instead of jumping straight to full before/after diff panes.
+- Kept the high-risk `run` / `run_directory` boundary narrow by adding typed per-file run statuses alongside the existing textual summaries, preserving current CLI behavior while giving the desktop surface structured result data.
+- Updated the desktop shell to support explicit file or folder picking, show a simple selected-input list, and render real per-file result cards after review/replace runs.
+- Verified the slice with `cargo fmt --check`, `cargo test`, `cargo check --manifest-path desktop/src-tauri/Cargo.toml`, `npm run build`, and a live desktop automation pass that confirmed the selected-input list and per-file result list populate from a real replace run.
+- Did not mark issue `#22` complete yet because the remaining user-visible verification surface still needs richer before/after review affordances and changed-span presentation.
+
+## Next likely task
+
+- Continue issue `#22` with the next honest verification-centered slice: add per-file preview data for a selected result so the UI can grow toward before/after review panes without inventing fake diff/highlight behavior.
+
+## Iteration 48 (GitHub issue #22)
+
+- Continued issue `#22` with the next honest verification-centered slice: selected-file preview data for real replace results.
+- Kept the implementation at the desktop-facing boundary rather than changing the central `run` pipeline again: the desktop service now reads real output/audit artifacts and builds preview payloads for processed files.
+- Added a first before/after preview panel in the desktop UI for selected result files, using real original/output text plus audit-derived highlighted spans for replace runs.
+- Kept the slice honest by limiting preview availability to files whose original text can be read directly in the current desktop boundary; non-plain-text source formats still need broader preview support later.
+- Verified the slice with `cargo fmt --check`, `cargo test`, `cargo check --manifest-path desktop/src-tauri/Cargo.toml`, `npm run build`, and a live desktop automation pass showing the selected-file preview pane populated with real before/after text from a replace run.
+
+## Next likely task
+
+- Continue issue `#22` with the next UX-deepening slice: broaden the selection/review surface with file-drop or multi-file ergonomics, then refine preview fidelity for non-plain-text source formats and more explicit visual diff/highlight polish.
+
+## Iteration 49 (GitHub issue #22)
+
+- Refined the desktop layout so the file list acts as the navigation surface and the before/after previews dominate the screen, matching the intended verification workflow more honestly.
+- Reorganized the shell into a wide two-column workspace: sidebar for selected input, file results, and run details; main area for large side-by-side previews.
+- Kept behavior unchanged while improving visual hierarchy, so this remains a layout-cleanup slice rather than a new backend capability slice.
+- Verified the slice with `npm run build` and `cargo check --manifest-path desktop/src-tauri/Cargo.toml`.
+
+## Next likely task
+
+- Continue issue `#22` with the next behavior slice: drag-and-drop or multi-file selection ergonomics, while preserving the new file-list-plus-large-preview layout.
+
+## Iteration 50 (issue #22 bug-fix follow-up)
+
+- Investigated a real-user failure on `/home/eran/pictures/mock_transcripts` where PDF originals showed `Original preview unavailable` and the redacted output still exposed transcript PII.
+- Confirmed this was two problems: the desktop preview path was bypassing the existing PDF extraction boundary, and the redaction policy did not yet cover flattened transcript-style labeled fields.
+- Kept the preview fix local to `src/desktop.rs` rather than widening the high-risk shared loader: desktop previews now reuse the same PDF/DOCX extraction path when building original previews.
+- Added deterministic transcript-style labeled-field redaction for flattened extracted text, covering fields such as `School`, `School Address`, `Student`, `Street Address`, `City/State/Zip`, `Phone`, `Date of Birth`, `Place of Birth`, and `Certified By`.
+- Verified the fix with `cargo fmt --check`, `cargo test`, `cargo check --manifest-path desktop/src-tauri/Cargo.toml`, and a real rerun against the user-reported `mock_transcripts` directory, which now rewrites those transcript fields in the output.
+
+## Next likely task
+
+- If broader transcript de-identification is needed, continue with the next bounded policy slice: transcript-wide date and person-name coverage beyond the explicitly labeled fields, while keeping false positives controlled.
