@@ -326,6 +326,7 @@ fn build_review_summary(input: &Path, findings: &[Finding]) -> String {
 
     let mut policy_categories = Vec::new();
     let mut raw_structured_categories = Vec::new();
+    let mut ml_categories = Vec::new();
     let mut safe_harbor_categories = Vec::new();
 
     for record in findings {
@@ -334,6 +335,10 @@ fn build_review_summary(input: &Path, findings: &[Finding]) -> String {
         if record.source == FindingSource::Policy {
             if !policy_categories.contains(&record.entity_type.as_str()) {
                 policy_categories.push(record.entity_type.as_str());
+            }
+        } else if record.source == FindingSource::Ml {
+            if !ml_categories.contains(&record.entity_type.as_str()) {
+                ml_categories.push(record.entity_type.as_str());
             }
         } else if record.source == FindingSource::RedactCore
             && !raw_structured_categories.contains(&record.entity_type.as_str())
@@ -369,6 +374,13 @@ fn build_review_summary(input: &Path, findings: &[Finding]) -> String {
     if !raw_structured_categories.is_empty() {
         lines.push("Currently raw structured coverage from redact-core:".to_string());
         for category in raw_structured_categories {
+            lines.push(format!("- {category}"));
+        }
+    }
+
+    if !ml_categories.is_empty() {
+        lines.push("Currently ML-assisted contextual coverage:".to_string());
+        for category in ml_categories {
             lines.push(format!("- {category}"));
         }
     }
@@ -1200,6 +1212,8 @@ mod tests {
         let review_summary =
             super::build_review_summary(std::path::Path::new("/tmp/fake.md"), &structured.findings);
         assert!(review_summary.contains("[ml:PERSON] John Doe -> [PERSON]"));
+        assert!(review_summary.contains("Currently ML-assisted contextual coverage:"));
+        assert!(review_summary.contains("- PERSON"));
     }
 
     #[test]

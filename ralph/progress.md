@@ -227,3 +227,15 @@
 ## Next likely task
 
 - Continue issue #15 with a real-model-facing slice, ideally the smallest honest path that proves positive contextual detection with actual local model assets or otherwise makes the remaining gap explicit enough to decide whether issue #15 can close before issue #16 begins.
+
+## Iteration 22 (GitHub issue #15)
+
+- Continued issue #15 with a small operator-visible slice rather than widening detection scope further.
+- Added review-summary accounting that separates ML-assisted contextual coverage from raw structured `redact-core` coverage and policy-shaped behavior.
+- Verified the new reporting path through the injected fake-NER test seam so ML-assisted `PERSON` detections now surface both as `[ml:PERSON] ...` records and under a dedicated `Currently ML-assisted contextual coverage:` section.
+- Kept the runtime CLI behavior unchanged for deterministic runs while strengthening the review surface for future real-model-backed detections.
+- Verified the slice with `cargo fmt --check`, `cargo test`, and the existing sample CLI fallback run.
+
+## Next likely task
+
+- Continue issue #15 with the smallest honest real-model-facing path, or explicitly decide that the remaining real-model proof belongs outside this repo if no model assets can be checked in or provisioned locally.
