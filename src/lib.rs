@@ -16,6 +16,7 @@ use deidentify::{DeidentifyResult, apply_rules, build_rules};
 use error::{AppError, Result};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use redact_core::AnalyzerEngine;
+use redact_core::recognizers::Recognizer;
 use redact_ner::{NerConfig as NerRecognizerConfig, NerRecognizer};
 use walkdir::WalkDir;
 
@@ -227,11 +228,18 @@ struct StructuredRun {
     findings: Vec<Finding>,
 }
 
-fn apply_redact_core_with_config(
+type SharedRecognizer = Arc<dyn Recognizer>;
+
+fn apply_redact_core_with_recognizers(
     input_text: &str,
     config: Option<&Config>,
+    extra_recognizers: Vec<SharedRecognizer>,
 ) -> Result<StructuredRun> {
     let mut engine = AnalyzerEngine::new();
+    for recognizer in extra_recognizers {
+        engine.recognizer_registry_mut().add_recognizer(recognizer);
+    }
+
     if let Some(ner) = config
         .and_then(|config| config.ner.as_ref())
         .filter(|ner| ner.enabled)
@@ -274,6 +282,13 @@ fn apply_redact_core_with_config(
     findings.sort_by_key(|record| (record.start, record.end));
 
     Ok(StructuredRun { text, findings })
+}
+
+fn apply_redact_core_with_config(
+    input_text: &str,
+    config: Option<&Config>,
+) -> Result<StructuredRun> {
+    apply_redact_core_with_recognizers(input_text, config, Vec::new())
 }
 
 fn apply_deidentification_pipeline(
@@ -611,7 +626,13 @@ fn build_globset(patterns: &[String]) -> Result<GlobSet> {
 
 #[cfg(test)]
 mod tests {
-    use super::{COVERAGE_NOTE, RunMode, RunOptions, run};
+    use std::sync::Arc;
+
+    use anyhow::Result as AnyhowResult;
+    use redact_core::recognizers::Recognizer;
+    use redact_core::{RecognizerResult, types::EntityType};
+
+    use super::{COVERAGE_NOTE, FindingSource, RunMode, RunOptions, run};
     use std::fs;
     use std::io::Write;
     use std::path::Path;
@@ -621,6 +642,32 @@ mod tests {
     use tempfile::tempdir;
     use zip::ZipWriter;
     use zip::write::SimpleFileOptions;
+
+    #[derive(Debug)]
+    struct FakeNerRecognizer;
+
+    impl Recognizer for FakeNerRecognizer {
+        fn name(&self) -> &str {
+            "FakeNerRecognizer"
+        }
+
+        fn supported_entities(&self) -> &[EntityType] {
+            static SUPPORTED: [EntityType; 1] = [EntityType::Person];
+            &SUPPORTED
+        }
+
+        fn analyze(&self, text: &str, _language: &str) -> AnyhowResult<Vec<RecognizerResult>> {
+            let start = text
+                .find("John Doe")
+                .expect("test input should include John Doe");
+            let end = start + "John Doe".len();
+
+            Ok(vec![
+                RecognizerResult::new(EntityType::Person, start, end, 0.95, self.name())
+                    .with_text(text),
+            ])
+        }
+    }
 
     #[test]
     fn run_creates_default_output_and_audit_files() {
@@ -1125,6 +1172,34 @@ mod tests {
         .unwrap_err();
 
         assert!(error.to_string().contains("failed to initialize NER"));
+    }
+
+    #[test]
+    fn apply_redact_core_with_injected_ner_recognizer_surfaces_ml_finding() {
+        let structured = super::apply_redact_core_with_recognizers(
+            "John Doe emailed john@example.com.",
+            None,
+            vec![Arc::new(FakeNerRecognizer)],
+        )
+        .unwrap();
+
+        assert!(
+            structured
+                .text
+                .contains("[PERSON] emailed [EMAIL_ADDRESS].")
+        );
+        assert!(
+            structured
+                .findings
+                .iter()
+                .any(|finding| finding.source == FindingSource::Ml
+                    && finding.entity_type == "PERSON"
+                    && finding.reason.contains("FakeNerRecognizer"))
+        );
+
+        let review_summary =
+            super::build_review_summary(std::path::Path::new("/tmp/fake.md"), &structured.findings);
+        assert!(review_summary.contains("[ml:PERSON] John Doe -> [PERSON]"));
     }
 
     #[test]

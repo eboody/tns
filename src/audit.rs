@@ -9,6 +9,7 @@ pub enum FindingSource {
     Policy,
     Configured,
     Custom,
+    Ml,
 }
 
 impl FindingSource {
@@ -18,6 +19,7 @@ impl FindingSource {
             FindingSource::Policy => "policy",
             FindingSource::Configured => "configured",
             FindingSource::Custom => "custom",
+            FindingSource::Ml => "ml",
         }
     }
 }

@@ -179,7 +179,7 @@
       "Run the CLI with missing or invalid model assets and observe explicit failure or disabled-model reporting rather than silent degradation"
     ],
     "passes": false,
-    "notes": "Started with a bounded integration slice: config now supports optional `[ner]` settings, deterministic fallback remains the default when NER is not configured, and enabled NER fails explicitly when the configured model/tokenizer assets are missing. Positive model-backed detection coverage is still pending."
+    "notes": "Two bounded slices now exist under issue #15: first, optional `[ner]` config plus explicit fallback/failure behavior; second, a testable recognizer-loading seam that proves positive ML-style contextual detections can flow through the real redaction pipeline and surface as `ml` findings, without requiring a real ONNX model in every test run. Real model-backed CLI coverage is still pending."
   },
   {
     "id": "issue-16",

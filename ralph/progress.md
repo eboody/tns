@@ -214,3 +214,16 @@
 ## Next likely task
 
 - Continue issue #15 with the first positive model-backed detection slice, ideally by introducing a bounded way to verify successful contextual recognition without yet widening scope into psychology-specific policy behavior.
+
+## Iteration 21 (GitHub issue #15)
+
+- Continued issue #15 with the next bounded slice: prove a positive ML-style contextual detection path without requiring a real ONNX model in every test run.
+- Kept the blast radius narrow despite the high-risk public `run` boundary by introducing a recognizer-loading seam under the existing analyzer construction path rather than widening the CLI or policy surface.
+- Added a shared recognizer-injection path and a test-only fake NER recognizer that emits a `PERSON` detection.
+- Updated source classification so NER-style recognizers surface as `ml` findings rather than being mislabeled as generic pattern detections.
+- Verified that injected contextual detections flow through the same finding model, replacement logic, and review-summary path as the rest of the pipeline.
+- Verified the slice with `cargo fmt --check`, `cargo test`, and the existing sample CLI fallback run.
+
+## Next likely task
+
+- Continue issue #15 with a real-model-facing slice, ideally the smallest honest path that proves positive contextual detection with actual local model assets or otherwise makes the remaining gap explicit enough to decide whether issue #15 can close before issue #16 begins.

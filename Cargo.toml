@@ -18,4 +18,5 @@ walkdir = "2.5.0"
 zip = { version = "2.2.0", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
+anyhow = "1.0"
 tempfile = "3.10.1"

@@ -86,7 +86,11 @@ impl Segment {
                 let replacement = replacement_for(&classified_entity_type, &matched_text);
                 let reason =
                     classification_reason(&classified_entity_type, &entity.recognizer_name);
-                let source = classify_source(&classified_entity_type, &replacement);
+                let source = classify_source(
+                    &classified_entity_type,
+                    &replacement,
+                    &entity.recognizer_name,
+                );
 
                 Finding {
                     source,
@@ -176,11 +180,12 @@ fn classification_reason(entity_type: &str, recognizer_name: &str) -> String {
     }
 }
 
-fn classify_source(entity_type: &str, replacement: &str) -> FindingSource {
+fn classify_source(entity_type: &str, replacement: &str, recognizer_name: &str) -> FindingSource {
     match entity_type {
         "FAX_NUMBER" => FindingSource::Custom,
         "DATE_TIME" if replacement != "[DATE_TIME]" => FindingSource::Policy,
         "AGE" if replacement != "[AGE]" => FindingSource::Policy,
+        _ if recognizer_name.to_ascii_lowercase().contains("ner") => FindingSource::Ml,
         _ => FindingSource::RedactCore,
     }
 }
