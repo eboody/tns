@@ -12,6 +12,8 @@ pub struct Config {
     pub exact_entities: Vec<ExactEntityConfig>,
     #[serde(default)]
     pub patterns: PatternConfig,
+    #[serde(default)]
+    pub ner: Option<NerConfig>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -54,6 +56,15 @@ pub struct PatternRuleDefinition {
     pub pattern: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct NerConfig {
+    pub enabled: bool,
+    pub model_path: PathBuf,
+    pub tokenizer_path: Option<PathBuf>,
+    #[serde(default = "default_ner_min_confidence")]
+    pub min_confidence: f32,
+}
+
 impl Config {
     pub fn from_path(path: &Path) -> Result<Self> {
         let raw = fs::read_to_string(path).map_err(|source| AppError::ReadFile {
@@ -76,6 +87,7 @@ impl Config {
         validate_pattern_rule("date", config.patterns.dates.as_ref())?;
         validate_pattern_rule("email", config.patterns.emails.as_ref())?;
         validate_pattern_rule("phone", config.patterns.phones.as_ref())?;
+        validate_ner_config(config.ner.as_ref())?;
 
         Ok(config)
     }
@@ -127,6 +139,10 @@ impl Config {
     }
 }
 
+fn default_ner_min_confidence() -> f32 {
+    0.7
+}
+
 fn validate_entity(entity_type: &str, replacement: &str, variants: &[String]) -> Result<()> {
     if entity_type.trim().is_empty() {
         return Err(AppError::InvalidConfig(
@@ -158,6 +174,30 @@ fn validate_pattern_rule(entity_type: &str, rule: Option<&PatternRuleConfig>) ->
         return Err(AppError::InvalidConfig(format!(
             "pattern {entity_type} replacement must not be empty when enabled"
         )));
+    }
+
+    Ok(())
+}
+
+fn validate_ner_config(rule: Option<&NerConfig>) -> Result<()> {
+    let Some(rule) = rule else {
+        return Ok(());
+    };
+
+    if !rule.enabled {
+        return Ok(());
+    }
+
+    if rule.model_path.as_os_str().is_empty() {
+        return Err(AppError::InvalidConfig(
+            "ner.model_path must not be empty when ner is enabled".into(),
+        ));
+    }
+
+    if !(0.0..=1.0).contains(&rule.min_confidence) {
+        return Err(AppError::InvalidConfig(
+            "ner.min_confidence must be between 0.0 and 1.0".into(),
+        ));
     }
 
     Ok(())

@@ -126,6 +126,7 @@ mod tests {
             },
             exact_entities: vec![],
             patterns: Default::default(),
+            ner: None,
         };
 
         let rules = build_rules(&config).unwrap();
@@ -155,6 +156,7 @@ mod tests {
                 },
             ],
             patterns: Default::default(),
+            ner: None,
         };
 
         let rules = build_rules(&config).unwrap();
@@ -188,6 +190,7 @@ mod tests {
                     replacement: "PHONE".into(),
                 }),
             },
+            ner: None,
         };
 
         let rules = build_rules(&config).unwrap();

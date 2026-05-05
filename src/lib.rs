@@ -8,6 +8,7 @@ mod safe_harbor_policy;
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use audit::{AuditReport, Finding, FindingSource};
 use config::Config;
@@ -15,6 +16,7 @@ use deidentify::{DeidentifyResult, apply_rules, build_rules};
 use error::{AppError, Result};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use redact_core::AnalyzerEngine;
+use redact_ner::{NerConfig as NerRecognizerConfig, NerRecognizer};
 use walkdir::WalkDir;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -225,8 +227,45 @@ struct StructuredRun {
     findings: Vec<Finding>,
 }
 
-fn apply_redact_core(input_text: &str) -> Result<StructuredRun> {
-    let engine = AnalyzerEngine::new();
+fn apply_redact_core_with_config(
+    input_text: &str,
+    config: Option<&Config>,
+) -> Result<StructuredRun> {
+    let mut engine = AnalyzerEngine::new();
+    if let Some(ner) = config
+        .and_then(|config| config.ner.as_ref())
+        .filter(|ner| ner.enabled)
+    {
+        if !ner.model_path.is_file() {
+            return Err(AppError::NerInitialization(format!(
+                "model file does not exist: {}",
+                ner.model_path.display()
+            )));
+        }
+        if let Some(tokenizer_path) = ner.tokenizer_path.as_ref()
+            && !tokenizer_path.is_file()
+        {
+            return Err(AppError::NerInitialization(format!(
+                "tokenizer file does not exist: {}",
+                tokenizer_path.display()
+            )));
+        }
+
+        let recognizer = NerRecognizer::from_config(NerRecognizerConfig {
+            model_path: ner.model_path.to_string_lossy().into_owned(),
+            tokenizer_path: ner
+                .tokenizer_path
+                .as_ref()
+                .map(|path| path.to_string_lossy().into_owned()),
+            min_confidence: ner.min_confidence,
+            ..Default::default()
+        })
+        .map_err(|error| AppError::NerInitialization(error.to_string()))?;
+        engine
+            .recognizer_registry_mut()
+            .add_recognizer(Arc::new(recognizer));
+    }
+
     let analysis = engine
         .analyze(input_text, None)
         .map_err(|error| AppError::Analysis(error.to_string()))?;
@@ -241,13 +280,17 @@ fn apply_deidentification_pipeline(
     input_text: &str,
     config_path: Option<&Path>,
 ) -> Result<StructuredRun> {
-    let mut structured = apply_redact_core(input_text)?;
+    let loaded_config = match config_path {
+        Some(config_path) => Some(Config::from_path(config_path)?),
+        None => None,
+    };
 
-    let Some(config_path) = config_path else {
+    let mut structured = apply_redact_core_with_config(input_text, loaded_config.as_ref())?;
+
+    let Some(config) = loaded_config.as_ref() else {
         return Ok(structured);
     };
 
-    let config = Config::from_path(config_path)?;
     let rules = build_rules(&config)?;
     let DeidentifyResult { text, mut findings } = apply_rules(&structured.text, &rules);
 
@@ -1026,6 +1069,62 @@ mod tests {
         let audit = fs::read_to_string(replace_summary.audit_output_path.unwrap()).unwrap();
         assert!(audit.contains("\"source\": \"configured\""));
         assert!(audit.contains("\"source\": \"redact_core\""));
+    }
+
+    #[test]
+    fn run_allows_deterministic_fallback_when_ner_is_not_configured() {
+        let temp = tempdir().unwrap();
+        let input = temp.path().join("contact.md");
+        let config = temp.path().join("deid.toml");
+        fs::write(&input, "Jane Doe emailed jane@example.com.").unwrap();
+        fs::write(
+            &config,
+            "[client]\nreplacement = \"CLIENT\"\nvariants = [\"Jane Doe\"]\n",
+        )
+        .unwrap();
+
+        let summary = run(RunOptions {
+            input,
+            output: None,
+            audit_output: None,
+            config: Some(config),
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+            mode: RunMode::Replace,
+        })
+        .unwrap();
+
+        let output = fs::read_to_string(summary.output_path.unwrap()).unwrap();
+        assert_eq!(output, "CLIENT emailed [EMAIL_ADDRESS].");
+    }
+
+    #[test]
+    fn run_fails_explicitly_when_enabled_ner_model_cannot_be_loaded() {
+        let temp = tempdir().unwrap();
+        let input = temp.path().join("contact.md");
+        let config = temp.path().join("deid.toml");
+        fs::write(&input, "Jane Doe emailed jane@example.com.").unwrap();
+        fs::write(
+            &config,
+            format!(
+                "[client]\nreplacement = \"CLIENT\"\nvariants = [\"Jane Doe\"]\n\n[ner]\nenabled = true\nmodel_path = \"{}\"\nmin_confidence = 0.7\n",
+                temp.path().join("missing-model.onnx").display()
+            ),
+        )
+        .unwrap();
+
+        let error = run(RunOptions {
+            input,
+            output: None,
+            audit_output: None,
+            config: Some(config),
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+            mode: RunMode::Replace,
+        })
+        .unwrap_err();
+
+        assert!(error.to_string().contains("failed to initialize NER"));
     }
 
     #[test]

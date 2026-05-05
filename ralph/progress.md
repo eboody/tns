@@ -202,3 +202,15 @@
 ## Next likely task
 
 - Continue issue #14 by unifying the remaining orchestration logic around the shared finding model, especially the replace-count / summary boundary, and then reassess whether issue #14 is complete enough to unblock issue #15.
+
+## Iteration 20 (GitHub issue #15)
+
+- Reassessed the architectural state after the issue-14 finding-model work and treated issue #14 as complete enough to unblock the first issue-15 slice.
+- Fetched current `redact-ner` docs and used that boundary to add optional local NER configuration through the existing config-file path rather than widening the CLI surface immediately.
+- Added optional `[ner]` config support with `enabled`, `model_path`, `tokenizer_path`, and `min_confidence`.
+- Wired analyzer construction so deterministic fallback remains the default when NER is not configured, while enabled NER now attempts recognizer initialization and fails explicitly when model/tokenizer assets are missing.
+- Verified the slice with `cargo fmt --check`, `cargo test`, and preserved fallback behavior through the existing sample CLI run.
+
+## Next likely task
+
+- Continue issue #15 with the first positive model-backed detection slice, ideally by introducing a bounded way to verify successful contextual recognition without yet widening scope into psychology-specific policy behavior.

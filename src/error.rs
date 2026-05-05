@@ -24,6 +24,7 @@ pub enum AppError {
         pattern: String,
         source: regex::Error,
     },
+    NerInitialization(String),
     Analysis(String),
     UnsupportedInputFormat(PathBuf),
     UnsafeOutputPath(PathBuf),
@@ -46,6 +47,9 @@ impl fmt::Display for AppError {
             AppError::InvalidConfig(message) => write!(f, "invalid config: {message}"),
             AppError::InvalidPattern { pattern, source } => {
                 write!(f, "invalid replacement pattern `{pattern}`: {source}")
+            }
+            AppError::NerInitialization(message) => {
+                write!(f, "failed to initialize NER: {message}")
             }
             AppError::Analysis(message) => write!(f, "analysis failed: {message}"),
             AppError::UnsupportedInputFormat(path) => write!(
