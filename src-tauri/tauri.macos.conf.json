@@ -2,9 +2,9 @@
   "$schema": "https://schema.tauri.app/config/2",
   "bundle": {
     "resources": {
-      "../../ml/ner/model.onnx": "ner/model.onnx",
-      "../../ml/ner/tokenizer.json": "ner/tokenizer.json",
-      "../../ml/ner/site/onnxruntime/capi/libonnxruntime.1.25.1.dylib": "ner/site/onnxruntime/capi/libonnxruntime.1.25.1.dylib"
+      "../ml/ner/model.onnx": "ner/model.onnx",
+      "../ml/ner/tokenizer.json": "ner/tokenizer.json",
+      "../ml/ner/site/onnxruntime/capi/libonnxruntime.1.25.1.dylib": "ner/site/onnxruntime/capi/libonnxruntime.1.25.1.dylib"
     },
     "macOS": {
       "dmg": {

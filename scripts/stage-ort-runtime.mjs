@@ -16,8 +16,7 @@ const ORT_VERSION = '1.25.1'
 const GITHUB_BASE = `https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}`
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
-const desktopDir = path.resolve(__dirname, '..')
-const repoRoot = path.resolve(desktopDir, '..')
+const repoRoot = path.resolve(__dirname, '..')
 const capiDir = path.join(repoRoot, 'ml', 'ner', 'site', 'onnxruntime', 'capi')
 
 const TARGETS = {

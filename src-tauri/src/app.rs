@@ -1,12 +1,12 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use tauri::{AppHandle, Manager, path::BaseDirectory};
-use tauri_plugin_opener::OpenerExt;
-use tns_deid::desktop::{
+use crate::desktop::{
     DesktopReplaceRequest, DesktopReviewRequest, run_replace_job as run_replace_service,
     run_review_job as run_review_service,
 };
+use tauri::{AppHandle, Manager, path::BaseDirectory};
+use tauri_plugin_opener::OpenerExt;
 
 #[derive(Debug, Default)]
 struct LastReplaceArtifacts {
@@ -18,8 +18,8 @@ type LastReplaceArtifactsState = Mutex<LastReplaceArtifacts>;
 
 const NER_MODEL_RESOURCE_PATH: &str = "ner/model.onnx";
 const NER_TOKENIZER_RESOURCE_PATH: &str = "ner/tokenizer.json";
-const DEV_NER_MODEL_RESOURCE_PATH: &str = "../../ml/ner/model.onnx";
-const DEV_NER_TOKENIZER_RESOURCE_PATH: &str = "../../ml/ner/tokenizer.json";
+const DEV_NER_MODEL_RESOURCE_PATH: &str = "../ml/ner/model.onnx";
+const DEV_NER_TOKENIZER_RESOURCE_PATH: &str = "../ml/ner/tokenizer.json";
 
 #[tauri::command]
 fn run_review_job(
@@ -27,7 +27,7 @@ fn run_review_job(
     config: Option<String>,
     include_patterns: Vec<String>,
     exclude_patterns: Vec<String>,
-) -> Result<tns_deid::desktop::DesktopReviewResult, String> {
+) -> Result<crate::desktop::DesktopReviewResult, String> {
     run_review_service(DesktopReviewRequest {
         input: input.into(),
         config: config.map(Into::into),
@@ -44,7 +44,7 @@ fn run_replace_job(
     config: Option<String>,
     include_patterns: Vec<String>,
     exclude_patterns: Vec<String>,
-) -> Result<tns_deid::desktop::DesktopReplaceResult, String> {
+) -> Result<crate::desktop::DesktopReplaceResult, String> {
     let result = run_replace_service(DesktopReplaceRequest {
         input: input.into(),
         config: config.map(Into::into),

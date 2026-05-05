@@ -11,7 +11,7 @@ All platforms need these bundled resources:
 
 Each platform also needs the matching ONNX Runtime shared libraries under `ml/ner/site/onnxruntime/capi/`.
 
-These files are now staged automatically from the official ONNX Runtime GitHub releases by `desktop/scripts/stage-ort-runtime.mjs`.
+These files are now staged automatically from the official ONNX Runtime GitHub releases by `scripts/stage-ort-runtime.mjs`.
 
 ## Automatic runtime staging
 

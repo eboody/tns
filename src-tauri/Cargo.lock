@@ -3860,8 +3860,6 @@ dependencies = [
 [[package]]
 name = "redact-ner"
 version = "0.8.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "abe6e7b0401bbea85aa90ec5cd554f886813e55453e5284156f36d017a7149bd"
 dependencies = [
  "anyhow",
  "ndarray",
@@ -5085,21 +5083,14 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
- "toml 0.8.23",
- "walkdir",
- "zip",
-]
-
-[[package]]
-name = "tns-deid-desktop"
-version = "0.1.0"
-dependencies = [
- "serde",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
- "tns-deid",
+ "tempfile",
+ "toml 0.8.23",
+ "walkdir",
+ "zip",
 ]
 
 [[package]]

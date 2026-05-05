@@ -6,16 +6,13 @@ on:
 jobs:
   build-linux:
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: desktop
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: desktop/package-lock.json
+          cache-dependency-path: package-lock.json
       - uses: dtolnay/rust-toolchain@stable
       - run: sudo apt-get update
       - run: sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
@@ -24,44 +21,38 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: tns-deid-linux-installers
-          path: desktop/src-tauri/target/release/bundle/
+          path: src-tauri/target/release/bundle/
 
   build-macos:
     runs-on: macos-14
-    defaults:
-      run:
-        working-directory: desktop
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: desktop/package-lock.json
+          cache-dependency-path: package-lock.json
       - uses: dtolnay/rust-toolchain@stable
       - run: npm ci
       - run: npm run bundle:macos
       - uses: actions/upload-artifact@v4
         with:
           name: tns-deid-macos-installers
-          path: desktop/src-tauri/target/release/bundle/
+          path: src-tauri/target/release/bundle/
 
   build-windows:
     runs-on: windows-latest
-    defaults:
-      run:
-        working-directory: desktop
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: desktop/package-lock.json
+          cache-dependency-path: package-lock.json
       - uses: dtolnay/rust-toolchain@stable
       - run: npm ci
       - run: npm run bundle:windows
       - uses: actions/upload-artifact@v4
         with:
           name: tns-deid-windows-installers
-          path: desktop/src-tauri/target/release/bundle/
+          path: src-tauri/target/release/bundle/
