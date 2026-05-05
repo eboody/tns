@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Mutex;
 
+use tauri::{AppHandle, Manager, path::BaseDirectory};
 use tauri_plugin_opener::OpenerExt;
 use tns_deid::desktop::{
     DesktopReplaceRequest, DesktopReviewRequest, run_replace_job as run_replace_service,
@@ -15,11 +16,10 @@ struct LastReplaceArtifacts {
 
 type LastReplaceArtifactsState = Mutex<LastReplaceArtifacts>;
 
-const DEFAULT_AUTO_NER_MODEL_PATH: &str = "/home/eran/.local/share/com.eboody.tnsdeid.desktop/ner/model.onnx";
-const DEFAULT_AUTO_NER_TOKENIZER_PATH: &str =
-    "/home/eran/.local/share/com.eboody.tnsdeid.desktop/ner/tokenizer.json";
-const DEFAULT_BUNDLED_NER_MODEL_PATH: &str = "/home/eran/documents/TNS/ml/ner/model.onnx";
-const DEFAULT_BUNDLED_NER_TOKENIZER_PATH: &str = "/home/eran/documents/TNS/ml/ner/tokenizer.json";
+const NER_MODEL_RESOURCE_PATH: &str = "ner/model.onnx";
+const NER_TOKENIZER_RESOURCE_PATH: &str = "ner/tokenizer.json";
+const DEV_NER_MODEL_RESOURCE_PATH: &str = "../../ml/ner/model.onnx";
+const DEV_NER_TOKENIZER_RESOURCE_PATH: &str = "../../ml/ner/tokenizer.json";
 
 #[tauri::command]
 fn run_review_job(
@@ -100,30 +100,58 @@ fn open_existing_path(app: &tauri::AppHandle, path: PathBuf) -> Result<(), Strin
         .map_err(|error| error.to_string())
 }
 
-fn configure_default_auto_ner_assets() {
-    let model_path = PathBuf::from(DEFAULT_AUTO_NER_MODEL_PATH);
-    let tokenizer_path = PathBuf::from(DEFAULT_AUTO_NER_TOKENIZER_PATH);
-    let bundled_model_path = PathBuf::from(DEFAULT_BUNDLED_NER_MODEL_PATH);
-    let bundled_tokenizer_path = PathBuf::from(DEFAULT_BUNDLED_NER_TOKENIZER_PATH);
-
-    if model_path.is_file() && tokenizer_path.is_file() {
+fn configure_default_auto_ner_assets(app: &AppHandle) {
+    let Some((model_path, tokenizer_path)) = resolve_default_auto_ner_assets(app) else {
         unsafe {
-            std::env::set_var("TNS_DEID_AUTO_NER_MODEL_PATH", model_path);
-            std::env::set_var("TNS_DEID_AUTO_NER_TOKENIZER_PATH", tokenizer_path);
+            std::env::remove_var("TNS_DEID_AUTO_NER_MODEL_PATH");
+            std::env::remove_var("TNS_DEID_AUTO_NER_TOKENIZER_PATH");
         }
-    }
+        return;
+    };
 
-    if bundled_model_path.is_file() && bundled_tokenizer_path.is_file() {
-        unsafe {
-            std::env::set_var("TNS_ENABLE_BUNDLED_NER", "1");
-        }
+    unsafe {
+        std::env::set_var("TNS_DEID_AUTO_NER_MODEL_PATH", model_path);
+        std::env::set_var("TNS_DEID_AUTO_NER_TOKENIZER_PATH", tokenizer_path);
     }
+}
+
+fn resolve_default_auto_ner_assets(app: &AppHandle) -> Option<(PathBuf, PathBuf)> {
+    [
+        resolve_ner_assets(app, NER_MODEL_RESOURCE_PATH, NER_TOKENIZER_RESOURCE_PATH),
+        resolve_ner_assets(
+            app,
+            DEV_NER_MODEL_RESOURCE_PATH,
+            DEV_NER_TOKENIZER_RESOURCE_PATH,
+        ),
+    ]
+    .into_iter()
+    .flatten()
+    .find(|(model_path, tokenizer_path)| model_path.is_file() && tokenizer_path.is_file())
+}
+
+fn resolve_ner_assets(
+    app: &AppHandle,
+    model_resource_path: &str,
+    tokenizer_resource_path: &str,
+) -> Option<(PathBuf, PathBuf)> {
+    let model_path = app
+        .path()
+        .resolve(model_resource_path, BaseDirectory::Resource)
+        .ok()?;
+    let tokenizer_path = app
+        .path()
+        .resolve(tokenizer_resource_path, BaseDirectory::Resource)
+        .ok()?;
+    Some((model_path, tokenizer_path))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    configure_default_auto_ner_assets();
     tauri::Builder::default()
+        .setup(|app| {
+            configure_default_auto_ner_assets(app.handle());
+            Ok(())
+        })
         .manage(LastReplaceArtifactsState::default())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())

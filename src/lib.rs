@@ -8,9 +8,7 @@ pub mod pdf_extract;
 mod safe_harbor_policy;
 
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use std::sync::Arc;
 
 use audit::{AuditReport, ExtractionStatus, Finding, FindingSource, ReviewFlags};
@@ -20,9 +18,8 @@ use error::{AppError, Result};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use redact_core::AnalyzerEngine;
 use redact_core::recognizers::Recognizer;
-use redact_core::{EntityType, RecognizerResult};
 use redact_ner::{NerConfig as NerRecognizerConfig, NerRecognizer};
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use walkdir::WalkDir;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -360,114 +357,20 @@ struct StructuredRun {
 
 type SharedRecognizer = Arc<dyn Recognizer>;
 
-const BUNDLED_NER_DIR: &str = "ml/ner";
+#[cfg(target_os = "windows")]
+const ORT_DYLIB_MATCH_PREFIX: &str = "onnxruntime";
+#[cfg(target_os = "windows")]
+const ORT_DYLIB_MATCH_SUFFIX: &str = ".dll";
 
-#[derive(Debug, Clone)]
-struct BundledPythonNerRecognizer {
-    model_path: PathBuf,
-    tokenizer_path: PathBuf,
-    script_path: PathBuf,
-    python_path: PathBuf,
-    min_confidence: f32,
-}
+#[cfg(target_os = "macos")]
+const ORT_DYLIB_MATCH_PREFIX: &str = "libonnxruntime";
+#[cfg(target_os = "macos")]
+const ORT_DYLIB_MATCH_SUFFIX: &str = ".dylib";
 
-#[derive(Debug, Deserialize)]
-struct PythonNerResponse {
-    results: Vec<PythonNerResult>,
-}
-
-#[derive(Debug, Deserialize)]
-struct PythonNerResult {
-    entity_type: String,
-    start: usize,
-    end: usize,
-    score: f32,
-}
-
-impl BundledPythonNerRecognizer {
-    fn discover() -> Option<Self> {
-        if cfg!(test) || std::env::var_os("TNS_ENABLE_BUNDLED_NER").is_none() {
-            return None;
-        }
-
-        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let ner_dir = root.join(BUNDLED_NER_DIR);
-        let model_path = ner_dir.join("model.onnx");
-        let tokenizer_path = ner_dir.join("tokenizer.json");
-        let script_path = ner_dir.join("ner_infer.py");
-
-        if !(model_path.is_file() && tokenizer_path.is_file() && script_path.is_file()) {
-            return None;
-        }
-
-        Some(Self {
-            model_path,
-            tokenizer_path,
-            script_path,
-            python_path: PathBuf::from("python3"),
-            min_confidence: 0.7,
-        })
-    }
-}
-
-impl Recognizer for BundledPythonNerRecognizer {
-    fn name(&self) -> &str {
-        "BundledPythonNerRecognizer"
-    }
-
-    fn supported_entities(&self) -> &[EntityType] {
-        &[
-            EntityType::Person,
-            EntityType::Organization,
-            EntityType::Location,
-            EntityType::DateTime,
-        ]
-    }
-
-    fn analyze(&self, text: &str, _language: &str) -> anyhow::Result<Vec<RecognizerResult>> {
-        let mut child = Command::new(&self.python_path)
-            .arg(&self.script_path)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
-            .spawn()?;
-
-        let payload = serde_json::json!({
-            "model_path": self.model_path,
-            "tokenizer_path": self.tokenizer_path,
-            "text": text,
-            "min_confidence": self.min_confidence,
-        });
-
-        if let Some(stdin) = child.stdin.as_mut() {
-            stdin.write_all(payload.to_string().as_bytes())?;
-        }
-
-        let output = child.wait_with_output()?;
-        if !output.status.success() {
-            return Err(anyhow::anyhow!(
-                "bundled python NER failed with status {}",
-                output.status
-            ));
-        }
-
-        let response: PythonNerResponse = serde_json::from_slice(&output.stdout)?;
-        Ok(response
-            .results
-            .into_iter()
-            .map(|result| {
-                RecognizerResult::new(
-                    EntityType::from(result.entity_type),
-                    result.start,
-                    result.end,
-                    result.score,
-                    self.name(),
-                )
-                .with_text(text)
-            })
-            .collect())
-    }
-}
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+const ORT_DYLIB_MATCH_PREFIX: &str = "libonnxruntime.so";
+#[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+const ORT_DYLIB_MATCH_SUFFIX: &str = "";
 
 fn apply_redact_core_with_recognizers(
     input_text: &str,
@@ -479,18 +382,9 @@ fn apply_redact_core_with_recognizers(
         engine.recognizer_registry_mut().add_recognizer(recognizer);
     }
 
-    let bundled_python_ner = BundledPythonNerRecognizer::discover();
-    if let Some(recognizer) = bundled_python_ner.clone() {
-        engine
-            .recognizer_registry_mut()
-            .add_recognizer(Arc::new(recognizer));
-    }
-
     let active_ner = resolve_active_ner_config(config);
 
-    if bundled_python_ner.is_none()
-        && let Some(ner) = active_ner.as_ref()
-    {
+    if let Some(ner) = active_ner.as_ref() {
         if !ner.model_path.is_file() {
             return Err(AppError::NerInitialization(format!(
                 "model file does not exist: {}",
@@ -505,6 +399,8 @@ fn apply_redact_core_with_recognizers(
                 tokenizer_path.display()
             )));
         }
+
+        configure_ort_dylib_path_if_available(&ner.model_path);
 
         let recognizer = NerRecognizer::from_config(NerRecognizerConfig {
             model_path: ner.model_path.to_string_lossy().into_owned(),
@@ -531,7 +427,7 @@ fn apply_redact_core_with_recognizers(
     Ok(StructuredRun {
         text,
         findings,
-        ml_active: bundled_python_ner.is_some() || active_ner.is_some(),
+        ml_active: active_ner.is_some(),
     })
 }
 
@@ -558,6 +454,39 @@ fn auto_ner_config_if_available() -> Option<NerConfig> {
         tokenizer_path: Some(tokenizer_path),
         min_confidence: 0.7,
     })
+}
+
+fn configure_ort_dylib_path_if_available(model_path: &Path) {
+    if std::env::var_os("ORT_DYLIB_PATH").is_some() {
+        return;
+    }
+
+    let Some(dylib_path) = discover_ort_dylib_path(model_path) else {
+        return;
+    };
+
+    unsafe {
+        std::env::set_var("ORT_DYLIB_PATH", dylib_path);
+    }
+}
+
+fn discover_ort_dylib_path(model_path: &Path) -> Option<PathBuf> {
+    let model_dir = model_path.parent()?;
+    let candidate_dir = model_dir.join("site").join("onnxruntime").join("capi");
+    let entries = fs::read_dir(candidate_dir).ok()?;
+
+    entries
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(is_matching_ort_dylib_name)
+        })
+}
+
+fn is_matching_ort_dylib_name(name: &str) -> bool {
+    name.starts_with(ORT_DYLIB_MATCH_PREFIX)
+        && (ORT_DYLIB_MATCH_SUFFIX.is_empty() || name.ends_with(ORT_DYLIB_MATCH_SUFFIX))
 }
 
 fn apply_redact_core_with_config(
@@ -1542,6 +1471,34 @@ mod tests {
                 std::env::remove_var("TNS_DEID_AUTO_NER_TOKENIZER_PATH");
             }
         }
+    }
+
+    #[test]
+    fn discover_ort_dylib_path_finds_repo_local_runtime_next_to_model() {
+        let temp = tempdir().unwrap();
+        let model_dir = temp.path().join("ner");
+        let capi_dir = model_dir.join("site").join("onnxruntime").join("capi");
+        fs::create_dir_all(&capi_dir).unwrap();
+
+        let model_path = model_dir.join("model.onnx");
+        fs::write(&model_path, b"model").unwrap();
+
+        let dylib_filename = if super::ORT_DYLIB_MATCH_SUFFIX.is_empty() {
+            format!("{}.1.25.1", super::ORT_DYLIB_MATCH_PREFIX)
+        } else {
+            format!(
+                "{}.1.25.1{}",
+                super::ORT_DYLIB_MATCH_PREFIX,
+                super::ORT_DYLIB_MATCH_SUFFIX
+            )
+        };
+        let dylib_path = capi_dir.join(dylib_filename);
+        fs::write(&dylib_path, b"runtime").unwrap();
+
+        assert_eq!(
+            super::discover_ort_dylib_path(&model_path),
+            Some(dylib_path)
+        );
     }
 
     #[test]

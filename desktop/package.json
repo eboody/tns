@@ -6,10 +6,23 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "stage:runtime": "node ./scripts/stage-ort-runtime.mjs",
+    "stage:runtime:linux": "node ./scripts/stage-ort-runtime.mjs --target linux-x64",
+    "stage:runtime:linux:arm64": "node ./scripts/stage-ort-runtime.mjs --target linux-aarch64",
+    "stage:runtime:macos": "node ./scripts/stage-ort-runtime.mjs --target macos-arm64",
+    "stage:runtime:windows": "node ./scripts/stage-ort-runtime.mjs --target windows-x64",
+    "stage:runtime:windows:arm64": "node ./scripts/stage-ort-runtime.mjs --target windows-arm64",
+    "bundle:linux": "npm run stage:runtime && tauri build --config src-tauri/tauri.linux.conf.json --bundles deb,rpm",
+    "bundle:linux:appimage": "npm run stage:runtime && tauri build --config src-tauri/tauri.linux.conf.json --bundles appimage",
+    "bundle:macos": "npm run stage:runtime && tauri build --config src-tauri/tauri.macos.conf.json --bundles app,dmg",
+    "bundle:windows": "npm run stage:runtime:windows && tauri build --config src-tauri/tauri.windows.conf.json --bundles nsis",
+    "bundle:windows:msi": "npm run stage:runtime:windows && tauri build --config src-tauri/tauri.windows.conf.json --bundles msi"
   },
   "devDependencies": {
+    "adm-zip": "^0.5.16",
     "@tauri-apps/cli": "^2.0.0",
+    "tar": "^7.4.3",
     "vite": "^5.4.8"
   },
   "dependencies": {
