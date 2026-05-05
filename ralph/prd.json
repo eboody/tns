@@ -193,7 +193,7 @@
       "Observe the tool still surfaces residual review-sensitive cases instead of claiming perfect contextual coverage"
     ],
     "passes": false,
-    "notes": "Started with a bounded psychology-specific slice: deterministic redaction now covers labeled `Client:` / `Patient:` and `Provider:` / `Examiner:` / `Clinician:` / `Therapist:` / `Psychologist:` field values, surfacing them as custom findings and mapping them to Safe Harbor Category 1 (names). Additional family/school/clinic/context slices are still pending."
+    "notes": "Two bounded psychology-specific slices now exist: first, labeled `Client:` / `Patient:` and `Provider:` / `Examiner:` / `Clinician:` / `Therapist:` / `Psychologist:` fields; second, labeled family-role fields such as `Mother:` / `Father:` / `Parent:` / `Guardian:` / `Caregiver:` / `Spouse:` / `Sibling:`. All are deterministic custom findings mapped to Safe Harbor Category 1 (names). School/clinic/context slices are still pending."
   },
   {
     "id": "issue-17",

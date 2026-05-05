@@ -415,7 +415,7 @@ fn build_review_summary(input: &Path, findings: &[Finding], ml_active: bool) -> 
 
 fn safe_harbor_category_label(entity_type: &str) -> Option<&'static str> {
     match entity_type {
-        "CLIENT_NAME" | "PROVIDER_NAME" => Some("Category 1: names"),
+        "CLIENT_NAME" | "PROVIDER_NAME" | "FAMILY_NAME" => Some("Category 1: names"),
         "DATE_TIME" | "AGE" => Some("Category 3: dates except year / ages over 89"),
         "ADDRESS" => Some("Category 2: geographic subdivisions smaller than a state"),
         "PHONE_NUMBER" => Some("Category 4: telephone numbers"),
@@ -1353,6 +1353,67 @@ mod tests {
             summary
                 .review_summary
                 .contains("Currently covered Safe Harbor categories:")
+        );
+        assert!(summary.review_summary.contains("- Category 1: names"));
+    }
+
+    #[test]
+    fn run_redacts_labeled_family_fields_in_psychology_text() {
+        let temp = tempdir().unwrap();
+        let input = temp.path().join("intake.md");
+        fs::write(
+            &input,
+            "Mother: Jane Doe\nFather: John Doe\nGuardian: Alex Example\n",
+        )
+        .unwrap();
+
+        let summary = run(RunOptions {
+            input,
+            output: None,
+            audit_output: None,
+            config: None,
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+            mode: RunMode::Replace,
+        })
+        .unwrap();
+
+        let output = fs::read_to_string(summary.output_path.unwrap()).unwrap();
+        assert!(output.contains("Mother: [FAMILY_MEMBER]"));
+        assert!(output.contains("Father: [FAMILY_MEMBER]"));
+        assert!(output.contains("Guardian: [FAMILY_MEMBER]"));
+
+        let audit = fs::read_to_string(summary.audit_output_path.unwrap()).unwrap();
+        assert!(audit.contains("\"entity_type\": \"FAMILY_NAME\""));
+        assert!(audit.contains("\"replacement\": \"[FAMILY_MEMBER]\""));
+    }
+
+    #[test]
+    fn run_review_maps_labeled_family_fields_to_name_category() {
+        let temp = tempdir().unwrap();
+        let input = temp.path().join("intake.md");
+        fs::write(&input, "Mother: Jane Doe\nGuardian: Alex Example\n").unwrap();
+
+        let summary = run(RunOptions {
+            input,
+            output: None,
+            audit_output: None,
+            config: None,
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+            mode: RunMode::Review,
+        })
+        .unwrap();
+
+        assert!(
+            summary
+                .review_summary
+                .contains("[custom:FAMILY_NAME] Jane Doe -> [FAMILY_MEMBER]")
+        );
+        assert!(
+            summary
+                .review_summary
+                .contains("[custom:FAMILY_NAME] Alex Example -> [FAMILY_MEMBER]")
         );
         assert!(summary.review_summary.contains("- Category 1: names"));
     }

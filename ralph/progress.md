@@ -274,3 +274,14 @@
 ## Next likely task
 
 - Continue issue #16 with the next bounded contextual slice, likely guardian/family-role labels or school/clinic labeled fields, while keeping the logic deterministic and explicitly review-bounded.
+
+## Iteration 26 (GitHub issue #16)
+
+- Continued issue #16 with the next bounded psychology-specific contextual slice: labeled family-role fields only.
+- Kept the blast radius controlled despite the high-risk policy boundary by restricting the change to deterministic labels such as `Mother:`, `Father:`, `Parent:`, `Guardian:`, `Caregiver:`, `Spouse:`, and `Sibling:`.
+- Added custom redaction for those labeled field values to `[FAMILY_MEMBER]` and mapped them to Safe Harbor Category 1 (names).
+- Verified the slice in both replace mode and review mode with realistic psychology-style text, alongside the full feedback loop.
+
+## Next likely task
+
+- Continue issue #16 with another bounded contextual slice, likely labeled school/clinic/institution fields, while keeping the implementation deterministic and review-bounded.

@@ -172,6 +172,29 @@ fn detect_custom_segments(input_text: &str) -> Vec<CustomSegment> {
         });
     }
 
+    let labeled_family_regex = Regex::new(
+        r"(?im)^(?:mother|father|parent|guardian|caregiver|spouse|sibling):\s*(?P<value>[^\r\n]+)",
+    )
+    .expect("custom family label regex should compile");
+    for captures in labeled_family_regex.captures_iter(input_text) {
+        let Some(value) = captures.name("value") else {
+            continue;
+        };
+        let text = value.as_str().trim().to_string();
+        if text.is_empty() {
+            continue;
+        }
+        segments.push(CustomSegment {
+            entity_type: "FAMILY_NAME".to_string(),
+            matched_text: text,
+            replacement: "[FAMILY_MEMBER]".to_string(),
+            reason: "custom labeled family field classification for psychology-specific context"
+                .to_string(),
+            start: value.start(),
+            end: value.end(),
+        });
+    }
+
     let address_regex = Regex::new(
         r"(?i)\b\d{1,5}\s+[A-Z0-9][A-Za-z0-9.'-]*(?:\s+[A-Z0-9][A-Za-z0-9.'-]*)*\s+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Court|Ct)(?:,\s*[A-Za-z .'-]+,\s*[A-Z]{2}\s+\d{5})?\b",
     )
