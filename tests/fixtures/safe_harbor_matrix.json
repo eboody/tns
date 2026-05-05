@@ -44,6 +44,42 @@
     ]
   },
   {
+    "name": "psychology_labeled_context_replace",
+    "kind": "text",
+    "input": "psychology_labels.md",
+    "config": null,
+    "mode": "replace",
+    "expected_output_contains": [
+      "Client: [CLIENT]",
+      "Provider: [PROVIDER]",
+      "Mother: [FAMILY_MEMBER]",
+      "School: [INSTITUTION]",
+      "Email: [EMAIL_ADDRESS]"
+    ],
+    "expected_audit_contains": [
+      "\"entity_type\": \"CLIENT_NAME\"",
+      "\"entity_type\": \"PROVIDER_NAME\"",
+      "\"entity_type\": \"FAMILY_NAME\"",
+      "\"entity_type\": \"INSTITUTION_NAME\""
+    ]
+  },
+  {
+    "name": "psychology_labeled_context_review",
+    "kind": "text",
+    "input": "psychology_labels.md",
+    "config": null,
+    "mode": "review",
+    "expected_review_contains": [
+      "[custom:CLIENT_NAME] Jane Doe -> [CLIENT]",
+      "[custom:PROVIDER_NAME] Shina Halavi, PhD -> [PROVIDER]",
+      "[custom:FAMILY_NAME] Janet Doe -> [FAMILY_MEMBER]",
+      "[custom:INSTITUTION_NAME] Archer School for Girls -> [INSTITUTION]",
+      "- Category 1: names",
+      "- Category 2: geographic subdivisions smaller than a state",
+      "Deterministic custom contextual findings to sanity-check in context: 4"
+    ]
+  },
+  {
     "name": "docx_markdown_extraction_and_nontext_placeholder",
     "kind": "docx",
     "input": "docx_document.xml",

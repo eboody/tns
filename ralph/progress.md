@@ -364,3 +364,14 @@
 ## Next likely task
 
 - Continue issue #19 with the next bounded contract-verification slice, likely fixture coverage for the newer psychology-specific labeled-context behavior or the machine-readable review flags.
+
+## Iteration 34 (GitHub issue #19)
+
+- Continued issue #19 with the next bounded contract-verification slice: regression coverage for the newer psychology-specific labeled-context behavior.
+- Added a combined labeled-context fixture covering client, provider, family, institution, and email behavior in one realistic psychology-style sample.
+- Extended the fixture matrix to verify both replace-mode outputs/audit content and review-mode custom finding/category reporting for that combined sample.
+- Verified the slice with `cargo fmt --check` and `cargo test`, including the fixture harness.
+
+## Next likely task
+
+- Reassess whether issue #19 is now complete enough for the current public contract, or add one final bounded fixture slice if there is a clearly missing workflow surface still uncovered.
