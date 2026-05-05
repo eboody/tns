@@ -375,3 +375,13 @@
 ## Next likely task
 
 - Reassess whether issue #19 is now complete enough for the current public contract, or add one final bounded fixture slice if there is a clearly missing workflow surface still uncovered.
+
+## Iteration 35 (GitHub issue #19)
+
+- Added one final bounded fixture slice to cover machine-readable review-flag and residual-risk surfaces inside the default matrix contract.
+- Extended the matrix assertions so the deterministic client/email replace case now checks `review_flags`, `ml_active`, `has_ml_findings`, and `extraction_status`, and the policy review case now checks the residual-review-risk summary section.
+- Reassessed the full regression story after this slice and marked issue #19 complete for the current public contract.
+
+## Next likely task
+
+- The GitHub backlog through issue #19 is now complete for the current scoped initiative. Next work would be new backlog creation or hardening beyond the agreed slices.

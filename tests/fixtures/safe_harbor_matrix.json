@@ -6,7 +6,14 @@
     "config": "client_config.toml",
     "mode": "replace",
     "expected_output_contains": ["CLIENT emailed [EMAIL_ADDRESS]."],
-    "expected_audit_contains": ["configured client variant exact match", "EMAIL_ADDRESS"]
+    "expected_audit_contains": [
+      "configured client variant exact match",
+      "EMAIL_ADDRESS",
+      "\"review_flags\"",
+      "\"ml_active\": false",
+      "\"has_ml_findings\": false",
+      "\"extraction_status\": \"clean_text\""
+    ]
   },
   {
     "name": "text_provider_email_replace",
@@ -29,7 +36,9 @@
       "[custom:FAX_NUMBER] (555) 123-4567 -> [FAX_NUMBER]",
       "- Category 3: dates except year / ages over 89",
       "- Category 5: fax numbers",
-      "- Category 6: email addresses"
+      "- Category 6: email addresses",
+      "Residual review risk summary:",
+      "Residual gap categories still open: 5"
     ]
   },
   {

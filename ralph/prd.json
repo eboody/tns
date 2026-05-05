@@ -234,7 +234,7 @@
       "Observe tests verify output Markdown, audit artifacts, and review summaries as one public workflow contract",
       "Observe the matrix covers unavailable-model or misconfigured-model scenarios with explicit failure or fallback behavior"
     ],
-    "passes": false,
-    "notes": "Two bounded regression-surface slices now exist: (1) the fixture matrix covers non-text omission review/audit behavior and explicit NER model-misconfiguration failure; and (2) it now also covers the combined psychology-specific labeled-context contract for replace/review flows, including client/provider/family/institution custom findings and category mapping."
+    "passes": true,
+    "notes": "Completed for the current public contract through bounded regression slices that cover: deterministic structured/configured/custom behavior; policy/category reporting; non-text omission review/audit behavior; explicit NER model-misconfiguration failure; combined psychology-specific labeled-context replace/review flows; machine-readable review flags; and asset-gated real-local-model acceptance outside the default fixture run."
   }
 ]
