@@ -1,0 +1,79 @@
+use std::path::PathBuf;
+
+use serde::Serialize;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FindingSource {
+    RedactCore,
+    Policy,
+    Configured,
+    Custom,
+}
+
+impl FindingSource {
+    pub fn summary_label(self) -> &'static str {
+        match self {
+            FindingSource::RedactCore => "redact-core",
+            FindingSource::Policy => "policy",
+            FindingSource::Configured => "configured",
+            FindingSource::Custom => "custom",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Finding {
+    pub source: FindingSource,
+    pub entity_type: String,
+    pub matched_text: String,
+    pub replacement: String,
+    pub reason: String,
+    pub start: usize,
+    pub end: usize,
+}
+
+impl Finding {
+    pub fn into_audit_record(self) -> AuditRecord {
+        AuditRecord {
+            source: self.source,
+            entity_type: self.entity_type,
+            matched_text: self.matched_text,
+            replacement: self.replacement,
+            reason: self.reason,
+            start: self.start,
+            end: self.end,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AuditRecord {
+    pub source: FindingSource,
+    pub entity_type: String,
+    pub matched_text: String,
+    pub replacement: String,
+    pub reason: String,
+    pub start: usize,
+    pub end: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AuditReport {
+    pub input_path: PathBuf,
+    pub output_path: PathBuf,
+    pub replacements: Vec<AuditRecord>,
+}
+
+impl AuditReport {
+    pub fn new(input_path: PathBuf, output_path: PathBuf, findings: Vec<Finding>) -> Self {
+        Self {
+            input_path,
+            output_path,
+            replacements: findings
+                .into_iter()
+                .map(Finding::into_audit_record)
+                .collect(),
+        }
+    }
+}

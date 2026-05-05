@@ -1,0 +1,73 @@
+[
+  {
+    "name": "markdown_client_email_replace",
+    "kind": "text",
+    "input": "client_email.md",
+    "config": "client_config.toml",
+    "mode": "replace",
+    "expected_output_contains": ["CLIENT emailed [EMAIL_ADDRESS]."],
+    "expected_audit_contains": ["configured client variant exact match", "EMAIL_ADDRESS"]
+  },
+  {
+    "name": "text_provider_email_replace",
+    "kind": "text",
+    "input": "provider_email.txt",
+    "config": "provider_config.toml",
+    "mode": "replace",
+    "expected_output_contains": ["PROVIDER_1 emailed [EMAIL_ADDRESS]."],
+    "expected_audit_contains": ["configured provider variant exact match", "EMAIL_ADDRESS"]
+  },
+  {
+    "name": "review_policy_and_category_summary",
+    "kind": "text",
+    "input": "policy_review.md",
+    "config": null,
+    "mode": "review",
+    "expected_review_contains": [
+      "[policy:DATE_TIME] 2003-01-02 -> 2003",
+      "[policy:AGE] age 94 -> 90 or older",
+      "[custom:FAX_NUMBER] (555) 123-4567 -> [FAX_NUMBER]",
+      "- Category 3: dates except year / ages over 89",
+      "- Category 5: fax numbers",
+      "- Category 6: email addresses"
+    ]
+  },
+  {
+    "name": "review_custom_address_category",
+    "kind": "text",
+    "input": "address_review.md",
+    "config": null,
+    "mode": "review",
+    "expected_review_contains": [
+      "[custom:ADDRESS] 123 Main Street, Los Angeles, CA 90001 -> [ADDRESS]",
+      "- Category 2: geographic subdivisions smaller than a state"
+    ]
+  },
+  {
+    "name": "docx_markdown_extraction_and_nontext_placeholder",
+    "kind": "docx",
+    "input": "docx_document.xml",
+    "config": "client_config.toml",
+    "mode": "replace",
+    "expected_output_contains": [
+      "CLIENT emailed [EMAIL_ADDRESS].",
+      "Image follows [OMITTED_NON_TEXT_CONTENT]"
+    ]
+  },
+  {
+    "name": "pdf_extractable_replace",
+    "kind": "pdf",
+    "input": "pdf_text.txt",
+    "config": "client_config.toml",
+    "mode": "replace",
+    "expected_output_contains": ["CLIENT emailed [EMAIL_ADDRESS]."]
+  },
+  {
+    "name": "pdf_invalid_fails_explicitly",
+    "kind": "invalid_pdf",
+    "input": "invalid_pdf.bin",
+    "config": null,
+    "mode": "replace",
+    "expected_error_contains": "failed to load PDF"
+  }
+]

@@ -1,0 +1,8 @@
+[client]
+replacement = "CLIENT"
+variants = ["Jane Doe"]
+
+[[exact_entities]]
+entity_type = "provider"
+replacement = "PROVIDER_1"
+variants = ["Dr. Smith"]

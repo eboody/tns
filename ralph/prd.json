@@ -1,0 +1,240 @@
+[
+  {
+    "id": "issue-01",
+    "category": "integration",
+    "priority": "high",
+    "risk": "high",
+    "description": "Integrate redact-core into the single-file Markdown tracer bullet as the primary structured-identifier engine.",
+    "verify": [
+      "Run the CLI on one Markdown file through redact-core",
+      "Observe de-identified Markdown output plus structured-identifier audit output",
+      "Observe no false claim of full Safe Harbor coverage yet"
+    ],
+    "passes": true,
+    "notes": "Completed in the pivoted iteration by wiring single-file replace/review/dry-run flows through redact-core for built-in structured identifiers, with explicit coverage warnings."
+  },
+  {
+    "id": "issue-02",
+    "category": "policy",
+    "priority": "high",
+    "risk": "high",
+    "description": "Add a Safe Harbor policy mapping layer for redact-core detections.",
+    "verify": [
+      "Map built-in redact-core detections to explicit Safe Harbor policy categories",
+      "Express date handling as Safe Harbor policy rather than raw detector output",
+      "Differentiate covered identifiers from residual review-required gaps"
+    ],
+    "passes": true,
+    "notes": "Completed through bounded policy slices that map structured detections to explicit Safe Harbor-oriented behavior, including year-only date handling, age-over-89 handling, source-aware review summaries, category mapping, and explicit residual-gap reporting."
+  },
+  {
+    "id": "issue-03",
+    "category": "integration",
+    "priority": "high",
+    "risk": "high",
+    "description": "Add configured known-entity replacement for names and known geographic/institutional identifiers that non-AI detection cannot guarantee.",
+    "verify": [
+      "Run configured name/provider/institution/location replacement deterministically",
+      "Observe configured replacements distinguished from library detections",
+      "Observe residual review signaling for unknown contextual identifiers"
+    ],
+    "passes": true,
+    "notes": "Completed through bounded slices covering configured client, provider, institution, and location replacement with review-mode distinction from raw redact-core structured coverage and explicit residual-gap signaling."
+  },
+  {
+    "id": "issue-04",
+    "category": "integration",
+    "priority": "high",
+    "risk": "medium",
+    "description": "Provide dry-run and review modes with source-aware replacement summaries.",
+    "verify": [
+      "Run the CLI in dry-run mode without writing final outputs",
+      "Observe review summaries showing whether a replacement came from redact-core, config, or custom policy",
+      "Observe clear mode-specific CLI behavior"
+    ],
+    "passes": true,
+    "notes": "Completed through bounded slices that aligned replace/dry-run/review mode behavior to the pivoted redact-core architecture, surfaced replacement source in summaries, and verified non-writing dry-run/review flows through the public CLI." 
+  },
+  {
+    "id": "issue-05",
+    "category": "integration",
+    "priority": "high",
+    "risk": "medium",
+    "description": "Process whole directories into de-identified Markdown with include/exclude policy and run summaries.",
+    "verify": [
+      "Run the CLI across a directory of supported inputs",
+      "Observe include/exclude filtering",
+      "Observe processed/skipped/unsupported/review-sensitive run summary"
+    ],
+    "passes": true,
+    "notes": "Completed with directory input support, include/exclude filtering, mirrored Markdown outputs, per-file audit outputs in replace mode, and run-level processed/skipped/unsupported/review-sensitive summaries."
+  },
+  {
+    "id": "issue-06",
+    "category": "extraction",
+    "priority": "medium",
+    "risk": "medium",
+    "description": "Add DOCX to Markdown extraction plus Safe Harbor de-identification.",
+    "verify": [
+      "Extract supported DOCX content to Markdown",
+      "Apply the de-identification pipeline end-to-end",
+      "Surface unsupported/non-text content explicitly"
+    ],
+    "passes": true,
+    "notes": "Completed with DOCX to Markdown extraction through word/document.xml, end-to-end de-identification on extracted text, Markdown output for DOCX inputs, and explicit non-text placeholder surfacing for unsupported drawing/object content." 
+  },
+  {
+    "id": "issue-07",
+    "category": "policy",
+    "priority": "high",
+    "risk": "high",
+    "description": "Add custom Safe Harbor gap recognizers and deterministic overlap resolution.",
+    "verify": [
+      "Cover agreed Safe Harbor gaps beyond stock redact-core support",
+      "Resolve overlaps predictably among library/config/custom detections",
+      "Surface residual review-required cases explicitly"
+    ],
+    "passes": true,
+    "notes": "Completed through bounded custom-gap slices covering fax-number and address/sub-state-geography classification layered on top of redact-core, with deterministic overlap suppression and explicit residual-gap reporting in review output."
+  },
+  {
+    "id": "issue-08",
+    "category": "integration",
+    "priority": "medium",
+    "risk": "medium",
+    "description": "De-identify filenames and generated artifact names.",
+    "verify": [
+      "Output filenames are de-identified deterministically",
+      "Review/audit artifacts do not leak raw identifiers in names",
+      "Run output explains naming transformations"
+    ],
+    "passes": true,
+    "notes": "Completed with deterministic filename and artifact-name de-identification in batch workflows, plus run-summary reporting of renamed outputs." 
+  },
+  {
+    "id": "issue-09",
+    "category": "extraction",
+    "priority": "medium",
+    "risk": "high",
+    "description": "Add text-extractable PDF to Markdown extraction plus Safe Harbor de-identification.",
+    "verify": [
+      "Extract text-extractable PDFs into Markdown",
+      "Apply the de-identification pipeline end-to-end",
+      "Report non-extractable or low-confidence PDFs explicitly"
+    ],
+    "passes": true,
+    "notes": "Completed with text-extractable PDF ingestion via lopdf text extraction into Markdown-like text, end-to-end de-identification on extracted text, and explicit failure for PDFs with no extractable text or invalid/low-confidence extraction." 
+  },
+  {
+    "id": "issue-10",
+    "category": "test",
+    "priority": "medium",
+    "risk": "medium",
+    "description": "Build a Safe Harbor fixture matrix and regression harness.",
+    "verify": [
+      "Fixture coverage spans supported Safe Harbor categories and formats",
+      "Regression tests verify Markdown output plus audit/review behavior",
+      "Explicit unsupported and residual-review cases are tested"
+    ],
+    "passes": true,
+    "notes": "Completed with a fixture-driven integration harness spanning supported Safe Harbor categories, configured supplementation, DOCX extraction, extractable PDF ingestion, and explicit failure behavior for invalid/non-extractable PDFs."
+  },
+  {
+    "id": "issue-13",
+    "category": "integration",
+    "priority": "high",
+    "risk": "medium",
+    "description": "Default clinician directory runs should write Markdown outputs into a predictable redacted folder without reprocessing generated artifacts.",
+    "verify": [
+      "Run the CLI on a directory without explicit output overrides",
+      "Observe de-identified Markdown outputs under input/redacted and audit artifacts under input/redacted/.audit",
+      "Observe batch summaries remain correct and preexisting generated outputs are not reprocessed"
+    ],
+    "passes": true,
+    "notes": "Completed by changing the default batch output root to `input/redacted`, colocating default audit artifacts under `input/redacted/.audit`, and skipping generated output paths during traversal so reruns do not ingest prior artifacts."
+  },
+  {
+    "id": "issue-14",
+    "category": "architecture",
+    "priority": "high",
+    "risk": "high",
+    "description": "Unify structured-library detections, policy transforms, and configured replacements behind one provenance-aware finding model.",
+    "verify": [
+      "Run the CLI with a sample that triggers library, policy, and configured replacements together",
+      "Observe output, audit artifacts, and review summaries all reflect one stable finding shape with source provenance",
+      "Observe current public behavior is preserved while detector provenance becomes consistent across replace, dry-run, and review flows"
+    ],
+    "passes": false,
+    "notes": "Two bounded slices are now complete under issue #14: first, explicit provenance labels were added; second, a deeper shared `Finding` model now flows through policy application, configured replacement, review summarization, and audit generation before being rendered into final audit records. Further work should unify the remaining public counters/summaries around that same abstraction and reduce duplicated orchestration logic."
+  },
+  {
+    "id": "issue-15",
+    "category": "integration",
+    "priority": "high",
+    "risk": "high",
+    "description": "Add optional local ONNX NER so the tool can run in deterministic-only or ML-assisted mode with explicit model configuration and honest failure surfacing.",
+    "verify": [
+      "Run the CLI in deterministic-only mode and observe current fallback behavior remains intact",
+      "Run the CLI with valid local model assets and observe contextual ML detections flow through the public pipeline",
+      "Run the CLI with missing or invalid model assets and observe explicit failure or disabled-model reporting rather than silent degradation"
+    ],
+    "passes": false,
+    "notes": "Blocked conceptually on the provenance-aware finding boundary from issue #14 so model-backed detections do not fork the rest of the pipeline."
+  },
+  {
+    "id": "issue-16",
+    "category": "policy",
+    "priority": "high",
+    "risk": "medium",
+    "description": "Layer psychology-specific contextual coverage on top of the hybrid redaction pipeline for client, provider, school, clinic, guardian, and sub-state location identifiers.",
+    "verify": [
+      "Run the CLI on realistic clinical text containing psychology-specific contextual identifiers",
+      "Observe improved redaction coverage in output Markdown and provenance-aware review artifacts",
+      "Observe the tool still surfaces residual review-sensitive cases instead of claiming perfect contextual coverage"
+    ],
+    "passes": false,
+    "notes": "Depends on issue #15 because the contextual redaction behavior should compose deterministic supplements with optional ML rather than introduce a separate ad hoc path."
+  },
+  {
+    "id": "issue-17",
+    "category": "integration",
+    "priority": "medium",
+    "risk": "medium",
+    "description": "Strengthen audit JSON, dry-run output, and review summaries so they clearly surface ML-assisted detections, confidence boundaries, and residual review risk.",
+    "verify": [
+      "Run review mode on a sample with mixed deterministic and ML-assisted detections",
+      "Observe clinician-facing summaries distinguish detector provenance and residual review risk clearly",
+      "Observe audit artifacts remain machine-readable while carrying enough provenance for downstream inspection"
+    ],
+    "passes": false,
+    "notes": "Depends on issue #15 because the audit/review surface must represent ML-assisted states explicitly, not just deterministic coverage."
+  },
+  {
+    "id": "issue-18",
+    "category": "extraction",
+    "priority": "medium",
+    "risk": "medium",
+    "description": "Deepen extraction reporting so omitted non-text content, weak extraction, and review-sensitive ingestion boundaries are surfaced more clearly to clinicians.",
+    "verify": [
+      "Run the CLI on representative DOCX/PDF inputs with strong, weak, and non-text-heavy extraction outcomes",
+      "Observe run summaries and review output distinguish omitted non-text content and weak extraction states explicitly",
+      "Observe the text-first Markdown contract remains intact while extraction confidence boundaries are made more honest"
+    ],
+    "passes": false,
+    "notes": "Independent hardening slice from GitHub issue #18; can proceed after issue #13 because it does not require the ML boundary to exist first."
+  },
+  {
+    "id": "issue-19",
+    "category": "test",
+    "priority": "medium",
+    "risk": "medium",
+    "description": "Extend the end-to-end fixture matrix so it proves deterministic-only and ML-assisted workflows together, including model-misconfiguration and review-risk surfacing.",
+    "verify": [
+      "Run the fixture matrix across representative mixed-document inputs in deterministic-only mode and ML-assisted mode",
+      "Observe tests verify output Markdown, audit artifacts, and review summaries as one public workflow contract",
+      "Observe the matrix covers unavailable-model or misconfigured-model scenarios with explicit failure or fallback behavior"
+    ],
+    "passes": false,
+    "notes": "Final verification slice from GitHub issue #19; depends on the completion of issues #16, #17, and #18 so the matrix reflects the intended product contract."
+  }
+]
