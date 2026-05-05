@@ -250,3 +250,15 @@
 ## Next likely task
 
 - Decide whether issue #15 needs a real local-model acceptance path inside this repo, or whether the remaining gap should be documented explicitly so work can move honestly to issue #16.
+
+## Iteration 24 (GitHub issue #15)
+
+- Assessed the real-model gap directly and confirmed there are no local `model.onnx` / `tokenizer.json` assets in the repo or approved temp workspace.
+- Chose the smallest honest path forward: codify real local-model verification as an ignored acceptance test instead of pretending the assets exist in-repo.
+- Added an ignored test gated by `TNS_DEID_NER_MODEL_PATH` and optional `TNS_DEID_NER_TOKENIZER_PATH` that runs the real `run()` path in review mode and asserts ML-assisted findings appear when an operator provides actual local assets.
+- Kept runtime behavior unchanged; this slice only strengthens the repo’s honest verification story around the remaining asset-dependent gap.
+- Verified the slice with `cargo fmt --check` and `cargo test`, where the new real-model test is explicitly reported as ignored.
+
+## Next likely task
+
+- Issue #15 is now honest enough to stop blocking the backlog. Begin issue #16 with the smallest bounded psychology-specific contextual redaction slice.

@@ -179,7 +179,7 @@
       "Run the CLI with missing or invalid model assets and observe explicit failure or disabled-model reporting rather than silent degradation"
     ],
     "passes": false,
-    "notes": "Two bounded slices now exist under issue #15: first, optional `[ner]` config plus explicit fallback/failure behavior; second, a testable recognizer-loading seam that proves positive ML-style contextual detections can flow through the real redaction pipeline and surface as `ml` findings, without requiring a real ONNX model in every test run. Real model-backed CLI coverage is still pending."
+    "notes": "Issue #15 now has four bounded slices: optional `[ner]` config plus explicit fallback/failure behavior; a testable recognizer-loading seam for positive ML-style detections; dedicated review-surface reporting for ML-assisted coverage; and an ignored real-local-model acceptance test gated by `TNS_DEID_NER_MODEL_PATH` / `TNS_DEID_NER_TOKENIZER_PATH`. This is enough to keep the repo honest about the remaining asset-dependent gap while preserving a real path to positive local-model verification."
   },
   {
     "id": "issue-16",

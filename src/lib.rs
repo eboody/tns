@@ -660,6 +660,7 @@ mod tests {
     use std::fs;
     use std::io::Write;
     use std::path::Path;
+    use std::path::PathBuf;
 
     use lopdf::content::{Content, Operation};
     use lopdf::{Document, Object, Stream, dictionary};
@@ -1230,6 +1231,62 @@ mod tests {
         assert!(review_summary.contains("ml-assisted contextual recognition: enabled"));
         assert!(review_summary.contains("Currently ML-assisted contextual coverage:"));
         assert!(review_summary.contains("- PERSON"));
+    }
+
+    #[test]
+    #[ignore = "requires local NER model assets"]
+    fn run_with_real_local_ner_assets_surfaces_ml_findings() {
+        let model_path = std::env::var("TNS_DEID_NER_MODEL_PATH")
+            .expect("set TNS_DEID_NER_MODEL_PATH to a local ONNX model");
+        let tokenizer_path = std::env::var("TNS_DEID_NER_TOKENIZER_PATH").ok();
+
+        let temp = tempdir().unwrap();
+        let input = temp.path().join("contact.md");
+        let config = temp.path().join("deid.toml");
+        fs::write(
+            &input,
+            "John Doe works at Acme Corp in New York. Email john@acme.com.",
+        )
+        .unwrap();
+
+        let mut config_toml = format!(
+            "[client]\nreplacement = \"CLIENT\"\nvariants = [\"Jane Example\"]\n\n[ner]\nenabled = true\nmodel_path = \"{}\"\nmin_confidence = 0.7\n",
+            PathBuf::from(&model_path).display()
+        );
+        if let Some(tokenizer_path) = tokenizer_path {
+            config_toml.push_str(&format!(
+                "tokenizer_path = \"{}\"\n",
+                PathBuf::from(tokenizer_path).display()
+            ));
+        }
+        fs::write(&config, config_toml).unwrap();
+
+        let summary = run(RunOptions {
+            input,
+            output: None,
+            audit_output: None,
+            config: Some(config),
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+            mode: RunMode::Review,
+        })
+        .unwrap();
+
+        assert!(
+            summary
+                .review_summary
+                .contains("ml-assisted contextual recognition: enabled")
+        );
+        assert!(
+            summary
+                .review_summary
+                .contains("Currently ML-assisted contextual coverage:")
+        );
+        assert!(
+            summary.review_summary.contains("[ml:PERSON]")
+                || summary.review_summary.contains("[ml:ORGANIZATION]")
+                || summary.review_summary.contains("[ml:LOCATION]")
+        );
     }
 
     #[test]
