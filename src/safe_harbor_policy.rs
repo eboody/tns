@@ -128,6 +128,50 @@ fn collect_segments(input_text: &str, entities: &[RecognizerResult]) -> Vec<Segm
 fn detect_custom_segments(input_text: &str) -> Vec<CustomSegment> {
     let mut segments = Vec::new();
 
+    let labeled_client_regex = Regex::new(r"(?im)^(?:client|patient):\s*(?P<value>[^\r\n]+)")
+        .expect("custom client label regex should compile");
+    for captures in labeled_client_regex.captures_iter(input_text) {
+        let Some(value) = captures.name("value") else {
+            continue;
+        };
+        let text = value.as_str().trim().to_string();
+        if text.is_empty() {
+            continue;
+        }
+        segments.push(CustomSegment {
+            entity_type: "CLIENT_NAME".to_string(),
+            matched_text: text,
+            replacement: "[CLIENT]".to_string(),
+            reason: "custom labeled client field classification for psychology-specific context"
+                .to_string(),
+            start: value.start(),
+            end: value.end(),
+        });
+    }
+
+    let labeled_provider_regex = Regex::new(
+        r"(?im)^(?:provider|examiner|clinician|therapist|psychologist):\s*(?P<value>[^\r\n]+)",
+    )
+    .expect("custom provider label regex should compile");
+    for captures in labeled_provider_regex.captures_iter(input_text) {
+        let Some(value) = captures.name("value") else {
+            continue;
+        };
+        let text = value.as_str().trim().to_string();
+        if text.is_empty() {
+            continue;
+        }
+        segments.push(CustomSegment {
+            entity_type: "PROVIDER_NAME".to_string(),
+            matched_text: text,
+            replacement: "[PROVIDER]".to_string(),
+            reason: "custom labeled provider field classification for psychology-specific context"
+                .to_string(),
+            start: value.start(),
+            end: value.end(),
+        });
+    }
+
     let address_regex = Regex::new(
         r"(?i)\b\d{1,5}\s+[A-Z0-9][A-Za-z0-9.'-]*(?:\s+[A-Z0-9][A-Za-z0-9.'-]*)*\s+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Court|Ct)(?:,\s*[A-Za-z .'-]+,\s*[A-Z]{2}\s+\d{5})?\b",
     )

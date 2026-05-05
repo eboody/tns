@@ -193,7 +193,7 @@
       "Observe the tool still surfaces residual review-sensitive cases instead of claiming perfect contextual coverage"
     ],
     "passes": false,
-    "notes": "Depends on issue #15 because the contextual redaction behavior should compose deterministic supplements with optional ML rather than introduce a separate ad hoc path."
+    "notes": "Started with a bounded psychology-specific slice: deterministic redaction now covers labeled `Client:` / `Patient:` and `Provider:` / `Examiner:` / `Clinician:` / `Therapist:` / `Psychologist:` field values, surfacing them as custom findings and mapping them to Safe Harbor Category 1 (names). Additional family/school/clinic/context slices are still pending."
   },
   {
     "id": "issue-17",

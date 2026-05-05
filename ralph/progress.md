@@ -262,3 +262,15 @@
 ## Next likely task
 
 - Issue #15 is now honest enough to stop blocking the backlog. Begin issue #16 with the smallest bounded psychology-specific contextual redaction slice.
+
+## Iteration 25 (GitHub issue #16)
+
+- Began issue #16 with the smallest honest psychology-specific contextual redaction slice instead of attempting broad free-text clinical understanding.
+- Ran impact analysis on `safe_harbor_policy::apply`; risk was high, so the implementation stayed tightly scoped to labeled clinical field values only.
+- Added deterministic custom redaction for labeled `Client:` / `Patient:` fields and labeled `Provider:` / `Examiner:` / `Clinician:` / `Therapist:` / `Psychologist:` fields.
+- Mapped those custom findings to Safe Harbor Category 1 (names) in review summaries.
+- Verified the slice end-to-end in replace mode and review mode with realistic psychology-style intake text, alongside the existing full feedback loop.
+
+## Next likely task
+
+- Continue issue #16 with the next bounded contextual slice, likely guardian/family-role labels or school/clinic labeled fields, while keeping the logic deterministic and explicitly review-bounded.
