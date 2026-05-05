@@ -49,6 +49,7 @@ pub struct RunSummary {
 }
 
 const COVERAGE_NOTE: &str = "Structured identifiers were processed with redact-core. Full HIPAA Safe Harbor coverage still requires policy mapping, configured known-entity replacement, and custom gap recognizers.";
+const LOW_CONFIDENCE_ML_THRESHOLD: f32 = 0.85;
 const RESIDUAL_GAPS: &[&str] = &[
     "names and contextual person references",
     "sub-state geography and full address details",
@@ -350,6 +351,8 @@ fn build_review_summary(input: &Path, findings: &[Finding], ml_active: bool) -> 
     let mut raw_structured_categories = Vec::new();
     let mut ml_categories = Vec::new();
     let mut safe_harbor_categories = Vec::new();
+    let mut low_confidence_ml_findings = 0usize;
+    let mut custom_contextual_findings = 0usize;
 
     for record in findings {
         let source = record.source.summary_label();
@@ -362,10 +365,20 @@ fn build_review_summary(input: &Path, findings: &[Finding], ml_active: bool) -> 
             if !ml_categories.contains(&record.entity_type.as_str()) {
                 ml_categories.push(record.entity_type.as_str());
             }
+            if record
+                .score
+                .is_some_and(|score| score < LOW_CONFIDENCE_ML_THRESHOLD)
+            {
+                low_confidence_ml_findings += 1;
+            }
         } else if record.source == FindingSource::RedactCore
             && !raw_structured_categories.contains(&record.entity_type.as_str())
         {
             raw_structured_categories.push(record.entity_type.as_str());
+        }
+
+        if record.source == FindingSource::Custom {
+            custom_contextual_findings += 1;
         }
 
         if let Some(category) = safe_harbor_category_label(&record.entity_type) {
@@ -421,6 +434,22 @@ fn build_review_summary(input: &Path, findings: &[Finding], ml_active: bool) -> 
         for category in safe_harbor_categories {
             lines.push(format!("- {category}"));
         }
+    }
+
+    lines.push("Residual review risk summary:".to_string());
+    lines.push(format!(
+        "- Residual gap categories still open: {}",
+        RESIDUAL_GAPS.len()
+    ));
+    if ml_active {
+        lines.push(format!(
+            "- ML-assisted findings below confidence threshold (<{LOW_CONFIDENCE_ML_THRESHOLD:.2}): {low_confidence_ml_findings}"
+        ));
+    }
+    if custom_contextual_findings > 0 {
+        lines.push(format!(
+            "- Deterministic custom contextual findings to sanity-check in context: {custom_contextual_findings}"
+        ));
     }
 
     lines.push(COVERAGE_NOTE.to_string());
@@ -1259,6 +1288,10 @@ mod tests {
         assert!(review_summary.contains("Currently ML-assisted contextual coverage:"));
         assert!(review_summary.contains("- PERSON"));
         assert!(review_summary.contains("score=0.95"));
+        assert!(review_summary.contains("Residual review risk summary:"));
+        assert!(
+            review_summary.contains("ML-assisted findings below confidence threshold (<0.85): 0")
+        );
     }
 
     #[test]
@@ -1537,6 +1570,16 @@ mod tests {
             summary
                 .review_summary
                 .contains("- Category 2: geographic subdivisions smaller than a state")
+        );
+        assert!(
+            summary
+                .review_summary
+                .contains("Residual review risk summary:")
+        );
+        assert!(
+            summary
+                .review_summary
+                .contains("Deterministic custom contextual findings to sanity-check in context: 2")
         );
     }
 

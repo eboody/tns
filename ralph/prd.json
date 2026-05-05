@@ -207,7 +207,7 @@
       "Observe audit artifacts remain machine-readable while carrying enough provenance for downstream inspection"
     ],
     "passes": false,
-    "notes": "Two bounded issue-17 slices now exist: (1) optional detector confidence is carried through findings, audit JSON, and review summaries when available; and (2) audit artifacts now include machine-readable review flags for `ml_active`, `has_ml_findings`, and the residual review-gap list. Deterministic configured/custom findings remain explicitly unscored rather than being assigned fake confidence."
+    "notes": "Three bounded issue-17 slices now exist: (1) optional detector confidence is carried through findings, audit JSON, and review summaries when available; (2) audit artifacts include machine-readable review flags for `ml_active`, `has_ml_findings`, and the residual review-gap list; and (3) dry-run/review summaries now include an explicit residual-review-risk summary with open-gap counts, low-confidence ML counts when applicable, and custom contextual finding counts."
   },
   {
     "id": "issue-18",

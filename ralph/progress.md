@@ -320,3 +320,14 @@
 ## Next likely task
 
 - Continue issue #17 with one more bounded review-surface improvement, likely a clearer residual-risk summary section for dry-run/review mode or a dedicated low-confidence ML subsection if the current evidence justifies it.
+
+## Iteration 30 (GitHub issue #17)
+
+- Continued issue #17 with an operator-facing residual-risk summary slice in dry-run/review output.
+- Added an explicit `Residual review risk summary:` section that reports open residual-gap count, low-confidence ML findings below the current threshold when ML is active, and the count of deterministic custom contextual findings that still merit operator sanity-checking in context.
+- Kept the slice honest by counting only existing evidence rather than inventing new confidence semantics or claiming broader review certainty.
+- Verified the slice with `cargo fmt --check`, `cargo test`, and the existing sample CLI fallback run.
+
+## Next likely task
+
+- Reassess whether issue #17 is now complete enough for the current audit/review scope, or add one final bounded slice only if a clearly missing operator-facing distinction remains.
