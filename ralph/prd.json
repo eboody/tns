@@ -193,7 +193,7 @@
       "Observe the tool still surfaces residual review-sensitive cases instead of claiming perfect contextual coverage"
     ],
     "passes": false,
-    "notes": "Two bounded psychology-specific slices now exist: first, labeled `Client:` / `Patient:` and `Provider:` / `Examiner:` / `Clinician:` / `Therapist:` / `Psychologist:` fields; second, labeled family-role fields such as `Mother:` / `Father:` / `Parent:` / `Guardian:` / `Caregiver:` / `Spouse:` / `Sibling:`. All are deterministic custom findings mapped to Safe Harbor Category 1 (names). School/clinic/context slices are still pending."
+    "notes": "Three bounded psychology-specific slices now exist: (1) labeled `Client:` / `Patient:` and `Provider:` / `Examiner:` / `Clinician:` / `Therapist:` / `Psychologist:` fields; (2) labeled family-role fields such as `Mother:` / `Father:` / `Parent:` / `Guardian:` / `Caregiver:` / `Spouse:` / `Sibling:`; and (3) labeled institution fields such as `School:` / `Clinic:` / `Hospital:` / `Institution:` / `Employer:` / `Workplace:` / `University:` / `College:`. Name-like slices map to Category 1; labeled institutions currently map to Category 2. Broader free-text contextual coverage is still pending."
   },
   {
     "id": "issue-17",

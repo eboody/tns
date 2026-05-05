@@ -195,6 +195,30 @@ fn detect_custom_segments(input_text: &str) -> Vec<CustomSegment> {
         });
     }
 
+    let labeled_institution_regex = Regex::new(
+        r"(?im)^(?:school|clinic|hospital|institution|employer|workplace|university|college):\s*(?P<value>[^\r\n]+)",
+    )
+    .expect("custom institution label regex should compile");
+    for captures in labeled_institution_regex.captures_iter(input_text) {
+        let Some(value) = captures.name("value") else {
+            continue;
+        };
+        let text = value.as_str().trim().to_string();
+        if text.is_empty() {
+            continue;
+        }
+        segments.push(CustomSegment {
+            entity_type: "INSTITUTION_NAME".to_string(),
+            matched_text: text,
+            replacement: "[INSTITUTION]".to_string(),
+            reason:
+                "custom labeled institution field classification for psychology-specific context"
+                    .to_string(),
+            start: value.start(),
+            end: value.end(),
+        });
+    }
+
     let address_regex = Regex::new(
         r"(?i)\b\d{1,5}\s+[A-Z0-9][A-Za-z0-9.'-]*(?:\s+[A-Z0-9][A-Za-z0-9.'-]*)*\s+(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Lane|Ln|Drive|Dr|Court|Ct)(?:,\s*[A-Za-z .'-]+,\s*[A-Z]{2}\s+\d{5})?\b",
     )

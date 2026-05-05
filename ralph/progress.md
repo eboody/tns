@@ -285,3 +285,14 @@
 ## Next likely task
 
 - Continue issue #16 with another bounded contextual slice, likely labeled school/clinic/institution fields, while keeping the implementation deterministic and review-bounded.
+
+## Iteration 27 (GitHub issue #16)
+
+- Continued issue #16 with the next bounded psychology-specific contextual slice: labeled institution fields only.
+- Kept the scope deterministic and review-bounded by targeting explicit labels such as `School:`, `Clinic:`, `Hospital:`, `Institution:`, `Employer:`, `Workplace:`, `University:`, and `College:` rather than attempting generic organization inference.
+- Added custom redaction for those labeled values to `[INSTITUTION]` and mapped them into the current Safe Harbor summary as Category 2 coverage.
+- Verified the slice in both replace mode and review mode with realistic psychology-style text, along with the full feedback loop.
+
+## Next likely task
+
+- Reassess whether issue #16 is complete enough for the currently evidenced psychology-specific labels, or continue with one more bounded slice if there is a clearly recurring labeled context still missing.

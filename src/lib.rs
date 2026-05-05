@@ -416,6 +416,7 @@ fn build_review_summary(input: &Path, findings: &[Finding], ml_active: bool) -> 
 fn safe_harbor_category_label(entity_type: &str) -> Option<&'static str> {
     match entity_type {
         "CLIENT_NAME" | "PROVIDER_NAME" | "FAMILY_NAME" => Some("Category 1: names"),
+        "INSTITUTION_NAME" => Some("Category 2: geographic subdivisions smaller than a state"),
         "DATE_TIME" | "AGE" => Some("Category 3: dates except year / ages over 89"),
         "ADDRESS" => Some("Category 2: geographic subdivisions smaller than a state"),
         "PHONE_NUMBER" => Some("Category 4: telephone numbers"),
@@ -1416,6 +1417,75 @@ mod tests {
                 .contains("[custom:FAMILY_NAME] Alex Example -> [FAMILY_MEMBER]")
         );
         assert!(summary.review_summary.contains("- Category 1: names"));
+    }
+
+    #[test]
+    fn run_redacts_labeled_institution_fields_in_psychology_text() {
+        let temp = tempdir().unwrap();
+        let input = temp.path().join("intake.md");
+        fs::write(
+            &input,
+            "School: Archer School\nClinic: USC Student Health\nEmployer: Acme Corp\n",
+        )
+        .unwrap();
+
+        let summary = run(RunOptions {
+            input,
+            output: None,
+            audit_output: None,
+            config: None,
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+            mode: RunMode::Replace,
+        })
+        .unwrap();
+
+        let output = fs::read_to_string(summary.output_path.unwrap()).unwrap();
+        assert!(output.contains("School: [INSTITUTION]"));
+        assert!(output.contains("Clinic: [INSTITUTION]"));
+        assert!(output.contains("Employer: [INSTITUTION]"));
+
+        let audit = fs::read_to_string(summary.audit_output_path.unwrap()).unwrap();
+        assert!(audit.contains("\"entity_type\": \"INSTITUTION_NAME\""));
+        assert!(audit.contains("\"replacement\": \"[INSTITUTION]\""));
+    }
+
+    #[test]
+    fn run_review_maps_labeled_institution_fields_to_geography_category() {
+        let temp = tempdir().unwrap();
+        let input = temp.path().join("intake.md");
+        fs::write(
+            &input,
+            "School: Archer School\nClinic: USC Student Health\n",
+        )
+        .unwrap();
+
+        let summary = run(RunOptions {
+            input,
+            output: None,
+            audit_output: None,
+            config: None,
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+            mode: RunMode::Review,
+        })
+        .unwrap();
+
+        assert!(
+            summary
+                .review_summary
+                .contains("[custom:INSTITUTION_NAME] Archer School -> [INSTITUTION]")
+        );
+        assert!(
+            summary
+                .review_summary
+                .contains("[custom:INSTITUTION_NAME] USC Student Health -> [INSTITUTION]")
+        );
+        assert!(
+            summary
+                .review_summary
+                .contains("- Category 2: geographic subdivisions smaller than a state")
+        );
     }
 
     #[test]
