@@ -77,6 +77,7 @@ pub struct AuditReport {
 pub struct ReviewFlags {
     pub ml_active: bool,
     pub has_ml_findings: bool,
+    pub non_text_omissions_detected: bool,
     pub residual_review_gaps: Vec<String>,
 }
 

@@ -206,8 +206,8 @@
       "Observe clinician-facing summaries distinguish detector provenance and residual review risk clearly",
       "Observe audit artifacts remain machine-readable while carrying enough provenance for downstream inspection"
     ],
-    "passes": false,
-    "notes": "Three bounded issue-17 slices now exist: (1) optional detector confidence is carried through findings, audit JSON, and review summaries when available; (2) audit artifacts include machine-readable review flags for `ml_active`, `has_ml_findings`, and the residual review-gap list; and (3) dry-run/review summaries now include an explicit residual-review-risk summary with open-gap counts, low-confidence ML counts when applicable, and custom contextual finding counts."
+    "passes": true,
+    "notes": "Completed for the current audit/review scope through three bounded slices: (1) optional detector confidence flows through findings, audit JSON, and review summaries when available; (2) audit artifacts include machine-readable review flags for `ml_active`, `has_ml_findings`, `non_text_omissions_detected`, and the residual review-gap list; and (3) dry-run/review summaries include an explicit residual-review-risk section with open-gap counts, low-confidence ML counts when applicable, and deterministic custom-contextual counts."
   },
   {
     "id": "issue-18",
@@ -221,7 +221,7 @@
       "Observe the text-first Markdown contract remains intact while extraction confidence boundaries are made more honest"
     ],
     "passes": false,
-    "notes": "Independent hardening slice from GitHub issue #18; can proceed after issue #13 because it does not require the ML boundary to exist first."
+    "notes": "Started with a bounded extraction-honesty slice: extracted `[OMITTED_NON_TEXT_CONTENT]` placeholders are now surfaced as first-class non-text omission signals in single-file review output, batch summaries, and machine-readable audit flags."
   },
   {
     "id": "issue-19",

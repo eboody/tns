@@ -44,12 +44,14 @@ pub struct RunSummary {
     pub output_path: Option<PathBuf>,
     pub audit_output_path: Option<PathBuf>,
     pub replacements: usize,
+    pub non_text_omissions_detected: bool,
     pub review_summary: String,
     pub coverage_note: &'static str,
 }
 
 const COVERAGE_NOTE: &str = "Structured identifiers were processed with redact-core. Full HIPAA Safe Harbor coverage still requires policy mapping, configured known-entity replacement, and custom gap recognizers.";
 const LOW_CONFIDENCE_ML_THRESHOLD: f32 = 0.85;
+const OMITTED_NON_TEXT_CONTENT: &str = "[OMITTED_NON_TEXT_CONTENT]";
 const RESIDUAL_GAPS: &[&str] = &[
     "names and contextual person references",
     "sub-state geography and full address details",
@@ -70,10 +72,15 @@ fn run_single(options: RunOptions) -> Result<RunSummary> {
     validate_supported_input(&options.input)?;
 
     let input_text = load_input_as_markdown(&options.input)?;
+    let non_text_omissions_detected = input_text.contains(OMITTED_NON_TEXT_CONTENT);
 
     let structured = apply_deidentification_pipeline(&input_text, options.config.as_deref())?;
-    let review_summary =
-        build_review_summary(&options.input, &structured.findings, structured.ml_active);
+    let review_summary = build_review_summary(
+        &options.input,
+        &structured.findings,
+        structured.ml_active,
+        non_text_omissions_detected,
+    );
 
     if options.mode != RunMode::Replace {
         return Ok(RunSummary {
@@ -81,6 +88,7 @@ fn run_single(options: RunOptions) -> Result<RunSummary> {
             output_path: None,
             audit_output_path: None,
             replacements: structured.findings.len(),
+            non_text_omissions_detected,
             review_summary,
             coverage_note: COVERAGE_NOTE,
         });
@@ -105,6 +113,7 @@ fn run_single(options: RunOptions) -> Result<RunSummary> {
             .findings
             .iter()
             .any(|finding| finding.source == FindingSource::Ml),
+        non_text_omissions_detected,
         residual_review_gaps: RESIDUAL_GAPS.iter().map(|gap| (*gap).to_string()).collect(),
     };
 
@@ -123,6 +132,7 @@ fn run_single(options: RunOptions) -> Result<RunSummary> {
         output_path: Some(output_path),
         audit_output_path: Some(audit_output_path),
         replacements: audit_report.replacements.len(),
+        non_text_omissions_detected,
         review_summary,
         coverage_note: COVERAGE_NOTE,
     })
@@ -145,6 +155,7 @@ fn run_directory(options: RunOptions) -> Result<RunSummary> {
     let mut unsupported = Vec::new();
     let mut extraction_failed = Vec::new();
     let mut review_sensitive = Vec::new();
+    let mut non_text_omission_files = Vec::new();
     let mut renamed = Vec::new();
     let mut replacement_total = 0usize;
 
@@ -203,6 +214,9 @@ fn run_directory(options: RunOptions) -> Result<RunSummary> {
 
         replacement_total += summary.replacements;
         processed.push(relative.clone());
+        if summary.non_text_omissions_detected {
+            non_text_omission_files.push(relative.clone());
+        }
         review_sensitive.push(relative);
     }
 
@@ -213,6 +227,7 @@ fn run_directory(options: RunOptions) -> Result<RunSummary> {
         &unsupported,
         &extraction_failed,
         &review_sensitive,
+        &non_text_omission_files,
         &renamed,
     );
 
@@ -229,6 +244,7 @@ fn run_directory(options: RunOptions) -> Result<RunSummary> {
             None
         },
         replacements: replacement_total,
+        non_text_omissions_detected: !non_text_omission_files.is_empty(),
         review_summary,
         coverage_note: COVERAGE_NOTE,
     })
@@ -337,7 +353,12 @@ fn apply_deidentification_pipeline(
     Ok(structured)
 }
 
-fn build_review_summary(input: &Path, findings: &[Finding], ml_active: bool) -> String {
+fn build_review_summary(
+    input: &Path,
+    findings: &[Finding],
+    ml_active: bool,
+    non_text_omissions_detected: bool,
+) -> String {
     let mut lines = vec![
         format!("input: {}", input.display()),
         format!("proposed structured replacements: {}", findings.len()),
@@ -345,6 +366,9 @@ fn build_review_summary(input: &Path, findings: &[Finding], ml_active: bool) -> 
 
     if ml_active {
         lines.push("ml-assisted contextual recognition: enabled".to_string());
+    }
+    if non_text_omissions_detected {
+        lines.push("non-text extraction omissions detected: yes".to_string());
     }
 
     let mut policy_categories = Vec::new();
@@ -602,6 +626,7 @@ fn build_batch_summary(
     unsupported: &[PathBuf],
     extraction_failed: &[PathBuf],
     review_sensitive: &[PathBuf],
+    non_text_omission_files: &[PathBuf],
     renamed: &[(PathBuf, PathBuf)],
 ) -> String {
     let mut lines = vec![format!("input directory: {}", input_root.display())];
@@ -615,6 +640,10 @@ fn build_batch_summary(
     lines.push(format!(
         "review-sensitive files: {}",
         review_sensitive.len()
+    ));
+    lines.push(format!(
+        "non-text-omission files: {}",
+        non_text_omission_files.len()
     ));
     lines.push(format!("renamed outputs: {}", renamed.len()));
 
@@ -645,6 +674,12 @@ fn build_batch_summary(
     if !review_sensitive.is_empty() {
         lines.push("Review-sensitive:".to_string());
         for path in review_sensitive {
+            lines.push(format!("- {}", path.display()));
+        }
+    }
+    if !non_text_omission_files.is_empty() {
+        lines.push("Non-text omissions detected:".to_string());
+        for path in non_text_omission_files {
             lines.push(format!("- {}", path.display()));
         }
     }
@@ -1282,6 +1317,7 @@ mod tests {
             std::path::Path::new("/tmp/fake.md"),
             &structured.findings,
             true,
+            false,
         );
         assert!(review_summary.contains("[ml:PERSON] John Doe -> [PERSON]"));
         assert!(review_summary.contains("ml-assisted contextual recognition: enabled"));
@@ -1310,6 +1346,7 @@ mod tests {
             ReviewFlags {
                 ml_active: true,
                 has_ml_findings: true,
+                non_text_omissions_detected: false,
                 residual_review_gaps: vec!["names and contextual person references".into()],
             },
         );
@@ -1533,6 +1570,69 @@ mod tests {
         let audit = fs::read_to_string(summary.audit_output_path.unwrap()).unwrap();
         assert!(audit.contains("\"entity_type\": \"INSTITUTION_NAME\""));
         assert!(audit.contains("\"replacement\": \"[INSTITUTION]\""));
+    }
+
+    #[test]
+    fn run_review_surfaces_non_text_extraction_omissions() {
+        let temp = tempdir().unwrap();
+        let input = temp.path().join("note.docx");
+        write_test_docx(
+            &input,
+            r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Image follows</w:t></w:r><w:r><w:drawing/></w:r></w:p></w:body></w:document>"#,
+        );
+
+        let summary = run(RunOptions {
+            input,
+            output: None,
+            audit_output: None,
+            config: None,
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+            mode: RunMode::Review,
+        })
+        .unwrap();
+
+        assert!(summary.non_text_omissions_detected);
+        assert!(
+            summary
+                .review_summary
+                .contains("non-text extraction omissions detected: yes")
+        );
+    }
+
+    #[test]
+    fn run_directory_counts_non_text_omission_files() {
+        let temp = tempdir().unwrap();
+        let input_dir = temp.path().join("input");
+        fs::create_dir_all(&input_dir).unwrap();
+        write_test_docx(
+            &input_dir.join("note.docx"),
+            r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Image follows</w:t></w:r><w:r><w:drawing/></w:r></w:p></w:body></w:document>"#,
+        );
+
+        let summary = run(RunOptions {
+            input: input_dir,
+            output: None,
+            audit_output: None,
+            config: None,
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+            mode: RunMode::Review,
+        })
+        .unwrap();
+
+        assert!(summary.non_text_omissions_detected);
+        assert!(
+            summary
+                .review_summary
+                .contains("non-text-omission files: 1")
+        );
+        assert!(
+            summary
+                .review_summary
+                .contains("Non-text omissions detected:")
+        );
+        assert!(summary.review_summary.contains("- note.docx"));
     }
 
     #[test]
@@ -2087,6 +2187,30 @@ mod tests {
             summary.audit_output_path,
             Some(temp.path().join("note.audit.json"))
         );
+    }
+
+    #[test]
+    fn run_audit_marks_non_text_omissions_in_machine_readable_flags() {
+        let temp = tempdir().unwrap();
+        let input = temp.path().join("note.docx");
+        write_test_docx(
+            &input,
+            r#"<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>Image follows</w:t></w:r><w:r><w:drawing/></w:r></w:p></w:body></w:document>"#,
+        );
+
+        let summary = run(RunOptions {
+            input,
+            output: None,
+            audit_output: None,
+            config: None,
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+            mode: RunMode::Replace,
+        })
+        .unwrap();
+
+        let audit = fs::read_to_string(summary.audit_output_path.unwrap()).unwrap();
+        assert!(audit.contains("\"non_text_omissions_detected\": true"));
     }
 
     #[test]

@@ -331,3 +331,14 @@
 ## Next likely task
 
 - Reassess whether issue #17 is now complete enough for the current audit/review scope, or add one final bounded slice only if a clearly missing operator-facing distinction remains.
+
+## Iteration 31 (GitHub issue #18)
+
+- Reassessed issue #17 after the residual-risk summary slice and treated it as complete for the current audit/review scope.
+- Began issue #18 with the smallest extraction-honesty slice rather than widening OCR or parser scope.
+- Added explicit non-text omission detection based on extracted `[OMITTED_NON_TEXT_CONTENT]` placeholders and threaded that signal through single-file review summaries, batch summaries, and machine-readable audit flags.
+- Verified the slice with new tests for review-mode omission surfacing, batch omission counting/listing, and audit-flag serialization, alongside the full feedback loop.
+
+## Next likely task
+
+- Continue issue #18 with the next bounded extraction-confidence slice, likely distinguishing weak extraction from clean text extraction more explicitly for supported formats.
