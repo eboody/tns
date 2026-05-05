@@ -11,13 +11,21 @@ All platforms need these bundled resources:
 
 Each platform also needs the matching ONNX Runtime shared libraries under `ml/ner/site/onnxruntime/capi/`.
 
-These files are now staged automatically from the official ONNX Runtime GitHub releases by `scripts/stage-ort-runtime.mjs`.
+The runtime libraries are staged automatically from the official ONNX Runtime GitHub releases by `scripts/stage-ort-runtime.mjs`.
+
+The large NER model is intentionally not committed to git. Stage it by setting `TNS_NER_MODEL_SOURCE` to either:
+
+- a local `model.onnx` path, or
+- a direct download URL for the model artifact
+
+If `ml/ner/tokenizer.json` is missing, the same script downloads the default tokenizer automatically, or you can override it with `TNS_NER_TOKENIZER_SOURCE`.
 
 ## Automatic runtime staging
 
 Stage runtime files for the current host platform:
 
 ```bash
+export TNS_NER_MODEL_SOURCE=/absolute/path/to/model.onnx
 npm run stage:runtime
 ```
 

@@ -2,5 +2,6 @@ target/
 src-tauri/target/
 src-tauri/gen/
 dist/
+ml/ner/model.onnx
 .gitnexus
 node_modules

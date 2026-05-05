@@ -14,9 +14,13 @@ const execFileAsync = promisify(execFile)
 
 const ORT_VERSION = '1.25.1'
 const GITHUB_BASE = `https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}`
+const DEFAULT_TOKENIZER_URL = 'https://huggingface.co/dslim/bert-base-NER/resolve/main/tokenizer.json'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(__dirname, '..')
+const modelDir = path.join(repoRoot, 'ml', 'ner')
+const modelPath = path.join(modelDir, 'model.onnx')
+const tokenizerPath = path.join(modelDir, 'tokenizer.json')
 const capiDir = path.join(repoRoot, 'ml', 'ner', 'site', 'onnxruntime', 'capi')
 
 const TARGETS = {
@@ -77,6 +81,8 @@ async function main() {
     throw new Error(`unsupported target: ${target}`)
   }
 
+  await mkdir(modelDir, { recursive: true })
+  await stageModelArtifacts()
   await mkdir(capiDir, { recursive: true })
   await clearStagedRuntimeFiles()
 
@@ -101,6 +107,35 @@ async function main() {
   }
 
   await rm(tempDir, { recursive: true, force: true })
+}
+
+async function stageModelArtifacts() {
+  const modelSource = process.env.TNS_NER_MODEL_SOURCE?.trim()
+  const tokenizerSource = process.env.TNS_NER_TOKENIZER_SOURCE?.trim()
+
+  if (modelSource) {
+    await stageArtifact(modelSource, modelPath)
+    console.log(`staged model.onnx from ${describeSource(modelSource)}`)
+  } else {
+    await assertExistsWithHint(
+      modelPath,
+      'missing ml/ner/model.onnx. Set TNS_NER_MODEL_SOURCE to a local model path or download URL before running this script.'
+    )
+  }
+
+  if (tokenizerSource) {
+    await stageArtifact(tokenizerSource, tokenizerPath)
+    console.log(`staged tokenizer.json from ${describeSource(tokenizerSource)}`)
+    return
+  }
+
+  try {
+    await stat(tokenizerPath)
+    console.log('using existing tokenizer.json')
+  } catch {
+    await download(DEFAULT_TOKENIZER_URL, tokenizerPath)
+    console.log(`downloaded tokenizer.json from ${DEFAULT_TOKENIZER_URL}`)
+  }
 }
 
 function parseTarget(argv) {
@@ -160,11 +195,37 @@ async function extractArchive(type, archivePath, extractDir) {
   throw new Error(`unsupported archive type: ${type}`)
 }
 
+async function stageArtifact(source, destination) {
+  if (isHttpUrl(source)) {
+    await download(source, destination)
+    return
+  }
+
+  await assertExistsWithHint(source, `artifact source does not exist: ${source}`)
+  await copyFile(source, destination)
+}
+
+function isHttpUrl(value) {
+  return value.startsWith('http://') || value.startsWith('https://')
+}
+
+function describeSource(source) {
+  return isHttpUrl(source) ? `URL ${source}` : `path ${source}`
+}
+
 async function assertExists(filePath) {
   try {
     await stat(filePath)
   } catch {
     throw new Error(`expected runtime file missing from archive: ${filePath}`)
+  }
+}
+
+async function assertExistsWithHint(filePath, message) {
+  try {
+    await stat(filePath)
+  } catch {
+    throw new Error(message)
   }
 }
 
