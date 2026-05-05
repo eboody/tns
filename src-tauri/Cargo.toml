@@ -2,13 +2,14 @@
 name = "tns-deid"
 version = "0.1.0"
 edition = "2024"
+default-run = "tns-deid"
 
 [lib]
 name = "tns_deid"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [[bin]]
-name = "tns-deid"
+name = "tns-deid-cli"
 path = "src/bin/tns-deid.rs"
 
 [build-dependencies]
