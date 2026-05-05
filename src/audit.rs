@@ -31,6 +31,8 @@ pub struct Finding {
     pub matched_text: String,
     pub replacement: String,
     pub reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub score: Option<f32>,
     pub start: usize,
     pub end: usize,
 }
@@ -43,6 +45,7 @@ impl Finding {
             matched_text: self.matched_text,
             replacement: self.replacement,
             reason: self.reason,
+            score: self.score,
             start: self.start,
             end: self.end,
         }
@@ -56,6 +59,8 @@ pub struct AuditRecord {
     pub matched_text: String,
     pub replacement: String,
     pub reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub score: Option<f32>,
     pub start: usize,
     pub end: usize,
 }

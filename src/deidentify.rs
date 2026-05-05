@@ -87,6 +87,7 @@ pub fn apply_rules(input: &str, rules: &[ReplacementRule]) -> DeidentifyResult {
                     matched_text: matched.as_str().to_string(),
                     replacement: replacement.clone(),
                     reason: reason.clone(),
+                    score: None,
                     start: matched.start(),
                     end: matched.end(),
                 });

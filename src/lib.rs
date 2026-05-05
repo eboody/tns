@@ -364,9 +364,18 @@ fn build_review_summary(input: &Path, findings: &[Finding], ml_active: bool) -> 
             }
         }
 
+        let confidence = record
+            .score
+            .map(|score| format!("; score={score:.2}"))
+            .unwrap_or_default();
         lines.push(format!(
-            "- [{}:{}] {} -> {} ({})",
-            source, record.entity_type, record.matched_text, record.replacement, record.reason
+            "- [{}:{}] {} -> {} ({}){}",
+            source,
+            record.entity_type,
+            record.matched_text,
+            record.replacement,
+            record.reason,
+            confidence,
         ));
     }
 
@@ -790,6 +799,7 @@ mod tests {
         assert!(audit.contains("EMAIL_ADDRESS"));
         assert!(audit.contains("PHONE_NUMBER"));
         assert!(audit.contains("\"source\": \"redact_core\""));
+        assert!(audit.contains("\"score\": 0.8"));
         assert_eq!(summary.replacements, 2);
     }
 
@@ -1233,6 +1243,7 @@ mod tests {
         assert!(review_summary.contains("ml-assisted contextual recognition: enabled"));
         assert!(review_summary.contains("Currently ML-assisted contextual coverage:"));
         assert!(review_summary.contains("- PERSON"));
+        assert!(review_summary.contains("score=0.95"));
     }
 
     #[test]

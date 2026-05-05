@@ -98,6 +98,7 @@ impl Segment {
                     matched_text,
                     replacement,
                     reason,
+                    score: Some(entity.score),
                     start: entity.start,
                     end: entity.end,
                 }
@@ -108,6 +109,7 @@ impl Segment {
                 matched_text: segment.matched_text.clone(),
                 replacement: segment.replacement.clone(),
                 reason: segment.reason.clone(),
+                score: None,
                 start: segment.start,
                 end: segment.end,
             },

@@ -296,3 +296,16 @@
 ## Next likely task
 
 - Reassess whether issue #16 is complete enough for the currently evidenced psychology-specific labels, or continue with one more bounded slice if there is a clearly recurring labeled context still missing.
+
+## Iteration 28 (GitHub issue #17)
+
+- Reassessed issue #16 after the labeled institution slice and treated it as complete for the current bounded psychology-specific scope, since the remaining gaps are broader unlabeled free-text semantics rather than one more obvious deterministic label family.
+- Began issue #17 with a small audit/review slice instead of widening behavior elsewhere.
+- Added optional confidence scores to the shared `Finding` model and serialized audit records where the underlying detector supplies a score.
+- Kept configured and custom deterministic findings explicitly unscored rather than inventing fake confidence values.
+- Updated review summaries to display confidence when present, and verified the behavior through both raw structured detections and injected ML-style detections.
+- Verified the slice with `cargo fmt --check`, `cargo test`, and the existing sample CLI fallback run.
+
+## Next likely task
+
+- Continue issue #17 with the next bounded review-surface improvement, likely an explicit residual-risk summary section or clearer distinction between low-confidence ML findings and deterministic findings.
