@@ -2,6 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  createProfileFromActive,
   DEFAULT_APP_SETTINGS,
   DEFAULT_PROFILE_ID,
   getActiveProfile,
@@ -159,4 +160,30 @@ test('setActiveProfileId switches the active reusable profile when it exists', (
   assert.equal(updated.globalSettings.activeProfileId, 'court')
   assert.equal(getActiveProfile(updated).name, 'Court documents')
   assert.deepEqual(getCurrentCaseContext(updated), DEFAULT_APP_SETTINGS.currentCaseContext)
+})
+
+test('createProfileFromActive clones the active reusable policy into a new profile and selects it', () => {
+  const created = createProfileFromActive(DEFAULT_APP_SETTINGS, {
+    name: 'Court documents',
+    profile: {
+      patterns: {
+        dates: { enabled: true, replacement: '[DATE]' },
+        emails: { enabled: false, replacement: '[EMAIL]' },
+        phones: { enabled: true, replacement: '[PHONE]' }
+      }
+    }
+  })
+
+  assert.equal(created.globalSettings.activeProfileId, 'court-documents')
+  assert.equal(created.profiles.length, 2)
+  assert.deepEqual(getActiveProfile(created), {
+    id: 'court-documents',
+    name: 'Court documents',
+    patterns: {
+      dates: { enabled: true, replacement: '[DATE]' },
+      emails: { enabled: false, replacement: '[EMAIL]' },
+      phones: { enabled: true, replacement: '[PHONE]' }
+    },
+    ner: DEFAULT_APP_SETTINGS.profiles[0].ner
+  })
 })

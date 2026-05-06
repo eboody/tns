@@ -4,6 +4,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { buildReviewNotice } from './review-notice.js'
 import { buildRuntimeSettingsPayload } from './runtime-settings.js'
 import {
+  createProfileFromActive,
   getActiveProfile,
   getCurrentCaseContext,
   loadAppSettings,
@@ -35,8 +36,10 @@ const settingsOverlay = document.getElementById('settingsOverlay')
 const closeSettings = document.getElementById('closeSettings')
 const cancelSettings = document.getElementById('cancelSettings')
 const saveSettingsButton = document.getElementById('saveSettings')
+const createProfileButton = document.getElementById('createProfile')
 const addExactEntity = document.getElementById('addExactEntity')
 const exactEntitiesList = document.getElementById('exactEntitiesList')
+const settingsProfileName = document.getElementById('settingsProfileName')
 const settingsClientReplacement = document.getElementById('settingsClientReplacement')
 const settingsClientVariants = document.getElementById('settingsClientVariants')
 const settingsDatesEnabled = document.getElementById('settingsDatesEnabled')
@@ -292,6 +295,7 @@ function populateSettingsForm(settings) {
 
   settingsClientReplacement.value = currentCaseContext.clientReplacement
   settingsClientVariants.value = currentCaseContext.clientVariants
+  settingsProfileName.value = activeProfile.name
   settingsDatesEnabled.checked = activeProfile.patterns.dates.enabled
   settingsDatesReplacement.value = activeProfile.patterns.dates.replacement
   settingsEmailsEnabled.checked = activeProfile.patterns.emails.enabled
@@ -340,6 +344,7 @@ function createExactEntityRow(entity = { entityType: '', replacement: '', varian
 function readSettingsForm() {
   return updateActiveProfileAndCaseContext(appSettings, {
     profile: {
+      name: settingsProfileName.value,
       patterns: {
         dates: { enabled: settingsDatesEnabled.checked, replacement: settingsDatesReplacement.value },
         emails: { enabled: settingsEmailsEnabled.checked, replacement: settingsEmailsReplacement.value },
@@ -408,6 +413,21 @@ async function saveSettingsAndMaybeRerun() {
 
   if (workspace.inputPath.trim()) {
     await processSelectedInput({ sourceLabel: 'settings' })
+  }
+}
+
+async function createProfileFromCurrentAndMaybeRerun() {
+  const nextSettings = readSettingsForm()
+  const requestedName = settingsProfileName.value.trim() || 'New profile'
+  appSettings = saveAppSettings(createProfileFromActive(nextSettings, {
+    name: requestedName,
+    profile: getActiveProfile(nextSettings)
+  }))
+  renderWorkspace()
+  populateSettingsForm(appSettings)
+
+  if (workspace.inputPath.trim()) {
+    await processSelectedInput({ sourceLabel: 'profile' })
   }
 }
 
@@ -820,6 +840,7 @@ addExactEntity.addEventListener('click', () => {
   exactEntitiesList.appendChild(createExactEntityRow())
 })
 saveSettingsButton.addEventListener('click', saveSettingsAndMaybeRerun)
+createProfileButton.addEventListener('click', createProfileFromCurrentAndMaybeRerun)
 activeProfileSelect.addEventListener('change', async (event) => {
   const nextProfileId = event.target.value
   appSettings = saveAppSettings(setActiveProfileId(appSettings, nextProfileId))

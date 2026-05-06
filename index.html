@@ -128,6 +128,20 @@
           <p class="settings-copy">Define the de-identification rules this app should reuse across launches. Saving updates future runs and reruns the current input if one is selected.</p>
 
           <section class="settings-section">
+            <div class="settings-section-header">
+              <div>
+                <h3>Reusable profile</h3>
+                <p>Edit the reusable workflow policy for the active profile, or create a new profile from the current one.</p>
+              </div>
+              <button id="createProfile" type="button" class="secondary-button">Create profile from current</button>
+            </div>
+            <label class="field-group">
+              <span>Profile name</span>
+              <input id="settingsProfileName" type="text" placeholder="General" />
+            </label>
+          </section>
+
+          <section class="settings-section">
             <h3>Client aliases</h3>
             <label class="field-group">
               <span>Client replacement label</span>
