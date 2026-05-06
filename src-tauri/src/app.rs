@@ -2,7 +2,9 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use crate::desktop::{
-    DesktopReplaceRequest, DesktopReviewRequest, run_replace_job as run_replace_service,
+    DesktopAddRedactionRequest, DesktopRemoveRedactionRequest, DesktopReplaceRequest,
+    DesktopReviewRequest, add_manual_redaction as add_manual_redaction_service,
+    remove_redaction as remove_redaction_service, run_replace_job as run_replace_service,
     run_review_job as run_review_service,
 };
 use tauri::{AppHandle, Manager, path::BaseDirectory};
@@ -58,6 +60,16 @@ fn run_replace_job(
     artifacts.audit_output_path = Some(result.audit_output_path.clone());
 
     Ok(result)
+}
+
+#[tauri::command]
+fn add_manual_redaction(request: DesktopAddRedactionRequest) -> Result<crate::desktop::DesktopPreviewUpdateResult, String> {
+    add_manual_redaction_service(request).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn remove_redaction(request: DesktopRemoveRedactionRequest) -> Result<crate::desktop::DesktopPreviewUpdateResult, String> {
+    remove_redaction_service(request).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -158,6 +170,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             run_review_job,
             run_replace_job,
+            add_manual_redaction,
+            remove_redaction,
             open_last_output_path,
             open_last_audit_output_path
         ])

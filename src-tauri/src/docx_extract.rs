@@ -32,11 +32,11 @@ pub fn extract_docx_to_markdown(path: &Path) -> Result<String> {
 
 fn parse_document_xml_to_markdown(xml: &str) -> Result<String> {
     let mut reader = Reader::from_str(xml);
-    reader.config_mut().trim_text(true);
 
     let mut paragraphs = Vec::new();
     let mut current_paragraph = String::new();
     let mut in_paragraph = false;
+    let mut in_text = false;
     let mut saw_non_text = false;
 
     loop {
@@ -46,6 +46,11 @@ fn parse_document_xml_to_markdown(xml: &str) -> Result<String> {
                     in_paragraph = true;
                     current_paragraph.clear();
                     saw_non_text = false;
+                }
+                b"w:t" => {
+                    if in_paragraph {
+                        in_text = true;
+                    }
                 }
                 b"w:drawing" | b"w:pict" | b"w:object" => {
                     if in_paragraph {
@@ -60,10 +65,20 @@ fn parse_document_xml_to_markdown(xml: &str) -> Result<String> {
                         saw_non_text = true;
                     }
                 }
+                b"w:tab" => {
+                    if in_paragraph {
+                        current_paragraph.push(' ');
+                    }
+                }
+                b"w:br" | b"w:cr" => {
+                    if in_paragraph && !current_paragraph.ends_with('\n') {
+                        current_paragraph.push('\n');
+                    }
+                }
                 _ => {}
             },
             Ok(Event::Text(e)) => {
-                if in_paragraph {
+                if in_paragraph && in_text {
                     let text = e.decode().map_err(|error| {
                         AppError::Analysis(format!("failed to decode DOCX text: {error}"))
                     })?;
@@ -71,20 +86,27 @@ fn parse_document_xml_to_markdown(xml: &str) -> Result<String> {
                 }
             }
             Ok(Event::End(e)) => {
-                if e.name().as_ref() == b"w:p" {
-                    let mut paragraph = current_paragraph.trim().to_string();
-                    if saw_non_text {
-                        if !paragraph.is_empty() {
-                            paragraph.push(' ');
+                match e.name().as_ref() {
+                    b"w:t" => {
+                        in_text = false;
+                    }
+                    b"w:p" => {
+                        let mut paragraph = normalize_paragraph_text(&current_paragraph);
+                        if saw_non_text {
+                            if !paragraph.is_empty() {
+                                paragraph.push(' ');
+                            }
+                            paragraph.push_str(OMITTED_NON_TEXT_CONTENT);
                         }
-                        paragraph.push_str(OMITTED_NON_TEXT_CONTENT);
+                        if !paragraph.is_empty() {
+                            paragraphs.push(paragraph);
+                        }
+                        in_paragraph = false;
+                        in_text = false;
+                        current_paragraph.clear();
+                        saw_non_text = false;
                     }
-                    if !paragraph.is_empty() {
-                        paragraphs.push(paragraph);
-                    }
-                    in_paragraph = false;
-                    current_paragraph.clear();
-                    saw_non_text = false;
+                    _ => {}
                 }
             }
             Ok(Event::Eof) => break,
@@ -100,8 +122,18 @@ fn parse_document_xml_to_markdown(xml: &str) -> Result<String> {
     Ok(paragraphs.join("\n\n"))
 }
 
+fn normalize_paragraph_text(text: &str) -> String {
+    text.lines()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 #[cfg(test)]
 mod tests {
+    use std::{fs, path::PathBuf};
+
     use super::parse_document_xml_to_markdown;
 
     #[test]
@@ -119,6 +151,66 @@ mod tests {
         assert_eq!(
             markdown,
             "Hello world\n\nImage follows [OMITTED_NON_TEXT_CONTENT]"
+        );
+    }
+
+    #[test]
+    fn parse_document_xml_preserves_run_boundary_spaces() {
+        let xml = r#"
+            <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+              <w:body>
+                <w:p>
+                  <w:r><w:t xml:space="preserve">Name: </w:t></w:r>
+                  <w:r><w:t>Jane Doe</w:t></w:r>
+                </w:p>
+                <w:p>
+                  <w:r><w:t xml:space="preserve">Evaluation Date(s): </w:t></w:r>
+                  <w:r><w:t>12/17/2025</w:t></w:r>
+                  <w:r><w:t xml:space="preserve"> </w:t></w:r>
+                  <w:r><w:t>12/19/2025</w:t></w:r>
+                </w:p>
+              </w:body>
+            </w:document>
+        "#;
+
+        let markdown = parse_document_xml_to_markdown(xml).unwrap();
+        assert_eq!(markdown, "Name: Jane Doe\n\nEvaluation Date(s): 12/17/2025 12/19/2025");
+    }
+
+    #[test]
+    fn parse_document_xml_preserves_tabs_and_breaks() {
+        let xml = r#"
+            <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+              <w:body>
+                <w:p>
+                  <w:r><w:t>Provider</w:t></w:r>
+                  <w:r><w:tab/></w:r>
+                  <w:r><w:t>Shina Halavi, PhD</w:t></w:r>
+                  <w:r><w:br/></w:r>
+                  <w:r><w:t>Pacific Ocean Pediatrics</w:t></w:r>
+                </w:p>
+              </w:body>
+            </w:document>
+        "#;
+
+        let markdown = parse_document_xml_to_markdown(xml).unwrap();
+        assert_eq!(markdown, "Provider Shina Halavi, PhD\nPacific Ocean Pediatrics");
+    }
+
+    #[test]
+    fn parse_document_xml_matches_real_spacing_fixture() {
+        let fixture = fs::read_to_string(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("tests")
+                .join("fixtures")
+                .join("docx_run_spacing.xml"),
+        )
+        .unwrap();
+
+        let markdown = parse_document_xml_to_markdown(&fixture).unwrap();
+        assert_eq!(
+            markdown,
+            "Name: Jane Doe\n\nEvaluation Date(s): 12/17/2025 12/19/2025\n\nProvider Shina Halavi, PhD\nPacific Ocean Pediatrics"
         );
     }
 }

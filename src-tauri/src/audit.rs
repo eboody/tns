@@ -7,6 +7,8 @@ use serde::Serialize;
 pub enum ExtractionStatus {
     CleanText,
     NonTextOmissions,
+    TextDegraded,
+    TextDegradedWithNonTextOmissions,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -85,6 +87,7 @@ pub struct ReviewFlags {
     pub ml_active: bool,
     pub has_ml_findings: bool,
     pub non_text_omissions_detected: bool,
+    pub text_degraded_detected: bool,
     pub extraction_status: ExtractionStatus,
     pub residual_review_gaps: Vec<String>,
 }

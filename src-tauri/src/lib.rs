@@ -5,6 +5,7 @@ pub mod deidentify;
 pub mod desktop;
 pub mod docx_extract;
 pub mod error;
+pub mod extraction;
 pub mod pdf_extract;
 mod safe_harbor_policy;
 
@@ -16,6 +17,7 @@ use audit::{AuditReport, ExtractionStatus, Finding, FindingSource, ReviewFlags};
 use config::{Config, NerConfig};
 use deidentify::{DeidentifyResult, apply_rules, build_rules};
 use error::{AppError, Result};
+use extraction::{classify_extraction_status, extract_input, extraction_status_label};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use redact_core::AnalyzerEngine;
 use redact_core::recognizers::Recognizer;
@@ -48,6 +50,7 @@ pub struct RunSummary {
     pub audit_output_path: Option<PathBuf>,
     pub replacements: usize,
     pub non_text_omissions_detected: bool,
+    pub text_degraded_detected: bool,
     pub extraction_status: ExtractionStatus,
     pub file_statuses: Vec<RunFileStatus>,
     pub review_summary: String,
@@ -71,13 +74,13 @@ pub struct RunFileStatus {
     pub replacements: usize,
     pub review_sensitive: bool,
     pub non_text_omissions_detected: bool,
+    pub text_degraded_detected: bool,
     pub output_path: Option<PathBuf>,
     pub audit_output_path: Option<PathBuf>,
 }
 
 const COVERAGE_NOTE: &str = "Structured identifiers were processed with redact-core. Full HIPAA Safe Harbor coverage still requires policy mapping, configured known-entity replacement, and custom gap recognizers.";
 const LOW_CONFIDENCE_ML_THRESHOLD: f32 = 0.85;
-const OMITTED_NON_TEXT_CONTENT: &str = "[OMITTED_NON_TEXT_CONTENT]";
 const RESIDUAL_GAPS: &[&str] = &[
     "names and contextual person references",
     "sub-state geography and full address details",
@@ -97,20 +100,18 @@ pub fn run(options: RunOptions) -> Result<RunSummary> {
 fn run_single(options: RunOptions) -> Result<RunSummary> {
     validate_supported_input(&options.input)?;
 
-    let input_text = load_input_as_markdown(&options.input)?;
-    let non_text_omissions_detected = input_text.contains(OMITTED_NON_TEXT_CONTENT);
-    let extraction_status = if non_text_omissions_detected {
-        ExtractionStatus::NonTextOmissions
-    } else {
-        ExtractionStatus::CleanText
-    };
+    let extracted_input = extract_input(&options.input)?;
+    let non_text_omissions_detected = extracted_input.non_text_omissions_detected;
+    let text_degraded_detected = extracted_input.text_degraded_detected;
+    let extraction_status = extracted_input.extraction_status;
 
-    let structured = apply_deidentification_pipeline(&input_text, options.config.as_deref())?;
+    let structured = apply_deidentification_pipeline(&extracted_input.text, options.config.as_deref())?;
     let review_summary = build_review_summary(
         &options.input,
         &structured.findings,
         structured.ml_active,
         non_text_omissions_detected,
+        text_degraded_detected,
     );
 
     if options.mode != RunMode::Replace {
@@ -120,13 +121,17 @@ fn run_single(options: RunOptions) -> Result<RunSummary> {
             audit_output_path: None,
             replacements: structured.findings.len(),
             non_text_omissions_detected,
+            text_degraded_detected,
             extraction_status,
             file_statuses: vec![RunFileStatus {
                 path: options.input,
                 status: RunFileStatusKind::Reviewed,
                 replacements: structured.findings.len(),
-                review_sensitive: !structured.findings.is_empty() || non_text_omissions_detected,
+                review_sensitive: !structured.findings.is_empty()
+                    || non_text_omissions_detected
+                    || text_degraded_detected,
                 non_text_omissions_detected,
+                text_degraded_detected,
                 output_path: None,
                 audit_output_path: None,
             }],
@@ -155,6 +160,7 @@ fn run_single(options: RunOptions) -> Result<RunSummary> {
             .iter()
             .any(|finding| finding.source == FindingSource::Ml),
         non_text_omissions_detected,
+        text_degraded_detected,
         extraction_status,
         residual_review_gaps: RESIDUAL_GAPS.iter().map(|gap| (*gap).to_string()).collect(),
     };
@@ -175,13 +181,17 @@ fn run_single(options: RunOptions) -> Result<RunSummary> {
         audit_output_path: Some(audit_output_path.clone()),
         replacements: audit_report.replacements.len(),
         non_text_omissions_detected,
+        text_degraded_detected,
         extraction_status,
         file_statuses: vec![RunFileStatus {
             path: options.input,
             status: RunFileStatusKind::Processed,
             replacements: audit_report.replacements.len(),
-            review_sensitive: !audit_report.replacements.is_empty() || non_text_omissions_detected,
+            review_sensitive: !audit_report.replacements.is_empty()
+                || non_text_omissions_detected
+                || text_degraded_detected,
             non_text_omissions_detected,
+            text_degraded_detected,
             output_path: Some(output_path.clone()),
             audit_output_path: Some(audit_output_path.clone()),
         }],
@@ -208,6 +218,7 @@ fn run_directory(options: RunOptions) -> Result<RunSummary> {
     let mut extraction_failed = Vec::new();
     let mut review_sensitive = Vec::new();
     let mut non_text_omission_files = Vec::new();
+    let mut text_degraded_files = Vec::new();
     let mut renamed = Vec::new();
     let mut file_statuses = Vec::new();
     let mut replacement_total = 0usize;
@@ -238,6 +249,7 @@ fn run_directory(options: RunOptions) -> Result<RunSummary> {
                 replacements: 0,
                 review_sensitive: false,
                 non_text_omissions_detected: false,
+                text_degraded_detected: false,
                 output_path: None,
                 audit_output_path: None,
             });
@@ -252,6 +264,7 @@ fn run_directory(options: RunOptions) -> Result<RunSummary> {
                 replacements: 0,
                 review_sensitive: false,
                 non_text_omissions_detected: false,
+                text_degraded_detected: false,
                 output_path: None,
                 audit_output_path: None,
             });
@@ -282,6 +295,7 @@ fn run_directory(options: RunOptions) -> Result<RunSummary> {
                     replacements: 0,
                     review_sensitive: true,
                     non_text_omissions_detected: false,
+                    text_degraded_detected: false,
                     output_path: None,
                     audit_output_path: None,
                 });
@@ -301,14 +315,20 @@ fn run_directory(options: RunOptions) -> Result<RunSummary> {
                 RunFileStatusKind::Reviewed
             },
             replacements: summary.replacements,
-            review_sensitive: summary.replacements > 0 || summary.non_text_omissions_detected,
+            review_sensitive: summary.replacements > 0
+                || summary.non_text_omissions_detected
+                || summary.text_degraded_detected,
             non_text_omissions_detected: summary.non_text_omissions_detected,
+            text_degraded_detected: summary.text_degraded_detected,
             output_path: summary.output_path,
             audit_output_path: summary.audit_output_path,
         });
         processed.push(relative.clone());
         if summary.non_text_omissions_detected {
             non_text_omission_files.push(relative.clone());
+        }
+        if summary.text_degraded_detected {
+            text_degraded_files.push(relative.clone());
         }
         review_sensitive.push(relative);
     }
@@ -321,6 +341,7 @@ fn run_directory(options: RunOptions) -> Result<RunSummary> {
         &extraction_failed,
         &review_sensitive,
         &non_text_omission_files,
+        &text_degraded_files,
         &renamed,
     );
 
@@ -338,11 +359,11 @@ fn run_directory(options: RunOptions) -> Result<RunSummary> {
         },
         replacements: replacement_total,
         non_text_omissions_detected: !non_text_omission_files.is_empty(),
-        extraction_status: if non_text_omission_files.is_empty() {
-            ExtractionStatus::CleanText
-        } else {
-            ExtractionStatus::NonTextOmissions
-        },
+        text_degraded_detected: !text_degraded_files.is_empty(),
+        extraction_status: classify_extraction_status(
+            !non_text_omission_files.is_empty(),
+            !text_degraded_files.is_empty(),
+        ),
         file_statuses,
         review_summary,
         coverage_note: COVERAGE_NOTE,
@@ -529,6 +550,7 @@ fn build_review_summary(
     findings: &[Finding],
     ml_active: bool,
     non_text_omissions_detected: bool,
+    text_degraded_detected: bool,
 ) -> String {
     let mut lines = vec![
         format!("input: {}", input.display()),
@@ -541,13 +563,18 @@ fn build_review_summary(
     if non_text_omissions_detected {
         lines.push("non-text extraction omissions detected: yes".to_string());
     }
+    if text_degraded_detected {
+        lines.push("text extraction fidelity degraded: yes".to_string());
+        lines.push(
+            "warning: extracted output may be limited by source text fidelity; review spacing and label boundaries carefully.".to_string(),
+        );
+    }
     lines.push(format!(
         "extraction status: {}",
-        if non_text_omissions_detected {
-            "non_text_omissions"
-        } else {
-            "clean_text"
-        }
+        extraction_status_label(classify_extraction_status(
+            non_text_omissions_detected,
+            text_degraded_detected,
+        ))
     ));
 
     let mut policy_categories = Vec::new();
@@ -692,18 +719,6 @@ fn is_supported_input(input: &Path) -> bool {
     )
 }
 
-fn load_input_as_markdown(input: &Path) -> Result<String> {
-    match input.extension().and_then(|ext| ext.to_str()) {
-        Some("md" | "txt") => fs::read_to_string(input).map_err(|source| AppError::ReadFile {
-            path: input.to_path_buf(),
-            source,
-        }),
-        Some("docx") => docx_extract::extract_docx_to_markdown(input),
-        Some("pdf") => pdf_extract::extract_pdf_to_markdown(input),
-        _ => Err(AppError::UnsupportedInputFormat(input.to_path_buf())),
-    }
-}
-
 fn write_text_file(path: &Path, contents: &str) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|source| AppError::CreateDirectory {
@@ -806,6 +821,7 @@ fn build_batch_summary(
     extraction_failed: &[PathBuf],
     review_sensitive: &[PathBuf],
     non_text_omission_files: &[PathBuf],
+    text_degraded_files: &[PathBuf],
     renamed: &[(PathBuf, PathBuf)],
 ) -> String {
     let mut lines = vec![format!("input directory: {}", input_root.display())];
@@ -824,6 +840,7 @@ fn build_batch_summary(
         "non-text-omission files: {}",
         non_text_omission_files.len()
     ));
+    lines.push(format!("text-degraded files: {}", text_degraded_files.len()));
     lines.push(format!("renamed outputs: {}", renamed.len()));
 
     if !processed.is_empty() {
@@ -859,6 +876,12 @@ fn build_batch_summary(
     if !non_text_omission_files.is_empty() {
         lines.push("Non-text omissions detected:".to_string());
         for path in non_text_omission_files {
+            lines.push(format!("- {}", path.display()));
+        }
+    }
+    if !text_degraded_files.is_empty() {
+        lines.push("Text fidelity degraded:".to_string());
+        for path in text_degraded_files {
             lines.push(format!("- {}", path.display()));
         }
     }
@@ -1559,6 +1582,7 @@ mod tests {
             &structured.findings,
             true,
             false,
+            false,
         );
         assert!(review_summary.contains("[ml:PERSON] John Doe -> [PERSON]"));
         assert!(review_summary.contains("ml-assisted contextual recognition: enabled"));
@@ -1588,6 +1612,7 @@ mod tests {
                 ml_active: true,
                 has_ml_findings: true,
                 non_text_omissions_detected: false,
+                text_degraded_detected: false,
                 extraction_status: ExtractionStatus::CleanText,
                 residual_review_gaps: vec!["names and contextual person references".into()],
             },

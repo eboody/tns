@@ -16,6 +16,9 @@ const toggleHighlights = document.getElementById('toggleHighlights')
 const previewNote = document.getElementById('previewNote')
 const beforePreview = document.getElementById('beforePreview')
 const afterPreview = document.getElementById('afterPreview')
+const previewActionTooltip = document.getElementById('previewActionTooltip')
+const previewActionLabel = document.getElementById('previewActionLabel')
+const previewActionButton = document.getElementById('previewActionButton')
 const summary = document.getElementById('summary')
 const runReview = document.getElementById('runReview')
 const runReplace = document.getElementById('runReplace')
@@ -23,12 +26,15 @@ const openOutput = document.getElementById('openOutput')
 const openAudit = document.getElementById('openAudit')
 
 summary.textContent = 'Desktop shell loaded. Choose a file or folder, then run review or replace.'
+let currentFilePreviews = []
+let currentFileStatuses = []
+let selectedPreviewPath = null
+let highlightsVisible = true
+let pendingPreviewAction = null
+
 setResultActionsEnabled(false)
 renderSelectedInput()
 renderPreview(null)
-
-let currentFilePreviews = []
-let highlightsVisible = true
 
 setHighlightVisibility(true)
 
@@ -124,6 +130,8 @@ function setHighlightVisibility(visible) {
 function renderPreview(preview) {
   if (!preview) {
     previewPanel.hidden = false
+    selectedPreviewPath = null
+    hidePreviewActionTooltip()
     previewTitle.textContent = 'Select a processed file to inspect its before/after preview.'
     previewHighlightCount.textContent = '0 highlighted spans'
     previewNote.hidden = true
@@ -133,6 +141,8 @@ function renderPreview(preview) {
     return
   }
 
+  selectedPreviewPath = preview.path ?? null
+  hidePreviewActionTooltip()
   previewTitle.textContent = preview.path ?? ''
   const note = preview.previewNote ?? preview.preview_note ?? ''
   const beforeHtml = preview.originalHtml ?? preview.original_html ?? 'Original preview unavailable.'
@@ -156,10 +166,15 @@ function selectPreview(item, preview) {
 
 function renderResultFiles(fileStatuses, filePreviews = []) {
   const statuses = Array.isArray(fileStatuses) ? fileStatuses : []
+  currentFileStatuses = statuses
   currentFilePreviews = Array.isArray(filePreviews) ? filePreviews : []
   resultFiles.replaceChildren()
   resultsPanel.hidden = statuses.length === 0
-  renderPreview(currentFilePreviews[0])
+  const initialPreview =
+    currentFilePreviews.find((preview) => (preview.path ?? '') === selectedPreviewPath) ??
+    currentFilePreviews[0] ??
+    null
+  renderPreview(initialPreview)
 
   for (const [index, status] of statuses.entries()) {
     const path = status.path ?? ''
@@ -184,13 +199,252 @@ function renderResultFiles(fileStatuses, filePreviews = []) {
     if (previewIndex >= 0) {
       item.classList.add('preview-selectable')
       item.addEventListener('click', () => selectPreview(item, currentFilePreviews[previewIndex]))
-      if (index === 0) {
+      if ((currentFilePreviews[previewIndex].path ?? '') === selectedPreviewPath || (index === 0 && !selectedPreviewPath)) {
         item.classList.add('preview-selected')
       }
     }
     resultFiles.appendChild(item)
   }
 }
+
+function getCurrentPreview() {
+  return currentFilePreviews.find((preview) => (preview.path ?? '') === selectedPreviewPath) ?? null
+}
+
+function toPreviewRequest(preview) {
+  return {
+    path: preview.path,
+    inputPath: preview.inputPath ?? preview.input_path,
+    outputPath: preview.outputPath ?? preview.output_path,
+    auditOutputPath: preview.auditOutputPath ?? preview.audit_output_path
+  }
+}
+
+function replacePreviewState(updatedPreview, replacements) {
+  const previewPath = updatedPreview.path ?? ''
+  currentFilePreviews = currentFilePreviews.map((preview) =>
+    (preview.path ?? '') === previewPath ? updatedPreview : preview
+  )
+  currentFileStatuses = currentFileStatuses.map((status) =>
+    (status.path ?? '') === previewPath ? { ...status, replacements } : status
+  )
+  renderResultFiles(currentFileStatuses, currentFilePreviews)
+}
+
+function appendSummary(message) {
+  summary.textContent = `${message}\n\n${summary.textContent}`
+}
+
+function targetElement(target) {
+  return target instanceof Element ? target : target?.parentElement ?? null
+}
+
+function hidePreviewActionTooltip() {
+  pendingPreviewAction = null
+  previewActionTooltip.hidden = true
+}
+
+function showPreviewActionTooltip({ x, y, label, buttonText, action }) {
+  pendingPreviewAction = action
+  previewActionLabel.textContent = label
+  previewActionButton.textContent = buttonText
+  previewActionTooltip.hidden = false
+
+  const tooltipWidth = 220
+  const viewportPadding = 12
+  const clampedLeft = Math.min(
+    Math.max(x, viewportPadding),
+    window.innerWidth - tooltipWidth - viewportPadding
+  )
+  const top = Math.max(y, viewportPadding)
+
+  previewActionTooltip.style.left = `${clampedLeft}px`
+  previewActionTooltip.style.top = `${top}px`
+}
+
+function utf8ByteLength(value) {
+  return new TextEncoder().encode(value).length
+}
+
+function absoluteCodeUnitOffset(root, node, offset) {
+  const range = document.createRange()
+  range.setStart(root, 0)
+  range.setEnd(node, offset)
+  return range.toString().length
+}
+
+function selectionWithinPreview() {
+  const selection = window.getSelection()
+  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
+    return null
+  }
+
+  const range = selection.getRangeAt(0)
+  const containers = [
+    { element: beforePreview, sourcePreview: 'original' },
+    { element: afterPreview, sourcePreview: 'redacted' }
+  ]
+
+  for (const { element, sourcePreview } of containers) {
+    if (!element.contains(range.startContainer) || !element.contains(range.endContainer)) {
+      continue
+    }
+
+    const fullText = element.textContent ?? ''
+    const startCodeUnits = absoluteCodeUnitOffset(element, range.startContainer, range.startOffset)
+    const endCodeUnits = absoluteCodeUnitOffset(element, range.endContainer, range.endOffset)
+    if (startCodeUnits === endCodeUnits) {
+      return null
+    }
+
+    return {
+      sourcePreview,
+      selectionStart: utf8ByteLength(fullText.slice(0, startCodeUnits)),
+      selectionEnd: utf8ByteLength(fullText.slice(0, endCodeUnits)),
+      rect: range.getBoundingClientRect()
+    }
+  }
+
+  return null
+}
+
+async function handleRedactionRemoval(markElement) {
+  const preview = getCurrentPreview()
+  if (!preview) {
+    return
+  }
+
+  const rect = markElement.getBoundingClientRect()
+  showPreviewActionTooltip({
+    x: rect.left,
+    y: rect.bottom + 8,
+    label: 'Remove this redaction from the output and audit files.',
+    buttonText: 'Remove redaction',
+    action: async () => {
+      try {
+        const result = await invoke('remove_redaction', {
+          request: {
+            ...toPreviewRequest(preview),
+            start: Number(markElement.dataset.recordStart ?? 0),
+            end: Number(markElement.dataset.recordEnd ?? 0),
+            replacement: markElement.dataset.recordReplacement ?? ''
+          }
+        })
+        replacePreviewState(result.preview, result.replacements)
+        appendSummary('Removed selected redaction and updated output files.')
+      } catch (error) {
+        appendSummary(`Remove redaction error: ${String(error)}`)
+      }
+    }
+  })
+}
+
+function maybeShowAddRedactionTooltip() {
+  const preview = getCurrentPreview()
+  if (!preview) {
+    hidePreviewActionTooltip()
+    return
+  }
+
+  const selection = selectionWithinPreview()
+  if (!selection) {
+    hidePreviewActionTooltip()
+    return
+  }
+
+  const rect = selection.rect
+  showPreviewActionTooltip({
+    x: rect.left,
+    y: rect.bottom + 8,
+    label: 'Add a manual redaction for the selected text.',
+    buttonText: 'Redact selection',
+    action: async () => {
+      try {
+        const result = await invoke('add_manual_redaction', {
+          request: {
+            ...toPreviewRequest(preview),
+            sourcePreview: selection.sourcePreview,
+            selectionStart: selection.selectionStart,
+            selectionEnd: selection.selectionEnd
+          }
+        })
+        window.getSelection()?.removeAllRanges()
+        replacePreviewState(result.preview, result.replacements)
+        appendSummary('Added manual redaction and updated output files.')
+      } catch (error) {
+        appendSummary(`Add redaction error: ${String(error)}`)
+      }
+    }
+  })
+}
+
+beforePreview.addEventListener('click', async (event) => {
+  const mark = targetElement(event.target)?.closest('mark[data-record-start]')
+  if (mark) {
+    event.preventDefault()
+    await handleRedactionRemoval(mark)
+    return
+  }
+  maybeShowAddRedactionTooltip()
+})
+
+afterPreview.addEventListener('click', async (event) => {
+  const mark = targetElement(event.target)?.closest('mark[data-record-start]')
+  if (mark) {
+    event.preventDefault()
+    await handleRedactionRemoval(mark)
+    return
+  }
+  maybeShowAddRedactionTooltip()
+})
+
+beforePreview.addEventListener('mouseup', (event) => {
+  if (targetElement(event.target)?.closest('mark[data-record-start]')) {
+    return
+  }
+  setTimeout(maybeShowAddRedactionTooltip, 0)
+})
+
+afterPreview.addEventListener('mouseup', (event) => {
+  if (targetElement(event.target)?.closest('mark[data-record-start]')) {
+    return
+  }
+  setTimeout(maybeShowAddRedactionTooltip, 0)
+})
+
+beforePreview.addEventListener('keyup', () => {
+  setTimeout(maybeShowAddRedactionTooltip, 0)
+})
+
+afterPreview.addEventListener('keyup', () => {
+  setTimeout(maybeShowAddRedactionTooltip, 0)
+})
+
+previewActionButton.addEventListener('click', async () => {
+  if (!pendingPreviewAction) {
+    return
+  }
+
+  const action = pendingPreviewAction
+  hidePreviewActionTooltip()
+  await action()
+})
+
+document.addEventListener('click', (event) => {
+  if (previewActionTooltip.hidden) {
+    return
+  }
+
+  if (previewActionTooltip.contains(event.target)) {
+    return
+  }
+
+  if (targetElement(event.target)?.closest('.preview-text mark')) {
+    return
+  }
+
+  hidePreviewActionTooltip()
+})
 
 runReview.addEventListener('click', async () => {
   if (!inputPath.value.trim()) {

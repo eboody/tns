@@ -186,6 +186,45 @@ main {
   color: #92400e;
 }
 
+.preview-edit-hint {
+  margin: 0 0 1rem;
+  color: #475569;
+  font-size: 0.92rem;
+}
+
+.preview-action-tooltip {
+  position: fixed;
+  z-index: 1000;
+  display: grid;
+  gap: 0.45rem;
+  min-width: 12rem;
+  max-width: 18rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.8rem;
+  background: rgba(15, 23, 42, 0.96);
+  color: white;
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.28);
+}
+
+.preview-action-tooltip[hidden] {
+  display: none;
+}
+
+.preview-action-label {
+  margin: 0;
+  font-size: 0.88rem;
+  line-height: 1.35;
+}
+
+.preview-action-button {
+  justify-self: start;
+  padding: 0.55rem 0.8rem;
+  border-radius: 0.65rem;
+  background: #f8fafc;
+  color: #0f172a;
+}
+
 .preview-meta {
   display: flex;
   align-items: center;
@@ -277,6 +316,11 @@ main {
   border-radius: 0.25rem;
   color: inherit;
   box-shadow: inset 0 -1px 0 rgba(15, 23, 42, 0.15);
+  cursor: pointer;
+}
+
+.preview-text mark:hover {
+  outline: 1px solid rgba(15, 23, 42, 0.35);
 }
 
 #beforePreview mark {

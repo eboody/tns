@@ -29,6 +29,7 @@ pub enum AppError {
     UnsupportedInputFormat(PathBuf),
     UnsafeOutputPath(PathBuf),
     SerializeAuditReport(serde_json::Error),
+    InvalidPreviewEdit(String),
 }
 
 impl fmt::Display for AppError {
@@ -65,6 +66,7 @@ impl fmt::Display for AppError {
             AppError::SerializeAuditReport(source) => {
                 write!(f, "failed to serialize audit report: {source}")
             }
+            AppError::InvalidPreviewEdit(message) => write!(f, "invalid preview edit: {message}"),
         }
     }
 }

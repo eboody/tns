@@ -72,6 +72,10 @@
             </div>
           </div>
 
+          <p id="previewEditHint" class="preview-edit-hint">
+            Select text in either preview to open a redaction tooltip. Click any highlight in either preview to open a remove-redaction tooltip.
+          </p>
+
           <div class="highlight-legend" aria-label="Preview highlight legend">
             <span class="legend-chip legend-before">Original text flagged for redaction</span>
             <span class="legend-chip legend-after">Redacted replacement output</span>
@@ -86,6 +90,11 @@
               <h3>After</h3>
               <pre id="afterPreview" class="preview-text"></pre>
             </section>
+          </div>
+
+          <div id="previewActionTooltip" class="preview-action-tooltip" hidden>
+            <p id="previewActionLabel" class="preview-action-label"></p>
+            <button id="previewActionButton" type="button" class="preview-action-button"></button>
           </div>
         </section>
       </section>

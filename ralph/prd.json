@@ -1,114 +1,87 @@
 [
   {
-    "id": "issue-20",
+    "id": "issue-38",
+    "category": "architecture",
+    "priority": "high",
+    "risk": "high",
+    "description": "Define one canonical extraction fidelity model that truthfully represents provenance, omission, structural loss, degradation suspicion, and low-confidence review posture.",
+    "verify": [
+      "Run cargo test --manifest-path src-tauri/Cargo.toml",
+      "Run cargo check --manifest-path src-tauri/Cargo.toml",
+      "Verify representative clean and risky extraction cases produce canonical fidelity states without falsely reporting clean extraction"
+    ],
+    "passes": false,
+    "notes": "Highest-value first because it shapes invariants for all downstream slices."
+  },
+  {
+    "id": "issue-39",
+    "category": "integration",
+    "priority": "high",
+    "risk": "medium",
+    "description": "Surface canonical fidelity state through review summaries and machine-readable audit output so users see one consistent extraction trust story.",
+    "verify": [
+      "Run cargo test --manifest-path src-tauri/Cargo.toml",
+      "Run cargo check --manifest-path src-tauri/Cargo.toml",
+      "Verify review and audit outputs match for representative clean and risky extraction cases"
+    ],
+    "passes": false,
+    "notes": "Blocked on issue-38 because reporting should derive from the shared model."
+  },
+  {
+    "id": "issue-40",
+    "category": "extraction",
+    "priority": "high",
+    "risk": "medium",
+    "description": "Make DOCX extraction explicitly report omitted non-text content and structural flattening so review trust matches what the extractor really preserved.",
+    "verify": [
+      "Run cargo test --manifest-path src-tauri/Cargo.toml",
+      "Run cargo check --manifest-path src-tauri/Cargo.toml",
+      "Verify representative DOCX fixtures surface omission and flattening signals end-to-end"
+    ],
+    "passes": false,
+    "notes": "Can proceed after issue-38 defines the shared fidelity boundary."
+  },
+  {
+    "id": "issue-41",
+    "category": "extraction",
+    "priority": "high",
+    "risk": "high",
+    "description": "Detect low-confidence and degraded PDF extraction separately from hard extraction failure, including token-fusion and page-furniture style hazards.",
+    "verify": [
+      "Run cargo test --manifest-path src-tauri/Cargo.toml",
+      "Run cargo check --manifest-path src-tauri/Cargo.toml",
+      "Verify clean, degraded, and non-extractable PDF fixtures produce distinct observable outcomes"
+    ],
+    "passes": false,
+    "notes": "Can proceed after issue-38; keep normalization and quality judgment separate."
+  },
+  {
+    "id": "issue-42",
     "category": "integration",
     "priority": "high",
     "risk": "high",
-    "description": "Build the first installable desktop shell so a clinician can choose a local folder and run the existing review workflow without the terminal.",
+    "description": "Introduce OCR-backed extraction provenance with redundancy and fallback so native extraction can be supplemented or replaced when untrustworthy.",
     "verify": [
-      "Launch the desktop shell locally",
-      "Choose a folder through the UI",
-      "Trigger the existing non-writing review workflow and observe a basic summary"
+      "Run cargo test --manifest-path src-tauri/Cargo.toml",
+      "Run cargo check --manifest-path src-tauri/Cargo.toml",
+      "Verify at least one fallback or redundancy case changes observable provenance and review posture"
     ],
-    "passes": true,
-    "notes": "Completed through bounded slices that established a stable desktop-facing review service boundary, a minimal Tauri shell, native folder selection, and a Vite-backed frontend. The shell is now verified end-to-end through the real `tauri dev` path: it launches locally, accepts a chosen folder, and runs the real non-writing review workflow while surfacing a real summary in the UI."
+    "passes": false,
+    "notes": "Bounded AFK slice now that product intent is explicit: OCR is wanted, including fallback and redundancy."
   },
   {
-    "id": "issue-21",
-    "category": "integration",
-    "priority": "high",
-    "risk": "high",
-    "description": "Run the real replace workflow from the desktop UI and produce local redacted outputs and audit artifacts.",
-    "verify": [
-      "Trigger a replace run from the desktop UI",
-      "Observe local redacted outputs and audit artifacts on disk",
-      "Open or inspect the output location from the app"
-    ],
-    "passes": true,
-    "notes": "Completed through bounded slices that verified the shared desktop service, Tauri bridge, and shell UI can run the real replace workflow, write local redacted outputs and audit artifacts, and surface output/audit paths in the UI summary. The final opener slice adds output/audit folder buttons backed by Tauri-owned last-run artifact state rather than arbitrary frontend path opening, and live desktop automation verified the buttons invoke successfully after a real replace run."
-  },
-  {
-    "id": "issue-22",
-    "category": "integration",
+    "id": "issue-43",
+    "category": "ui",
     "priority": "medium",
     "risk": "medium",
-    "description": "Add a desktop results screen with run summary and per-file statuses.",
+    "description": "Make degraded, OCR-involved, omitted-content, and low-confidence files triageable in directory summaries and the desktop results workflow.",
     "verify": [
-      "Complete a desktop run",
-      "Observe processed/skipped/failed/review-sensitive counts",
-      "Observe a per-file status list in the UI"
+      "Run cargo test --manifest-path src-tauri/Cargo.toml",
+      "Run cargo check --manifest-path src-tauri/Cargo.toml",
+      "Run npm run build if frontend assets change",
+      "Verify representative DOCX, PDF, and OCR-involved files are surfaced correctly in summaries and desktop views"
     ],
     "passes": false,
-    "notes": "Build on top of real desktop-triggered runs rather than mock data. Early slices now expose typed per-file statuses from the real run summary, render them in the desktop UI alongside a selected-input list, and provide a first selected-file before/after preview pane for replace runs using real output and audit artifacts. Remaining work is true verification-centered review UX breadth: file-drop/file-multi-select ergonomics, richer diff/highlight polish, and broader preview coverage for non-plain-text source formats."
-  },
-  {
-    "id": "issue-23",
-    "category": "integration",
-    "priority": "medium",
-    "risk": "medium",
-    "description": "Support optional config-file selection and validation in the desktop UI.",
-    "verify": [
-      "Choose an optional config file from the UI",
-      "Run the real workflow with that config applied",
-      "Observe user-friendly validation for invalid config states"
-    ],
-    "passes": false,
-    "notes": "Keep config selection as a UI-facing service boundary, not direct engine coupling from the frontend."
-  },
-  {
-    "id": "issue-24",
-    "category": "integration",
-    "priority": "medium",
-    "risk": "medium",
-    "description": "Expose optional local NER setup and validation in the desktop UI.",
-    "verify": [
-      "Enable or disable NER from the UI",
-      "Select local model/tokenizer assets",
-      "Observe explicit enabled/disabled/misconfigured states"
-    ],
-    "passes": false,
-    "notes": "NER remains optional advanced setup; deterministic mode stays the default baseline."
-  },
-  {
-    "id": "issue-25",
-    "category": "integration",
-    "priority": "medium",
-    "risk": "low",
-    "description": "Persist safe local defaults such as recent paths and first-run settings.",
-    "verify": [
-      "Reopen the app after a run",
-      "Observe recent selections or defaults are remembered",
-      "Observe deterministic mode remains the safe first-run default"
-    ],
-    "passes": false,
-    "notes": "Only store non-sensitive workflow preferences."
-  },
-  {
-    "id": "issue-26",
-    "category": "packaging",
-    "priority": "medium",
-    "risk": "medium",
-    "description": "Produce a locally installable desktop build that runs without a Rust toolchain on another computer.",
-    "verify": [
-      "Build a local installer or installable app bundle",
-      "Install it on a fresh local machine",
-      "Launch the app without a Rust development setup"
-    ],
-    "passes": false,
-    "notes": "This is local installation, not public distribution infrastructure."
-  },
-  {
-    "id": "issue-27",
-    "category": "test",
-    "priority": "medium",
-    "risk": "medium",
-    "description": "Add installer-backed smoke testing and a release-readiness checklist for the desktop app.",
-    "verify": [
-      "Run the packaged app through a real local smoke test",
-      "Verify local run behavior and results presentation",
-      "Capture a repeatable release-readiness checklist"
-    ],
-    "passes": false,
-    "notes": "Final desktop-app contract verification slice."
+    "notes": "Last integration slice after the shared model and source-specific fidelity work are in place."
   }
 ]

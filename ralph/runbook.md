@@ -2,23 +2,26 @@
 
 ## Current initiative
 
-- Local installable desktop app for clinician-friendly de-identification
+- Improve text extraction fidelity and honesty (GitHub parent issue #37)
 
 ## Iteration guardrails
 
 - One logical issue slice per iteration.
-- Do not claim support for formats or entity classes that are not yet wired end-to-end.
-- Prefer explicit failure over silent skipping.
+- Prefer invariant-shaping work before source-specific heuristics or UI polish.
+- Do not collapse "text exists" into "clean extraction".
+- Keep normalization separate from quality judgment.
+- Keep offsets aligned with the final extracted-text surface shown to the user.
+- Treat OCR as a real supported direction for this initiative, including fallback and redundancy, but keep provenance explicit.
+- Do not claim full semantic layout reconstruction for PDF, DOCX tables, or OCR transcripts.
 
 ## Required feedback loops for each implementation slice
 
-1. `cargo fmt --check`
-2. `cargo test`
-3. `cargo run -- --input <sample.md> --config <sample.toml>` against a tiny local sample when CLI behavior changes
+1. `cargo test --manifest-path src-tauri/Cargo.toml`
+2. `cargo check --manifest-path src-tauri/Cargo.toml`
+3. `npm run build` only if a slice changes desktop UI or frontend assets
 
 ## Current scope note
 
-- Current repo code already has the CLI engine foundation: extraction, redaction, audit generation, review summaries, optional NER, and regression coverage.
-- The active GitHub-backed desktop backlog begins at issue `#20` under parent PRD `#28`.
-- The highest-value architectural constraint is to keep the CLI engine as the source of truth and introduce a narrow desktop-facing service boundary above it rather than duplicating workflow logic in the UI layer.
-- For desktop work, prefer the smallest installable/local-first slices over broad UI polish.
+- Issue #38 is the first active AFK slice.
+- Issues #40, #41, and #42 should reuse the same canonical fidelity model rather than invent source-local flags.
+- Issue #43 is the final triage/UI integration slice after the core fidelity and provenance work is in place.
