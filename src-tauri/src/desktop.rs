@@ -200,6 +200,13 @@ pub enum PreviewSelectionSource {
     Redacted,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ManualRedactionScope {
+    SingleOccurrence,
+    FileExactMatches,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DesktopAddRedactionRequest {
@@ -210,6 +217,7 @@ pub struct DesktopAddRedactionRequest {
     pub source_preview: PreviewSelectionSource,
     pub selection_start: usize,
     pub selection_end: usize,
+    pub redaction_scope: ManualRedactionScope,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -426,16 +434,37 @@ pub fn add_manual_redaction(
         ));
     }
 
-    audit_report.replacements.push(EditableAuditPreviewRecord {
-        source: json!("custom"),
-        entity_type: "MANUAL_REDACTION".to_string(),
-        matched_text,
-        replacement: "[MANUAL_REDACTION]".to_string(),
-        reason: "desktop manual selection".to_string(),
-        score: None,
-        start,
-        end,
-    });
+    let new_replacements = match request.redaction_scope {
+        ManualRedactionScope::SingleOccurrence => {
+            if overlaps_existing_replacement(&audit_report.replacements, start, end) {
+                Vec::new()
+            } else {
+                vec![EditableAuditPreviewRecord {
+                    source: json!("custom"),
+                    entity_type: "MANUAL_REDACTION".to_string(),
+                    matched_text: matched_text.clone(),
+                    replacement: "[MANUAL_REDACTION]".to_string(),
+                    reason: "desktop manual single-occurrence redaction".to_string(),
+                    score: None,
+                    start,
+                    end,
+                }]
+            }
+        }
+        ManualRedactionScope::FileExactMatches => build_manual_replacements_for_exact_matches(
+            &original_text,
+            &matched_text,
+            &audit_report.replacements,
+        ),
+    };
+    if new_replacements.is_empty() {
+        return Err(crate::error::AppError::InvalidPreviewEdit(
+            "selected text could not be promoted into a non-overlapping manual redaction"
+                .to_string(),
+        ));
+    }
+
+    audit_report.replacements.extend(new_replacements);
     sort_and_validate_replacements(&mut audit_report.replacements)?;
 
     persist_preview_edit(
@@ -445,6 +474,33 @@ pub fn add_manual_redaction(
         original_text,
         audit_report,
     )
+}
+
+fn build_manual_replacements_for_exact_matches(
+    original_text: &str,
+    matched_text: &str,
+    existing_replacements: &[EditableAuditPreviewRecord],
+) -> Vec<EditableAuditPreviewRecord> {
+    original_text
+        .match_indices(matched_text)
+        .filter_map(|(start, _)| {
+            let end = start + matched_text.len();
+            if overlaps_existing_replacement(existing_replacements, start, end) {
+                return None;
+            }
+
+            Some(EditableAuditPreviewRecord {
+                source: json!("custom"),
+                entity_type: "MANUAL_REDACTION".to_string(),
+                matched_text: matched_text.to_string(),
+                replacement: "[MANUAL_REDACTION]".to_string(),
+                reason: "desktop manual exact-match propagation".to_string(),
+                score: None,
+                start,
+                end,
+            })
+        })
+        .collect()
 }
 
 pub fn remove_redaction(
@@ -901,9 +957,11 @@ mod tests {
         DesktopNerSettings, DesktopPatternRuleSettings, DesktopPatternSettings,
         DesktopProfileSettings, DesktopRemoveRedactionRequest, DesktopReplaceRequest,
         DesktopReviewReason, DesktopReviewRequest, DesktopRunSettings,
-        EditableAuditPreviewRecord, PreviewSelectionSource, add_manual_redaction,
-        load_preview_input_as_markdown, map_original_highlights, read_editable_audit_report,
-        remove_redaction, run_replace_job, run_review_job,
+        EditableAuditPreviewRecord, ManualRedactionScope, PreviewSelectionSource,
+        add_manual_redaction,
+        build_manual_replacements_for_exact_matches, load_preview_input_as_markdown,
+        map_original_highlights, read_editable_audit_report, remove_redaction, run_replace_job,
+        run_review_job,
     };
 
     #[test]
@@ -1136,7 +1194,7 @@ mod tests {
         fs::create_dir_all(&input_dir).unwrap();
         fs::write(
             input_dir.join("note.md"),
-            "Jane Doe emailed jane@example.com.",
+            "Jane Doe emailed jane@example.com. Later, Jane Doe emailed billing@example.com.",
         )
         .unwrap();
         fs::write(
@@ -1166,10 +1224,11 @@ mod tests {
             source_preview: PreviewSelectionSource::Original,
             selection_start,
             selection_end,
+            redaction_scope: ManualRedactionScope::FileExactMatches,
         })
         .unwrap();
 
-        assert_eq!(updated.replacements, 3);
+        assert_eq!(updated.replacements, 6);
         assert!(updated.preview.redacted_html.contains("[MANUAL_REDACTION]"));
         assert!(
             updated
@@ -1185,10 +1244,89 @@ mod tests {
                 .contains("data-manual-number=\"1\"")
         );
         assert!(
+            updated
+                .preview
+                .redacted_html
+                .contains("data-manual-number=\"2\"")
+        );
+        assert!(
             fs::read_to_string(&preview.output_path)
                 .unwrap()
                 .contains("[MANUAL_REDACTION]")
         );
+    }
+
+    #[test]
+    fn add_manual_redaction_can_limit_to_single_occurrence() {
+        let temp = tempdir().unwrap();
+        let input_dir = temp.path().join("input");
+        let config = temp.path().join("deid.toml");
+
+        fs::create_dir_all(&input_dir).unwrap();
+        fs::write(
+            input_dir.join("note.md"),
+            "Jane Doe emailed jane@example.com. Later, Jane Doe emailed billing@example.com.",
+        )
+        .unwrap();
+        fs::write(
+            &config,
+            "[client]\nreplacement = \"CLIENT\"\nvariants = [\"Jane Doe\"]\n",
+        )
+        .unwrap();
+
+        let result = run_replace_job(DesktopReplaceRequest {
+            input: input_dir.clone(),
+            config: Some(config),
+            settings: None,
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+        })
+        .unwrap();
+        let preview = &result.file_previews[0];
+        let original_text = load_preview_input_as_markdown(&preview.input_path).unwrap();
+        let selection_start = original_text.find("emailed").unwrap();
+        let selection_end = selection_start + "emailed".len();
+
+        let updated = add_manual_redaction(DesktopAddRedactionRequest {
+            path: preview.path.clone(),
+            input_path: preview.input_path.clone(),
+            output_path: preview.output_path.clone(),
+            audit_output_path: preview.audit_output_path.clone(),
+            source_preview: PreviewSelectionSource::Original,
+            selection_start,
+            selection_end,
+            redaction_scope: ManualRedactionScope::SingleOccurrence,
+        })
+        .unwrap();
+
+        assert_eq!(updated.replacements, 5);
+        assert!(updated.preview.redacted_html.contains("data-manual-number=\"1\""));
+        assert!(!updated.preview.redacted_html.contains("data-manual-number=\"2\""));
+    }
+
+    #[test]
+    fn manual_redaction_exact_match_propagation_skips_existing_replacements() {
+        let replacements = build_manual_replacements_for_exact_matches(
+            "alpha beta alpha gamma alpha",
+            "alpha",
+            &[EditableAuditPreviewRecord {
+                source: json!("configured"),
+                entity_type: "CLIENT".to_string(),
+                matched_text: "alpha".to_string(),
+                replacement: "CLIENT".to_string(),
+                reason: "configured".to_string(),
+                score: None,
+                start: 11,
+                end: 16,
+            }],
+        );
+
+        assert_eq!(replacements.len(), 2);
+        assert_eq!(replacements[0].start, 0);
+        assert_eq!(replacements[1].start, 23);
+        assert!(replacements
+            .iter()
+            .all(|record| record.reason == "desktop manual exact-match propagation"));
     }
 
     #[test]

@@ -55,6 +55,7 @@ const afterPreview = document.getElementById('afterPreview')
 const previewActionTooltip = document.getElementById('previewActionTooltip')
 const previewActionLabel = document.getElementById('previewActionLabel')
 const previewActionButton = document.getElementById('previewActionButton')
+const previewSecondaryActionButton = document.getElementById('previewSecondaryActionButton')
 const summary = document.getElementById('summary')
 const openOutput = document.getElementById('openOutput')
 const openAudit = document.getElementById('openAudit')
@@ -67,7 +68,7 @@ let settingsOpen = false
 let workspace = createWorkspaceState(
   'Desktop shell loaded. Choose a file or folder to start local processing automatically.'
 )
-let pendingPreviewAction = null
+let pendingPreviewActions = null
 
 renderWorkspace()
 
@@ -578,14 +579,19 @@ function targetElement(target) {
 }
 
 function hidePreviewActionTooltip() {
-  pendingPreviewAction = null
+  pendingPreviewActions = null
   previewActionTooltip.hidden = true
 }
 
-function showPreviewActionTooltip({ rect, label, buttonText, action }) {
-  pendingPreviewAction = action
+function showPreviewActionTooltip({ rect, label, primaryAction, secondaryAction = null }) {
+  pendingPreviewActions = {
+    primaryAction,
+    secondaryAction
+  }
   previewActionLabel.textContent = label
-  previewActionButton.textContent = buttonText
+  previewActionButton.textContent = primaryAction.buttonText
+  previewSecondaryActionButton.hidden = !secondaryAction
+  previewSecondaryActionButton.textContent = secondaryAction?.buttonText ?? ''
   previewActionTooltip.hidden = false
 
   const tooltipGap = 10
@@ -684,24 +690,47 @@ async function handleRedactionRemoval(markElement) {
   showPreviewActionTooltip({
     rect,
     label: removalLabel,
-    buttonText: 'Remove redaction',
-    action: async () => {
-      try {
-        const result = await invoke('remove_redaction', {
-          request: {
-            ...toPreviewRequest(preview),
-            start: Number(markElement.dataset.recordStart ?? 0),
-            end: Number(markElement.dataset.recordEnd ?? 0),
-            replacement: markElement.dataset.recordReplacement ?? ''
-          }
-        })
-        replacePreviewState(result.preview, result.replacements)
-        appendSummary('Removed selected redaction and updated output files.')
-      } catch (error) {
-        appendSummary(`Remove redaction error: ${String(error)}`)
+    primaryAction: {
+      buttonText: 'Remove redaction',
+      run: async () => {
+        try {
+          const result = await invoke('remove_redaction', {
+            request: {
+              ...toPreviewRequest(preview),
+              start: Number(markElement.dataset.recordStart ?? 0),
+              end: Number(markElement.dataset.recordEnd ?? 0),
+              replacement: markElement.dataset.recordReplacement ?? ''
+            }
+          })
+          replacePreviewState(result.preview, result.replacements)
+          appendSummary('Removed selected redaction and updated output files.')
+        } catch (error) {
+          appendSummary(`Remove redaction error: ${String(error)}`)
+        }
       }
     }
   })
+}
+
+function createManualRedactionAction(preview, selection, scope, successMessage) {
+  return async () => {
+    try {
+      const result = await invoke('add_manual_redaction', {
+        request: {
+          ...toPreviewRequest(preview),
+          sourcePreview: selection.sourcePreview,
+          selectionStart: selection.selectionStart,
+          selectionEnd: selection.selectionEnd,
+          redactionScope: scope
+        }
+      })
+      window.getSelection()?.removeAllRanges()
+      replacePreviewState(result.preview, result.replacements)
+      appendSummary(successMessage)
+    } catch (error) {
+      appendSummary(`Add redaction error: ${String(error)}`)
+    }
+  }
 }
 
 function maybeShowAddRedactionTooltip() {
@@ -719,24 +748,24 @@ function maybeShowAddRedactionTooltip() {
 
   showPreviewActionTooltip({
     rect: selection.rect,
-    label: 'Add redaction for selected text?',
-    buttonText: 'Redact selection',
-    action: async () => {
-      try {
-        const result = await invoke('add_manual_redaction', {
-          request: {
-            ...toPreviewRequest(preview),
-            sourcePreview: selection.sourcePreview,
-            selectionStart: selection.selectionStart,
-            selectionEnd: selection.selectionEnd
-          }
-        })
-        window.getSelection()?.removeAllRanges()
-        replacePreviewState(result.preview, result.replacements)
-        appendSummary('Added manual redaction and updated output files.')
-      } catch (error) {
-        appendSummary(`Add redaction error: ${String(error)}`)
-      }
+    label: 'Choose whether to redact just this occurrence or all exact matches in this file.',
+    primaryAction: {
+      buttonText: 'Redact all matches',
+      run: createManualRedactionAction(
+        preview,
+        selection,
+        'file_exact_matches',
+        'Added manual redaction for all exact matches and updated output files.'
+      )
+    },
+    secondaryAction: {
+      buttonText: 'Just this occurrence',
+      run: createManualRedactionAction(
+        preview,
+        selection,
+        'single_occurrence',
+        'Added manual redaction for the selected occurrence and updated output files.'
+      )
     }
   })
 }
@@ -800,11 +829,21 @@ document.addEventListener('keydown', (event) => {
 })
 
 previewActionButton.addEventListener('click', async () => {
-  if (!pendingPreviewAction) {
+  if (!pendingPreviewActions?.primaryAction) {
     return
   }
 
-  const action = pendingPreviewAction
+  const action = pendingPreviewActions.primaryAction.run
+  hidePreviewActionTooltip()
+  await action()
+})
+
+previewSecondaryActionButton.addEventListener('click', async () => {
+  if (!pendingPreviewActions?.secondaryAction) {
+    return
+  }
+
+  const action = pendingPreviewActions.secondaryAction.run
   hidePreviewActionTooltip()
   await action()
 })
