@@ -1,107 +1,100 @@
 [
   {
-    "id": "45",
-    "category": "integration",
-    "priority": "high",
-    "risk": "high",
-    "description": "Replace the mode chooser with a single input-driven auto-process flow that populates persisted-output review results without run buttons.",
-    "verify": [
-      "Choose a file or folder from the desktop shell",
-      "Observe processing begin without a separate run button",
-      "Observe file results and preview-ready data populate the workspace"
-    ],
-    "passes": true,
-    "notes": "Completed 2026-05-05: input selection now auto-processes via persisted-output workflow with no run buttons."
-  },
-  {
-    "id": "46",
+    "id": "54",
     "category": "architecture",
     "priority": "high",
-    "risk": "medium",
-    "description": "Introduce a desktop workspace view-model for coherent rendering.",
+    "risk": "high",
+    "description": "Introduce profile plus case-context runtime composition without changing visible behavior yet.",
     "verify": [
-      "Render shell from one explicit workspace state model",
-      "Keep selected-file and artifact state coherent across updates"
+      "Construct an effective runtime config from a reusable profile plus separate case context",
+      "Run review and replace through the real desktop workflow using the merged config",
+      "Prove behavior remains equivalent with behavior-level tests"
     ],
     "passes": true,
-    "notes": "Completed 2026-05-05: introduced a tested workspace state module that now owns selected input, processing state, preview selection, highlight visibility, and artifact availability."
+    "notes": "Completed 2026-05-06: introduced separate profile and case-context runtime settings, composed them into the existing backend Config boundary, and kept current visible behavior stable with JS and Rust tests."
   },
   {
-    "id": "47",
-    "category": "ui",
+    "id": "55",
+    "category": "migration",
+    "priority": "high",
+    "risk": "high",
+    "description": "Migrate persisted settings into global settings, a reusable General profile, and current case context.",
+    "verify": [
+      "Legacy persisted settings migrate into separate persisted concepts",
+      "A default reusable General profile is created and selected",
+      "Client-specific identifiers are no longer stored in reusable profile persistence"
+    ],
+    "passes": false,
+    "notes": "Depends on #54 composition boundary."
+  },
+  {
+    "id": "56",
+    "category": "integration",
+    "priority": "high",
+    "risk": "medium",
+    "description": "Show active profile selection in the main run workflow.",
+    "verify": [
+      "The active profile is visible near input controls",
+      "Changing the active profile affects real runs",
+      "The current summary reflects the chosen profile"
+    ],
+    "passes": false,
+    "notes": "Depends on persisted profile state from #55."
+  },
+  {
+    "id": "57",
+    "category": "feature",
     "priority": "medium",
     "risk": "medium",
-    "description": "Turn the left rail into a focused input and file navigation surface.",
+    "description": "Add a reusable profile editor for policy-only settings.",
     "verify": [
-      "Show primary input surface in the left rail",
-      "Allow moving between files from the file list"
+      "Users can create and edit reusable policy-only profiles",
+      "Profiles persist and affect real runs",
+      "Client-specific identifiers cannot be edited as profile data"
     ],
-    "passes": true,
-    "notes": "Completed 2026-05-05: moved the input surface into the left rail, made the file list the persistent navigation panel, and removed sidebar run-detail duplication."
+    "passes": false,
+    "notes": "Depends on active-profile workflow from #56."
   },
   {
-    "id": "48",
-    "category": "ui",
+    "id": "58",
+    "category": "feature",
     "priority": "medium",
     "risk": "medium",
-    "description": "Make the selected-file strip the canonical source of selected-file status.",
+    "description": "Add a separate case-context editor for client-specific identifiers.",
     "verify": [
-      "Show filename, redaction count, and review status in one place",
-      "Remove duplicate status surfaces"
+      "Users can edit case-specific identifiers separately from profiles",
+      "Case-context changes affect real runs",
+      "Case-specific facts are not stored in reusable profiles"
     ],
-    "passes": true,
-    "notes": "Completed 2026-05-05: added a canonical selected-file strip above preview and reduced file-row detail so selected-file status now has one primary home."
+    "passes": false,
+    "notes": "Depends on active-profile workflow from #56."
   },
   {
-    "id": "49",
-    "category": "ui",
-    "priority": "medium",
-    "risk": "low",
-    "description": "Reduce warning noise to explanation-only notices.",
-    "verify": [
-      "Render notice only for exceptional review context",
-      "Avoid repeating selected-file status in warnings"
-    ],
-    "passes": true,
-    "notes": "Completed 2026-05-05: introduced explanation-only review notices by filtering preview-note prose down to the exceptional reasons users actually need to act on."
-  },
-  {
-    "id": "50",
+    "id": "59",
     "category": "integration",
     "priority": "high",
     "risk": "high",
-    "description": "Preserve and clarify live persisted edit behavior in preview.",
+    "description": "Preserve review, replace, filename, and audit semantics under merged profile plus case context.",
     "verify": [
-      "Add/remove redactions from preview",
-      "Observe persisted output and audit artifacts update immediately"
+      "Review and replace preserve current visible behavior under the split model",
+      "Filename and path de-identification use the merged effective configuration",
+      "Behavior-level tests cover audit and review semantics"
     ],
-    "passes": true,
-    "notes": "Completed 2026-05-05: clarified that preview edits save immediately and kept persisted-output behavior explicit in the workspace."
+    "passes": false,
+    "notes": "Depends on both profile and case-context editing."
   },
   {
-    "id": "51",
-    "category": "integration",
+    "id": "60",
+    "category": "migration",
     "priority": "medium",
-    "risk": "low",
-    "description": "Keep output and audit actions aligned with artifact availability.",
+    "risk": "high",
+    "description": "Add migration and privacy safety guardrails for mixed legacy settings.",
     "verify": [
-      "Buttons stay disabled before artifacts exist",
-      "Buttons open artifact locations after a successful run"
+      "Legacy mixed settings cannot silently pollute reusable profiles",
+      "The migrated state is understandable in the UI",
+      "Privacy-sensitive migration scenarios are covered by tests"
     ],
-    "passes": true,
-    "notes": "Completed 2026-05-05: artifact actions now open containing folders rather than artifact files, matching the UI contract and staying gated by artifact availability."
-  },
-  {
-    "id": "52",
-    "category": "contract",
-    "priority": "medium",
-    "risk": "medium",
-    "description": "Normalize desktop response contracts and structured review metadata.",
-    "verify": [
-      "Use one response-field naming convention",
-      "Expose structured review metadata needed by the streamlined shell"
-    ],
-    "passes": true,
-    "notes": "Completed 2026-05-05: normalized desktop response fields to camelCase and replaced preview-note prose with structured review metadata consumed by the frontend."
+    "passes": false,
+    "notes": "Depends on the case-context model landing first."
   }
 ]

@@ -2,8 +2,9 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use crate::desktop::{
-    DesktopAddRedactionRequest, DesktopRemoveRedactionRequest, DesktopReplaceRequest,
-    DesktopReviewRequest, add_manual_redaction as add_manual_redaction_service,
+    DesktopAddRedactionRequest, DesktopRemoveRedactionRequest, DesktopRunSettings,
+    DesktopReplaceRequest, DesktopReviewRequest,
+    add_manual_redaction as add_manual_redaction_service,
     remove_redaction as remove_redaction_service, run_replace_job as run_replace_service,
     run_review_job as run_review_service,
 };
@@ -27,12 +28,14 @@ const DEV_NER_TOKENIZER_RESOURCE_PATH: &str = "../ml/ner/tokenizer.json";
 fn run_review_job(
     input: String,
     config: Option<String>,
+    settings: Option<DesktopRunSettings>,
     include_patterns: Vec<String>,
     exclude_patterns: Vec<String>,
 ) -> Result<crate::desktop::DesktopReviewResult, String> {
     run_review_service(DesktopReviewRequest {
         input: input.into(),
         config: config.map(Into::into),
+        settings,
         include_patterns,
         exclude_patterns,
     })
@@ -44,12 +47,14 @@ fn run_replace_job(
     artifacts: tauri::State<'_, LastReplaceArtifactsState>,
     input: String,
     config: Option<String>,
+    settings: Option<DesktopRunSettings>,
     include_patterns: Vec<String>,
     exclude_patterns: Vec<String>,
 ) -> Result<crate::desktop::DesktopReplaceResult, String> {
     let result = run_replace_service(DesktopReplaceRequest {
         input: input.into(),
         config: config.map(Into::into),
+        settings,
         include_patterns,
         exclude_patterns,
     })

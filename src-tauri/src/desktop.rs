@@ -6,12 +6,20 @@ use std::{
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{Result, RunFileStatus, RunMode, RunOptions, extraction, run};
+use crate::{
+    Result, RunFileStatus, RunMode, RunOptions,
+    config::{
+        CaseContextConfig, ClientConfig, Config, DeidProfileConfig, ExactEntityConfig,
+        NerConfig, PatternConfig, PatternRuleConfig,
+    },
+    extraction, run,
+};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DesktopReviewRequest {
     pub input: PathBuf,
     pub config: Option<PathBuf>,
+    pub settings: Option<DesktopRunSettings>,
     pub include_patterns: Vec<String>,
     pub exclude_patterns: Vec<String>,
 }
@@ -30,8 +38,86 @@ pub struct DesktopReviewResult {
 pub struct DesktopReplaceRequest {
     pub input: PathBuf,
     pub config: Option<PathBuf>,
+    pub settings: Option<DesktopRunSettings>,
     pub include_patterns: Vec<String>,
     pub exclude_patterns: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopRunSettings {
+    #[serde(default)]
+    pub profile: DesktopProfileSettings,
+    #[serde(default)]
+    pub case_context: DesktopCaseContextSettings,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopProfileSettings {
+    pub patterns: DesktopPatternSettings,
+    pub ner: DesktopNerSettings,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopCaseContextSettings {
+    pub client_replacement: String,
+    pub client_variants: Vec<String>,
+    #[serde(default)]
+    pub exact_entities: Vec<DesktopExactEntitySettings>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopExactEntitySettings {
+    pub entity_type: String,
+    pub replacement: String,
+    pub variants: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopPatternSettings {
+    pub dates: DesktopPatternRuleSettings,
+    pub emails: DesktopPatternRuleSettings,
+    pub phones: DesktopPatternRuleSettings,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopPatternRuleSettings {
+    pub enabled: bool,
+    pub replacement: String,
+}
+
+impl Default for DesktopPatternRuleSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            replacement: String::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopNerSettings {
+    pub enabled: bool,
+    pub model_path: String,
+    pub tokenizer_path: String,
+    pub min_confidence: f32,
+}
+
+impl Default for DesktopNerSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            model_path: String::new(),
+            tokenizer_path: String::new(),
+            min_confidence: 0.7,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -145,12 +231,135 @@ pub struct DesktopPreviewUpdateResult {
     pub replacements: usize,
 }
 
+impl DesktopRunSettings {
+    fn into_runtime_config(self) -> Result<Option<Config>> {
+        let client_replacement = self.case_context.client_replacement.trim().to_string();
+        let client_variants = self
+            .case_context
+            .client_variants
+            .into_iter()
+            .map(|variant| variant.trim().to_string())
+            .filter(|variant| !variant.is_empty())
+            .collect::<Vec<_>>();
+
+        let client = if client_replacement.is_empty() && client_variants.is_empty() {
+            None
+        } else {
+            Some(ClientConfig {
+                replacement: client_replacement,
+                variants: client_variants,
+            })
+        };
+
+        let exact_entities = self
+            .case_context
+            .exact_entities
+            .into_iter()
+            .filter_map(|entity| {
+                let entity_type = entity.entity_type.trim().to_string();
+                let replacement = entity.replacement.trim().to_string();
+                let variants = entity
+                    .variants
+                    .into_iter()
+                    .map(|variant| variant.trim().to_string())
+                    .filter(|variant| !variant.is_empty())
+                    .collect::<Vec<_>>();
+
+                if entity_type.is_empty() && replacement.is_empty() && variants.is_empty() {
+                    None
+                } else {
+                    Some(ExactEntityConfig {
+                        entity_type,
+                        replacement,
+                        variants,
+                    })
+                }
+            })
+            .collect::<Vec<_>>();
+
+        let profile = DeidProfileConfig {
+            patterns: PatternConfig {
+                dates: pattern_rule_from_settings(self.profile.patterns.dates),
+                emails: pattern_rule_from_settings(self.profile.patterns.emails),
+                phones: pattern_rule_from_settings(self.profile.patterns.phones),
+            },
+            ner: if self.profile.ner.enabled {
+                Some(NerConfig {
+                    enabled: true,
+                    model_path: PathBuf::from(self.profile.ner.model_path.trim()),
+                    tokenizer_path: match self.profile.ner.tokenizer_path.trim() {
+                        "" => None,
+                        value => Some(PathBuf::from(value)),
+                    },
+                    min_confidence: self.profile.ner.min_confidence,
+                })
+            } else {
+                None
+            },
+        };
+
+        let case_context = CaseContextConfig {
+            client,
+            exact_entities,
+        };
+
+        let config = Config::from_profile_and_case_context(profile, case_context);
+
+        if config.is_empty() {
+            return Ok(None);
+        }
+
+        config.validate()?;
+        Ok(Some(config))
+    }
+}
+
+fn pattern_rule_from_settings(settings: DesktopPatternRuleSettings) -> Option<PatternRuleConfig> {
+    if !settings.enabled {
+        return None;
+    }
+
+    Some(PatternRuleConfig {
+        enabled: settings.enabled,
+        replacement: settings.replacement.trim().to_string(),
+    })
+}
+
+fn materialize_runtime_config(
+    config_path: Option<PathBuf>,
+    settings: Option<DesktopRunSettings>,
+) -> Result<Option<PathBuf>> {
+    if let Some(settings) = settings {
+        let Some(config) = settings.into_runtime_config()? else {
+            return Ok(None);
+        };
+
+        let path = std::env::temp_dir().join(format!(
+            "tns-deid-desktop-runtime-{}.toml",
+            std::process::id()
+        ));
+        let encoded = toml::to_string(&config).map_err(|error| {
+            crate::error::AppError::InvalidConfig(format!(
+                "failed to encode runtime desktop settings: {error}"
+            ))
+        })?;
+        fs::write(&path, encoded).map_err(|source| crate::error::AppError::WriteFile {
+            path: path.clone(),
+            source,
+        })?;
+        return Ok(Some(path));
+    }
+
+    Ok(config_path)
+}
+
 pub fn run_review_job(request: DesktopReviewRequest) -> Result<DesktopReviewResult> {
+    let runtime_config = materialize_runtime_config(request.config, request.settings)?;
     let summary = run(RunOptions {
         input: request.input,
         output: None,
         audit_output: None,
-        config: request.config,
+        config: runtime_config,
         include_patterns: request.include_patterns,
         exclude_patterns: request.exclude_patterns,
         mode: RunMode::Review,
@@ -166,11 +375,12 @@ pub fn run_review_job(request: DesktopReviewRequest) -> Result<DesktopReviewResu
 }
 
 pub fn run_replace_job(request: DesktopReplaceRequest) -> Result<DesktopReplaceResult> {
+    let runtime_config = materialize_runtime_config(request.config, request.settings)?;
     let summary = run(RunOptions {
         input: request.input,
         output: None,
         audit_output: None,
-        config: request.config,
+        config: runtime_config,
         include_patterns: request.include_patterns,
         exclude_patterns: request.exclude_patterns,
         mode: RunMode::Replace,
@@ -687,11 +897,13 @@ mod tests {
     use lopdf::{Document, Object, Stream, dictionary};
 
     use super::{
-        DesktopAddRedactionRequest, DesktopRemoveRedactionRequest, DesktopReplaceRequest,
-        DesktopReviewReason, DesktopReviewRequest, EditableAuditPreviewRecord,
-        PreviewSelectionSource, add_manual_redaction, load_preview_input_as_markdown,
-        map_original_highlights, read_editable_audit_report, remove_redaction, run_replace_job,
-        run_review_job,
+        DesktopAddRedactionRequest, DesktopCaseContextSettings, DesktopExactEntitySettings,
+        DesktopNerSettings, DesktopPatternRuleSettings, DesktopPatternSettings,
+        DesktopProfileSettings, DesktopRemoveRedactionRequest, DesktopReplaceRequest,
+        DesktopReviewReason, DesktopReviewRequest, DesktopRunSettings,
+        EditableAuditPreviewRecord, PreviewSelectionSource, add_manual_redaction,
+        load_preview_input_as_markdown, map_original_highlights, read_editable_audit_report,
+        remove_redaction, run_replace_job, run_review_job,
     };
 
     #[test]
@@ -710,6 +922,7 @@ mod tests {
         let result = run_review_job(DesktopReviewRequest {
             input,
             config: Some(config),
+            settings: None,
             include_patterns: Vec::new(),
             exclude_patterns: Vec::new(),
         })
@@ -761,6 +974,7 @@ mod tests {
         let result = run_replace_job(DesktopReplaceRequest {
             input: input_dir.clone(),
             config: Some(config),
+            settings: None,
             include_patterns: Vec::new(),
             exclude_patterns: Vec::new(),
         })
@@ -802,6 +1016,49 @@ mod tests {
     }
 
     #[test]
+    fn desktop_review_job_composes_profile_and_case_context_settings() {
+        let temp = tempdir().unwrap();
+        let input = temp.path().join("note.md");
+
+        fs::write(&input, "Jane Doe emailed jane@example.com on 01/02/2024.").unwrap();
+
+        let result = run_review_job(DesktopReviewRequest {
+            input,
+            config: None,
+            settings: Some(DesktopRunSettings {
+                profile: DesktopProfileSettings {
+                    patterns: DesktopPatternSettings {
+                        dates: DesktopPatternRuleSettings {
+                            enabled: true,
+                            replacement: "[DATE]".into(),
+                        },
+                        emails: DesktopPatternRuleSettings::default(),
+                        phones: DesktopPatternRuleSettings::default(),
+                    },
+                    ner: DesktopNerSettings::default(),
+                },
+                case_context: DesktopCaseContextSettings {
+                    client_replacement: "CLIENT".into(),
+                    client_variants: vec!["Jane Doe".into()],
+                    exact_entities: vec![DesktopExactEntitySettings {
+                        entity_type: "provider".into(),
+                        replacement: "[PROVIDER]".into(),
+                        variants: vec!["Dr. Smith".into()],
+                    }],
+                },
+            }),
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+        })
+        .unwrap();
+
+        assert_eq!(result.replacements, 3);
+        assert!(result.review_summary.contains("[configured:client] Jane Doe -> CLIENT"));
+        assert!(result.review_summary.contains("[redact-core:EMAIL_ADDRESS]"));
+        assert!(result.review_summary.contains("[configured:date] 01/02/2024 -> [DATE]"));
+    }
+
+    #[test]
     fn desktop_replace_job_builds_original_preview_for_pdf_inputs() {
         let temp = tempdir().unwrap();
         let input_dir = temp.path().join("input");
@@ -816,6 +1073,7 @@ mod tests {
         let result = run_replace_job(DesktopReplaceRequest {
             input: input.clone(),
             config: None,
+            settings: None,
             include_patterns: Vec::new(),
             exclude_patterns: Vec::new(),
         })
@@ -855,6 +1113,7 @@ mod tests {
         let result = run_replace_job(DesktopReplaceRequest {
             input,
             config: None,
+            settings: None,
             include_patterns: Vec::new(),
             exclude_patterns: Vec::new(),
         })
@@ -889,6 +1148,7 @@ mod tests {
         let result = run_replace_job(DesktopReplaceRequest {
             input: input_dir.clone(),
             config: Some(config),
+            settings: None,
             include_patterns: Vec::new(),
             exclude_patterns: Vec::new(),
         })
@@ -995,6 +1255,7 @@ mod tests {
         let result = run_replace_job(DesktopReplaceRequest {
             input: input_dir.clone(),
             config: Some(config),
+            settings: None,
             include_patterns: Vec::new(),
             exclude_patterns: Vec::new(),
         })
