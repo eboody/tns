@@ -19,8 +19,8 @@ use config::{Config, NerConfig};
 use deidentify::{DeidentifyResult, apply_rules, build_rules};
 use error::{AppError, Result};
 use extraction::{
-    ExtractionFidelity, classify_extraction_status, extract_input, extraction_provenance_label,
-    extraction_status_label,
+    ExtractionFidelity, ExtractionProvenance, classify_extraction_status, extract_input,
+    extraction_provenance_label, extraction_status_label,
 };
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use redact_core::AnalyzerEngine;
@@ -55,6 +55,9 @@ pub struct RunSummary {
     pub replacements: usize,
     pub non_text_omissions_detected: bool,
     pub text_degraded_detected: bool,
+    pub structural_loss_suspected: bool,
+    pub low_confidence_review_required: bool,
+    pub extraction_provenance: Option<ExtractionProvenance>,
     pub extraction_status: ExtractionStatus,
     pub file_statuses: Vec<RunFileStatus>,
     pub review_summary: String,
@@ -79,6 +82,9 @@ pub struct RunFileStatus {
     pub review_sensitive: bool,
     pub non_text_omissions_detected: bool,
     pub text_degraded_detected: bool,
+    pub structural_loss_suspected: bool,
+    pub low_confidence_review_required: bool,
+    pub extraction_provenance: Option<ExtractionProvenance>,
     pub output_path: Option<PathBuf>,
     pub audit_output_path: Option<PathBuf>,
 }
@@ -108,6 +114,8 @@ fn run_single(options: RunOptions) -> Result<RunSummary> {
     let fidelity = extracted_input.fidelity;
     let non_text_omissions_detected = extracted_input.non_text_omissions_detected();
     let text_degraded_detected = extracted_input.text_degraded_detected();
+    let structural_loss_suspected = fidelity.structural_loss_suspected;
+    let low_confidence_review_required = fidelity.low_confidence_review_required;
     let extraction_status = extracted_input.extraction_status();
 
     let structured = apply_deidentification_pipeline(&extracted_input.text, options.config.as_deref())?;
@@ -126,6 +134,9 @@ fn run_single(options: RunOptions) -> Result<RunSummary> {
             replacements: structured.findings.len(),
             non_text_omissions_detected,
             text_degraded_detected,
+            structural_loss_suspected,
+            low_confidence_review_required,
+            extraction_provenance: Some(fidelity.provenance),
             extraction_status,
             file_statuses: vec![RunFileStatus {
                 path: options.input,
@@ -133,9 +144,12 @@ fn run_single(options: RunOptions) -> Result<RunSummary> {
                 replacements: structured.findings.len(),
                 review_sensitive: !structured.findings.is_empty()
                     || non_text_omissions_detected
-                    || text_degraded_detected,
+                    || low_confidence_review_required,
                 non_text_omissions_detected,
                 text_degraded_detected,
+                structural_loss_suspected,
+                low_confidence_review_required,
+                extraction_provenance: Some(fidelity.provenance),
                 output_path: None,
                 audit_output_path: None,
             }],
@@ -187,6 +201,9 @@ fn run_single(options: RunOptions) -> Result<RunSummary> {
         replacements: audit_report.replacements.len(),
         non_text_omissions_detected,
         text_degraded_detected,
+        structural_loss_suspected,
+        low_confidence_review_required,
+        extraction_provenance: Some(fidelity.provenance),
         extraction_status,
         file_statuses: vec![RunFileStatus {
             path: options.input,
@@ -194,9 +211,12 @@ fn run_single(options: RunOptions) -> Result<RunSummary> {
             replacements: audit_report.replacements.len(),
             review_sensitive: !audit_report.replacements.is_empty()
                 || non_text_omissions_detected
-                || text_degraded_detected,
+                || low_confidence_review_required,
             non_text_omissions_detected,
             text_degraded_detected,
+            structural_loss_suspected,
+            low_confidence_review_required,
+            extraction_provenance: Some(fidelity.provenance),
             output_path: Some(output_path.clone()),
             audit_output_path: Some(audit_output_path.clone()),
         }],
@@ -224,6 +244,9 @@ fn run_directory(options: RunOptions) -> Result<RunSummary> {
     let mut review_sensitive = Vec::new();
     let mut non_text_omission_files = Vec::new();
     let mut text_degraded_files = Vec::new();
+    let mut structural_loss_files = Vec::new();
+    let mut low_confidence_files = Vec::new();
+    let mut ocr_involved_files = Vec::new();
     let mut renamed = Vec::new();
     let mut file_statuses = Vec::new();
     let mut replacement_total = 0usize;
@@ -255,6 +278,9 @@ fn run_directory(options: RunOptions) -> Result<RunSummary> {
                 review_sensitive: false,
                 non_text_omissions_detected: false,
                 text_degraded_detected: false,
+                structural_loss_suspected: false,
+                low_confidence_review_required: false,
+                extraction_provenance: None,
                 output_path: None,
                 audit_output_path: None,
             });
@@ -270,6 +296,9 @@ fn run_directory(options: RunOptions) -> Result<RunSummary> {
                 review_sensitive: false,
                 non_text_omissions_detected: false,
                 text_degraded_detected: false,
+                structural_loss_suspected: false,
+                low_confidence_review_required: false,
+                extraction_provenance: None,
                 output_path: None,
                 audit_output_path: None,
             });
@@ -301,6 +330,9 @@ fn run_directory(options: RunOptions) -> Result<RunSummary> {
                     review_sensitive: true,
                     non_text_omissions_detected: false,
                     text_degraded_detected: false,
+                    structural_loss_suspected: false,
+                    low_confidence_review_required: true,
+                    extraction_provenance: None,
                     output_path: None,
                     audit_output_path: None,
                 });
@@ -322,9 +354,12 @@ fn run_directory(options: RunOptions) -> Result<RunSummary> {
             replacements: summary.replacements,
             review_sensitive: summary.replacements > 0
                 || summary.non_text_omissions_detected
-                || summary.text_degraded_detected,
+                || summary.low_confidence_review_required,
             non_text_omissions_detected: summary.non_text_omissions_detected,
             text_degraded_detected: summary.text_degraded_detected,
+            structural_loss_suspected: summary.structural_loss_suspected,
+            low_confidence_review_required: summary.low_confidence_review_required,
+            extraction_provenance: summary.extraction_provenance,
             output_path: summary.output_path,
             audit_output_path: summary.audit_output_path,
         });
@@ -334,6 +369,15 @@ fn run_directory(options: RunOptions) -> Result<RunSummary> {
         }
         if summary.text_degraded_detected {
             text_degraded_files.push(relative.clone());
+        }
+        if summary.structural_loss_suspected {
+            structural_loss_files.push(relative.clone());
+        }
+        if summary.low_confidence_review_required {
+            low_confidence_files.push(relative.clone());
+        }
+        if summary.extraction_provenance == Some(ExtractionProvenance::OcrText) {
+            ocr_involved_files.push(relative.clone());
         }
         review_sensitive.push(relative);
     }
@@ -347,6 +391,9 @@ fn run_directory(options: RunOptions) -> Result<RunSummary> {
         &review_sensitive,
         &non_text_omission_files,
         &text_degraded_files,
+        &structural_loss_files,
+        &low_confidence_files,
+        &ocr_involved_files,
         &renamed,
     );
 
@@ -365,9 +412,12 @@ fn run_directory(options: RunOptions) -> Result<RunSummary> {
         replacements: replacement_total,
         non_text_omissions_detected: !non_text_omission_files.is_empty(),
         text_degraded_detected: !text_degraded_files.is_empty(),
+        structural_loss_suspected: !structural_loss_files.is_empty(),
+        low_confidence_review_required: !low_confidence_files.is_empty(),
+        extraction_provenance: None,
         extraction_status: classify_extraction_status(
             !non_text_omission_files.is_empty(),
-            !text_degraded_files.is_empty(),
+            !text_degraded_files.is_empty() || !low_confidence_files.is_empty(),
         ),
         file_statuses,
         review_summary,
@@ -838,6 +888,9 @@ fn build_batch_summary(
     review_sensitive: &[PathBuf],
     non_text_omission_files: &[PathBuf],
     text_degraded_files: &[PathBuf],
+    structural_loss_files: &[PathBuf],
+    low_confidence_files: &[PathBuf],
+    ocr_involved_files: &[PathBuf],
     renamed: &[(PathBuf, PathBuf)],
 ) -> String {
     let mut lines = vec![format!("input directory: {}", input_root.display())];
@@ -857,6 +910,9 @@ fn build_batch_summary(
         non_text_omission_files.len()
     ));
     lines.push(format!("text-degraded files: {}", text_degraded_files.len()));
+    lines.push(format!("structural-loss files: {}", structural_loss_files.len()));
+    lines.push(format!("low-confidence files: {}", low_confidence_files.len()));
+    lines.push(format!("ocr-involved files: {}", ocr_involved_files.len()));
     lines.push(format!("renamed outputs: {}", renamed.len()));
 
     if !processed.is_empty() {
@@ -898,6 +954,24 @@ fn build_batch_summary(
     if !text_degraded_files.is_empty() {
         lines.push("Text fidelity degraded:".to_string());
         for path in text_degraded_files {
+            lines.push(format!("- {}", path.display()));
+        }
+    }
+    if !structural_loss_files.is_empty() {
+        lines.push("Structural extraction loss suspected:".to_string());
+        for path in structural_loss_files {
+            lines.push(format!("- {}", path.display()));
+        }
+    }
+    if !low_confidence_files.is_empty() {
+        lines.push("Low-confidence extraction review required:".to_string());
+        for path in low_confidence_files {
+            lines.push(format!("- {}", path.display()));
+        }
+    }
+    if !ocr_involved_files.is_empty() {
+        lines.push("OCR involved in extraction:".to_string());
+        for path in ocr_involved_files {
             lines.push(format!("- {}", path.display()));
         }
     }

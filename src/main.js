@@ -183,12 +183,21 @@ function renderResultFiles(fileStatuses, filePreviews = []) {
     const reviewSensitive = status.reviewSensitive ?? status.review_sensitive ?? false
     const omissions =
       status.nonTextOmissionsDetected ?? status.non_text_omissions_detected ?? false
+    const degraded = status.textDegradedDetected ?? status.text_degraded_detected ?? false
+    const structuralLoss = status.structuralLossSuspected ?? status.structural_loss_suspected ?? false
+    const lowConfidence =
+      status.lowConfidenceReviewRequired ?? status.low_confidence_review_required ?? false
+    const provenance = status.extractionProvenance ?? status.extraction_provenance ?? ''
     const outputPath = status.outputPath ?? status.output_path ?? ''
 
     const details = [
       `${replacements} replacements`,
       reviewSensitive ? 'review-sensitive' : 'no review flags',
+      provenance ? `provenance: ${provenance}` : null,
       omissions ? 'non-text omissions' : null,
+      degraded ? 'text degraded' : null,
+      structuralLoss ? 'structural loss suspected' : null,
+      lowConfidence ? 'low-confidence review' : null,
       outputPath ? `output: ${outputPath}` : null
     ]
       .filter(Boolean)

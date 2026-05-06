@@ -287,6 +287,7 @@ fn build_preview(
     audit_report: &EditableAuditPreviewReport,
 ) -> Result<DesktopFilePreview> {
     let original_text = load_preview_input_as_markdown(&audit_report.input_path).ok();
+    let extraction_fidelity = audit_report.review_flags.get("extraction_fidelity");
     let non_text_omissions_detected = audit_report
         .review_flags
         .get("non_text_omissions_detected")
@@ -297,6 +298,17 @@ fn build_preview(
         .get("text_degraded_detected")
         .and_then(Value::as_bool)
         .unwrap_or(false);
+    let structural_loss_suspected = extraction_fidelity
+        .and_then(|value| value.get("structural_loss_suspected"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let low_confidence_review_required = extraction_fidelity
+        .and_then(|value| value.get("low_confidence_review_required"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let extraction_provenance = extraction_fidelity
+        .and_then(|value| value.get("provenance"))
+        .and_then(Value::as_str);
 
     let original_html = original_text.as_ref().map(|text| {
         render_highlighted_html(
@@ -329,16 +341,22 @@ fn build_preview(
         redacted_html,
         preview_note: build_preview_note(
             original_text.is_none(),
+            extraction_provenance,
             non_text_omissions_detected,
             text_degraded_detected,
+            structural_loss_suspected,
+            low_confidence_review_required,
         ),
     })
 }
 
 fn build_preview_note(
     original_preview_unavailable: bool,
+    extraction_provenance: Option<&str>,
     non_text_omissions_detected: bool,
     text_degraded_detected: bool,
+    structural_loss_suspected: bool,
+    low_confidence_review_required: bool,
 ) -> Option<String> {
     let mut notes = Vec::new();
 
@@ -348,6 +366,9 @@ fn build_preview_note(
                 .to_string(),
         );
     }
+    if let Some(provenance) = extraction_provenance {
+        notes.push(format!("Extraction provenance: {provenance}."));
+    }
     if non_text_omissions_detected {
         notes.push(
             "Non-text content omissions were detected during extraction, so embedded visual content may still require manual review.".to_string(),
@@ -356,6 +377,16 @@ fn build_preview_note(
     if text_degraded_detected {
         notes.push(
             "Extracted text fidelity is degraded for this file, so review spacing and label boundaries carefully.".to_string(),
+        );
+    }
+    if structural_loss_suspected {
+        notes.push(
+            "Structural extraction loss is suspected for this file, so table or form layout meaning may be flattened.".to_string(),
+        );
+    }
+    if low_confidence_review_required {
+        notes.push(
+            "This file requires low-confidence extraction review before relying on the extracted text alone.".to_string(),
         );
     }
 
@@ -729,12 +760,17 @@ mod tests {
         assert_eq!(preview.path, input);
         assert!(
             preview
+                .preview_note
+                .as_ref()
+                .is_some_and(|note| note.contains("Extraction provenance: pdf_text."))
+        );
+        assert!(
+            preview
                 .original_html
                 .as_ref()
                 .is_some_and(|html| html.contains("(202) 456-1111"))
         );
         assert!(preview.redacted_html.contains("[PHONE_NUMBER]"));
-        assert!(preview.preview_note.is_none());
     }
 
     #[test]
