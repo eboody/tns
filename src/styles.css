@@ -207,9 +207,16 @@ main {
 }
 
 .preview-edit-hint {
-  margin: 0 0 1rem;
+  margin: 0 0 0.4rem;
   color: #475569;
   font-size: 0.92rem;
+}
+
+.preview-save-note {
+  margin: 0 0 1rem;
+  color: #0f766e;
+  font-size: 0.9rem;
+  font-weight: 600;
 }
 
 .preview-action-tooltip {

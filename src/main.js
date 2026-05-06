@@ -393,7 +393,7 @@ async function handleRedactionRemoval(markElement) {
   showPreviewActionTooltip({
     x: rect.left,
     y: rect.bottom + 8,
-    label: 'Remove this redaction from the output and audit files.',
+    label: 'Remove this redaction and save the change to the output and audit files.',
     buttonText: 'Remove redaction',
     action: async () => {
       try {
@@ -431,7 +431,7 @@ function maybeShowAddRedactionTooltip() {
   showPreviewActionTooltip({
     x: rect.left,
     y: rect.bottom + 8,
-    label: 'Add a manual redaction for the selected text.',
+    label: 'Add a manual redaction for the selected text and save it to the output and audit files.',
     buttonText: 'Redact selection',
     action: async () => {
       try {
