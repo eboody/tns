@@ -244,6 +244,23 @@ main {
   border-top: 1px solid var(--border);
 }
 
+.settings-mode-toggle {
+  display: inline-flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.settings-mode-toggle button[aria-pressed='true'] {
+  background: var(--blue-soft);
+  border-color: rgba(31, 77, 122, 0.26);
+  color: var(--blue);
+}
+
+.settings-editor-panel {
+  display: grid;
+  gap: 0.85rem;
+}
+
 .settings-section h3,
 .settings-section-header h3 {
   margin: 0;
