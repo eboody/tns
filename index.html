@@ -127,91 +127,82 @@
 
           <p class="settings-copy">Define the de-identification rules this app should reuse across launches. Saving updates future runs and reruns the current input if one is selected.</p>
 
-          <div class="settings-mode-toggle" role="tablist" aria-label="Settings editor mode">
-            <button id="showProfileEditor" type="button" class="secondary-button" aria-pressed="true">Profile policy</button>
-            <button id="showCaseContextEditor" type="button" class="secondary-button" aria-pressed="false">Current case context</button>
-          </div>
-
-          <div id="settingsProfilePanel" class="settings-editor-panel">
-            <section class="settings-section">
-              <div class="settings-section-header">
-                <div>
-                  <h3>Reusable profile</h3>
-                  <p>Edit the reusable workflow policy for the active profile, or create a new profile from the current one.</p>
-                </div>
-                <button id="createProfile" type="button" class="secondary-button">Create profile from current</button>
+          <section class="settings-section">
+            <div class="settings-section-header">
+              <div>
+                <h3>Reusable profile</h3>
+                <p>Edit the reusable workflow policy for the active profile, or create a new profile from the current one.</p>
               </div>
+              <button id="createProfile" type="button" class="secondary-button">Create profile from current</button>
+            </div>
+            <label class="field-group">
+              <span>Profile name</span>
+              <input id="settingsProfileName" type="text" placeholder="General" />
+            </label>
+          </section>
+
+          <section class="settings-section">
+            <h3>Client aliases</h3>
+            <label class="field-group">
+              <span>Client replacement label</span>
+              <input id="settingsClientReplacement" type="text" placeholder="CLIENT" />
+            </label>
+            <label class="field-group">
+              <span>Client variants</span>
+              <textarea id="settingsClientVariants" rows="4" placeholder="One client alias per line"></textarea>
+              <small class="field-help">These exact variants are redacted deterministically before writing output.</small>
+            </label>
+          </section>
+
+          <section class="settings-section">
+            <div class="settings-section-header">
+              <div>
+                <h3>Exact entity rules</h3>
+                <p>Define additional exact-match aliases such as providers, institutions, or family members.</p>
+              </div>
+              <button id="addExactEntity" type="button" class="secondary-button">Add rule</button>
+            </div>
+            <div id="exactEntitiesList" class="exact-entities-list"></div>
+          </section>
+
+          <section class="settings-section">
+            <h3>Pattern replacements</h3>
+            <div class="pattern-settings-grid">
+              <label class="pattern-setting-card">
+                <span class="pattern-setting-toggle"><input id="settingsDatesEnabled" type="checkbox" /> Dates</span>
+                <input id="settingsDatesReplacement" type="text" placeholder="[DATE]" />
+              </label>
+              <label class="pattern-setting-card">
+                <span class="pattern-setting-toggle"><input id="settingsEmailsEnabled" type="checkbox" /> Emails</span>
+                <input id="settingsEmailsReplacement" type="text" placeholder="[EMAIL]" />
+              </label>
+              <label class="pattern-setting-card">
+                <span class="pattern-setting-toggle"><input id="settingsPhonesEnabled" type="checkbox" /> Phones</span>
+                <input id="settingsPhonesReplacement" type="text" placeholder="[PHONE]" />
+              </label>
+            </div>
+          </section>
+
+          <section class="settings-section">
+            <h3>ML / NER</h3>
+            <label class="field-group checkbox-field">
+              <span class="pattern-setting-toggle"><input id="settingsNerEnabled" type="checkbox" /> Enable custom NER model override</span>
+            </label>
+            <div class="ner-settings-grid">
               <label class="field-group">
-                <span>Profile name</span>
-                <input id="settingsProfileName" type="text" placeholder="General" />
-              </label>
-            </section>
-
-            <section class="settings-section">
-              <h3>Pattern replacements</h3>
-              <div class="pattern-settings-grid">
-                <label class="pattern-setting-card">
-                  <span class="pattern-setting-toggle"><input id="settingsDatesEnabled" type="checkbox" /> Dates</span>
-                  <input id="settingsDatesReplacement" type="text" placeholder="[DATE]" />
-                </label>
-                <label class="pattern-setting-card">
-                  <span class="pattern-setting-toggle"><input id="settingsEmailsEnabled" type="checkbox" /> Emails</span>
-                  <input id="settingsEmailsReplacement" type="text" placeholder="[EMAIL]" />
-                </label>
-                <label class="pattern-setting-card">
-                  <span class="pattern-setting-toggle"><input id="settingsPhonesEnabled" type="checkbox" /> Phones</span>
-                  <input id="settingsPhonesReplacement" type="text" placeholder="[PHONE]" />
-                </label>
-              </div>
-            </section>
-
-            <section class="settings-section">
-              <h3>ML / NER</h3>
-              <label class="field-group checkbox-field">
-                <span class="pattern-setting-toggle"><input id="settingsNerEnabled" type="checkbox" /> Enable custom NER model override</span>
-              </label>
-              <div class="ner-settings-grid">
-                <label class="field-group">
-                  <span>Model path</span>
-                  <input id="settingsNerModelPath" type="text" placeholder="/path/to/model.onnx" />
-                </label>
-                <label class="field-group">
-                  <span>Tokenizer path</span>
-                  <input id="settingsNerTokenizerPath" type="text" placeholder="/path/to/tokenizer.json" />
-                </label>
-                <label class="field-group">
-                  <span>Minimum confidence</span>
-                  <input id="settingsNerMinConfidence" type="number" min="0" max="1" step="0.01" placeholder="0.70" />
-                </label>
-              </div>
-            </section>
-          </div>
-
-          <div id="settingsCaseContextPanel" class="settings-editor-panel" hidden>
-            <section class="settings-section">
-              <h3>Client aliases</h3>
-              <label class="field-group">
-                <span>Client replacement label</span>
-                <input id="settingsClientReplacement" type="text" placeholder="CLIENT" />
+                <span>Model path</span>
+                <input id="settingsNerModelPath" type="text" placeholder="/path/to/model.onnx" />
               </label>
               <label class="field-group">
-                <span>Client variants</span>
-                <textarea id="settingsClientVariants" rows="4" placeholder="One client alias per line"></textarea>
-                <small class="field-help">These exact variants are redacted deterministically before writing output.</small>
+                <span>Tokenizer path</span>
+                <input id="settingsNerTokenizerPath" type="text" placeholder="/path/to/tokenizer.json" />
               </label>
-            </section>
-
-            <section class="settings-section">
-              <div class="settings-section-header">
-                <div>
-                  <h3>Exact entity rules</h3>
-                  <p>Define additional exact-match aliases such as providers, institutions, or family members.</p>
-                </div>
-                <button id="addExactEntity" type="button" class="secondary-button">Add rule</button>
-              </div>
-              <div id="exactEntitiesList" class="exact-entities-list"></div>
-            </section>
-          </div>
+              <label class="field-group">
+                <span>Minimum confidence</span>
+                <input id="settingsNerMinConfidence" type="number" min="0" max="1" step="0.01" placeholder="0.70" />
+              </label>
+            </div>
+          </section>
 
           <div class="settings-footer">
             <button id="cancelSettings" type="button" class="secondary-button">Cancel</button>

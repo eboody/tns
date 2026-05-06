@@ -37,10 +37,6 @@ const closeSettings = document.getElementById('closeSettings')
 const cancelSettings = document.getElementById('cancelSettings')
 const saveSettingsButton = document.getElementById('saveSettings')
 const createProfileButton = document.getElementById('createProfile')
-const showProfileEditor = document.getElementById('showProfileEditor')
-const showCaseContextEditor = document.getElementById('showCaseContextEditor')
-const settingsProfilePanel = document.getElementById('settingsProfilePanel')
-const settingsCaseContextPanel = document.getElementById('settingsCaseContextPanel')
 const addExactEntity = document.getElementById('addExactEntity')
 const exactEntitiesList = document.getElementById('exactEntitiesList')
 const settingsProfileName = document.getElementById('settingsProfileName')
@@ -79,7 +75,6 @@ const loadingMessage = document.getElementById('loadingMessage')
 
 let appSettings = loadAppSettings()
 let settingsOpen = false
-let settingsEditorMode = 'profile'
 let workspace = createWorkspaceState(
   'Desktop shell loaded. Choose a file or folder to start local processing automatically.'
 )
@@ -190,15 +185,6 @@ function renderLoadingOverlay() {
 
 function renderSettingsOverlay() {
   settingsOverlay.hidden = !settingsOpen
-}
-
-function setSettingsEditorMode(mode) {
-  settingsEditorMode = mode
-  const showingProfile = mode === 'profile'
-  settingsProfilePanel.hidden = !showingProfile
-  settingsCaseContextPanel.hidden = showingProfile
-  showProfileEditor.setAttribute('aria-pressed', String(showingProfile))
-  showCaseContextEditor.setAttribute('aria-pressed', String(!showingProfile))
 }
 
 function renderSelectedFileStrip() {
@@ -405,7 +391,6 @@ function openSettingsDialog() {
   }
 
   populateSettingsForm(appSettings)
-  setSettingsEditorMode('profile')
   settingsOpen = true
   renderWorkspace()
 }
@@ -856,12 +841,6 @@ addExactEntity.addEventListener('click', () => {
 })
 saveSettingsButton.addEventListener('click', saveSettingsAndMaybeRerun)
 createProfileButton.addEventListener('click', createProfileFromCurrentAndMaybeRerun)
-showProfileEditor.addEventListener('click', () => {
-  setSettingsEditorMode('profile')
-})
-showCaseContextEditor.addEventListener('click', () => {
-  setSettingsEditorMode('case-context')
-})
 activeProfileSelect.addEventListener('change', async (event) => {
   const nextProfileId = event.target.value
   appSettings = saveAppSettings(setActiveProfileId(appSettings, nextProfileId))
