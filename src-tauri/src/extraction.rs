@@ -54,13 +54,13 @@ impl ExtractionFidelity {
         }
     }
 
-    pub fn pdf(text_degraded_detected: bool) -> Self {
+    pub fn pdf(text_degraded_detected: bool, low_confidence_review_required: bool) -> Self {
         Self {
             provenance: ExtractionProvenance::PdfText,
             non_text_omissions_detected: false,
             structural_loss_suspected: false,
             text_degraded_detected,
-            low_confidence_review_required: text_degraded_detected,
+            low_confidence_review_required,
         }
     }
 
@@ -131,7 +131,10 @@ pub fn extract_input(input: &Path) -> Result<ExtractedInput> {
             let extracted = pdf_extract::extract_pdf(input)?;
             Ok(ExtractedInput {
                 text: extracted.text,
-                fidelity: ExtractionFidelity::pdf(extracted.text_degraded_detected),
+                fidelity: ExtractionFidelity::pdf(
+                    extracted.text_degraded_detected,
+                    extracted.low_confidence_review_required,
+                ),
             })
         }
         _ => Err(AppError::UnsupportedInputFormat(input.to_path_buf())),
@@ -189,7 +192,7 @@ mod tests {
 
     #[test]
     fn degraded_pdf_is_not_reported_as_clean() {
-        let fidelity = ExtractionFidelity::pdf(true);
+        let fidelity = ExtractionFidelity::pdf(true, true);
 
         assert_eq!(fidelity.provenance, ExtractionProvenance::PdfText);
         assert!(fidelity.low_confidence_review_required);
