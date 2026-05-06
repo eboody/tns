@@ -2,8 +2,6 @@ import './styles.css'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import { buildReviewNotice } from './review-notice.js'
-import { buildRuntimeSettingsPayload } from './runtime-settings.js'
-import { loadAppSettings, normalizeAppSettings, saveAppSettings } from './settings-store.js'
 import {
   createWorkspaceState,
   failProcessing,
@@ -13,6 +11,7 @@ import {
   getSelectedPreview,
   replacePreviewArtifacts,
   selectPreviewPath,
+  setConfigPath,
   setSelectedInput,
   startProcessing,
   toggleWorkspaceHighlights
@@ -21,26 +20,7 @@ import {
 const inputPath = document.getElementById('inputPath')
 const pickInput = document.getElementById('pickInput')
 const pickFolder = document.getElementById('pickFolder')
-const editSettings = document.getElementById('editSettings')
-const settingsSummary = document.getElementById('settingsSummary')
-const settingsOverlay = document.getElementById('settingsOverlay')
-const closeSettings = document.getElementById('closeSettings')
-const cancelSettings = document.getElementById('cancelSettings')
-const saveSettingsButton = document.getElementById('saveSettings')
-const addExactEntity = document.getElementById('addExactEntity')
-const exactEntitiesList = document.getElementById('exactEntitiesList')
-const settingsClientReplacement = document.getElementById('settingsClientReplacement')
-const settingsClientVariants = document.getElementById('settingsClientVariants')
-const settingsDatesEnabled = document.getElementById('settingsDatesEnabled')
-const settingsDatesReplacement = document.getElementById('settingsDatesReplacement')
-const settingsEmailsEnabled = document.getElementById('settingsEmailsEnabled')
-const settingsEmailsReplacement = document.getElementById('settingsEmailsReplacement')
-const settingsPhonesEnabled = document.getElementById('settingsPhonesEnabled')
-const settingsPhonesReplacement = document.getElementById('settingsPhonesReplacement')
-const settingsNerEnabled = document.getElementById('settingsNerEnabled')
-const settingsNerModelPath = document.getElementById('settingsNerModelPath')
-const settingsNerTokenizerPath = document.getElementById('settingsNerTokenizerPath')
-const settingsNerMinConfidence = document.getElementById('settingsNerMinConfidence')
+const configPath = document.getElementById('configPath')
 const resultsPanel = document.getElementById('resultsPanel')
 const resultFiles = document.getElementById('resultFiles')
 const previewPanel = document.getElementById('previewPanel')
@@ -62,8 +42,6 @@ const loadingOverlay = document.getElementById('loadingOverlay')
 const loadingTitle = document.getElementById('loadingTitle')
 const loadingMessage = document.getElementById('loadingMessage')
 
-let appSettings = loadAppSettings()
-let settingsOpen = false
 let workspace = createWorkspaceState(
   'Desktop shell loaded. Choose a file or folder to start local processing automatically.'
 )
@@ -112,49 +90,19 @@ function setResultActionsEnabled(enabled) {
 function setInputControlsEnabled(enabled) {
   pickInput.disabled = !enabled
   pickFolder.disabled = !enabled
-  editSettings.disabled = !enabled
+  configPath.disabled = !enabled
 }
 
 function renderWorkspace() {
   renderSelectedInput()
-  renderSettingsSummary()
   renderResultFiles()
   renderSelectedFileStrip()
   renderPreview(getSelectedPreview(workspace))
   renderLoadingOverlay()
-  renderSettingsOverlay()
   summary.textContent = workspace.summary
   setResultActionsEnabled(workspace.artifactsAvailable)
   setInputControlsEnabled(!workspace.processingInFlight)
   applyHighlightVisibility()
-}
-
-function renderSettingsSummary() {
-  const configuredExactEntities = appSettings.exactEntities.filter(hasMeaningfulExactEntity)
-  const configuredPatterns = [appSettings.patterns.dates, appSettings.patterns.emails, appSettings.patterns.phones].filter((rule) => rule.enabled).length
-  const hasClientAliases = Boolean(appSettings.clientReplacement || appSettings.clientVariants)
-  const hasNerOverride = Boolean(appSettings.ner.enabled)
-
-  if (!hasClientAliases && configuredExactEntities.length === 0 && configuredPatterns === 0 && !hasNerOverride) {
-    settingsSummary.textContent = 'No persistent de-identification settings configured. The default app pipeline will be used.'
-    return
-  }
-
-  const parts = []
-  if (hasClientAliases) {
-    parts.push('client aliases')
-  }
-  if (configuredExactEntities.length > 0) {
-    parts.push(`${configuredExactEntities.length} exact rule${configuredExactEntities.length === 1 ? '' : 's'}`)
-  }
-  if (configuredPatterns > 0) {
-    parts.push(`${configuredPatterns} pattern replacement${configuredPatterns === 1 ? '' : 's'}`)
-  }
-  if (hasNerOverride) {
-    parts.push('custom NER override')
-  }
-
-  settingsSummary.textContent = `Persistent settings active: ${parts.join(', ')}.`
 }
 
 function renderLoadingOverlay() {
@@ -168,10 +116,6 @@ function renderLoadingOverlay() {
     : 'Processing selection…'
   loadingMessage.textContent = workspace.summary || 'Loading selected files and building previews.'
   loadingOverlay.hidden = false
-}
-
-function renderSettingsOverlay() {
-  settingsOverlay.hidden = !settingsOpen
 }
 
 function renderSelectedFileStrip() {
@@ -208,11 +152,7 @@ pickFolder.addEventListener('click', async () => {
 })
 
 async function pickInputPath({ directory, label }) {
-  workspace = {
-    ...workspace,
-    processingInFlight: true,
-    summary: `Opening ${label} picker...`
-  }
+  workspace = startProcessing(workspace, `Opening ${label} picker...`)
   renderWorkspace()
   await nextPaint()
 
@@ -264,124 +204,6 @@ function renderSelectedInput() {
   inputPath.value = workspace.inputPath.trim()
 }
 
-function populateSettingsForm(settings) {
-  settingsClientReplacement.value = settings.clientReplacement
-  settingsClientVariants.value = settings.clientVariants
-  settingsDatesEnabled.checked = settings.patterns.dates.enabled
-  settingsDatesReplacement.value = settings.patterns.dates.replacement
-  settingsEmailsEnabled.checked = settings.patterns.emails.enabled
-  settingsEmailsReplacement.value = settings.patterns.emails.replacement
-  settingsPhonesEnabled.checked = settings.patterns.phones.enabled
-  settingsPhonesReplacement.value = settings.patterns.phones.replacement
-  settingsNerEnabled.checked = settings.ner.enabled
-  settingsNerModelPath.value = settings.ner.modelPath
-  settingsNerTokenizerPath.value = settings.ner.tokenizerPath
-  settingsNerMinConfidence.value = settings.ner.minConfidence
-
-  exactEntitiesList.replaceChildren()
-  const entities = settings.exactEntities.length > 0 ? settings.exactEntities : []
-  for (const entity of entities) {
-    exactEntitiesList.appendChild(createExactEntityRow(entity))
-  }
-}
-
-function createExactEntityRow(entity = { entityType: '', replacement: '', variants: '' }) {
-  const row = document.createElement('section')
-  row.className = 'exact-entity-card'
-  row.innerHTML = `
-    <div class="exact-entity-card-header">
-      <p class="exact-entity-card-title">Exact rule</p>
-      <button type="button" class="secondary-button exact-entity-remove">Remove</button>
-    </div>
-    <label class="field-group">
-      <span>Entity type</span>
-      <input class="exact-entity-type" type="text" placeholder="provider" value="${escapeAttribute(entity.entityType)}" />
-    </label>
-    <label class="field-group">
-      <span>Replacement label</span>
-      <input class="exact-entity-replacement" type="text" placeholder="[PROVIDER]" value="${escapeAttribute(entity.replacement)}" />
-    </label>
-    <label class="field-group">
-      <span>Variants</span>
-      <textarea class="exact-entity-variants" rows="4" placeholder="One alias per line">${escapeHtml(entity.variants)}</textarea>
-    </label>
-  `
-  row.querySelector('.exact-entity-remove')?.addEventListener('click', () => {
-    row.remove()
-  })
-  return row
-}
-
-function readSettingsForm() {
-  return normalizeAppSettings({
-    clientReplacement: settingsClientReplacement.value,
-    clientVariants: settingsClientVariants.value,
-    exactEntities: Array.from(exactEntitiesList.querySelectorAll('.exact-entity-card')).map((row) => ({
-      entityType: row.querySelector('.exact-entity-type')?.value ?? '',
-      replacement: row.querySelector('.exact-entity-replacement')?.value ?? '',
-      variants: row.querySelector('.exact-entity-variants')?.value ?? ''
-    })),
-    patterns: {
-      dates: { enabled: settingsDatesEnabled.checked, replacement: settingsDatesReplacement.value },
-      emails: { enabled: settingsEmailsEnabled.checked, replacement: settingsEmailsReplacement.value },
-      phones: { enabled: settingsPhonesEnabled.checked, replacement: settingsPhonesReplacement.value }
-    },
-    ner: {
-      enabled: settingsNerEnabled.checked,
-      modelPath: settingsNerModelPath.value,
-      tokenizerPath: settingsNerTokenizerPath.value,
-      minConfidence: settingsNerMinConfidence.value
-    }
-  })
-}
-
-function hasMeaningfulExactEntity(entity) {
-  return Boolean(entity.entityType || entity.replacement || entity.variants)
-}
-
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-}
-
-function escapeAttribute(value) {
-  return escapeHtml(value)
-}
-
-function openSettingsDialog() {
-  if (workspace.processingInFlight) {
-    return
-  }
-
-  populateSettingsForm(appSettings)
-  settingsOpen = true
-  renderWorkspace()
-}
-
-function closeSettingsDialog() {
-  settingsOpen = false
-  renderWorkspace()
-}
-
-async function saveSettingsAndMaybeRerun() {
-  appSettings = saveAppSettings(readSettingsForm())
-  settingsOpen = false
-  if (!workspace.inputPath.trim()) {
-    workspace = {
-      ...workspace,
-      summary: 'Saved persistent de-identification settings for future runs.'
-    }
-  }
-  renderWorkspace()
-
-  if (workspace.inputPath.trim()) {
-    await processSelectedInput({ sourceLabel: 'settings' })
-  }
-}
-
 async function processSelectedInput({ sourceLabel }) {
   const value = workspace.inputPath.trim()
   if (!value || workspace.processingInFlight) {
@@ -395,8 +217,7 @@ async function processSelectedInput({ sourceLabel }) {
   try {
     const result = await invoke('run_replace_job', {
       input: value,
-      config: null,
-      settings: buildRuntimeSettingsPayload(appSettings),
+      config: configPath.value || null,
       includePatterns: [],
       excludePatterns: []
     })
@@ -781,23 +602,6 @@ afterPreview.addEventListener('keyup', () => {
 
 beforePreview.addEventListener('scroll', hidePreviewActionTooltip)
 afterPreview.addEventListener('scroll', hidePreviewActionTooltip)
-editSettings.addEventListener('click', openSettingsDialog)
-closeSettings.addEventListener('click', closeSettingsDialog)
-cancelSettings.addEventListener('click', closeSettingsDialog)
-addExactEntity.addEventListener('click', () => {
-  exactEntitiesList.appendChild(createExactEntityRow())
-})
-saveSettingsButton.addEventListener('click', saveSettingsAndMaybeRerun)
-settingsOverlay.addEventListener('click', (event) => {
-  if (event.target === settingsOverlay) {
-    closeSettingsDialog()
-  }
-})
-document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && settingsOpen) {
-    closeSettingsDialog()
-  }
-})
 
 previewActionButton.addEventListener('click', async () => {
   if (!pendingPreviewAction) {
@@ -823,6 +627,16 @@ document.addEventListener('click', (event) => {
   }
 
   hidePreviewActionTooltip()
+})
+
+configPath.addEventListener('change', async () => {
+  workspace = setConfigPath(workspace, configPath.value)
+
+  if (!workspace.inputPath.trim()) {
+    return
+  }
+
+  await processSelectedInput({ sourceLabel: 'config' })
 })
 
 openOutput.addEventListener('click', async () => {

@@ -37,14 +37,12 @@
               <button id="pickInput" type="button">Choose file</button>
               <button id="pickFolder" type="button">Choose folder</button>
             </div>
-          </section>
 
-          <section class="selection-panel settings-summary-panel">
-            <div class="input-panel-copy">
-              <h2>Settings</h2>
-              <p id="settingsSummary">No persistent de-identification settings configured. The default app pipeline will be used.</p>
-            </div>
-            <button id="editSettings" type="button" class="secondary-button">Edit settings</button>
+            <label class="field-group">
+              <span>Optional config path</span>
+              <input id="configPath" type="text" placeholder="/path/to/deid.toml" />
+              <small class="field-help">Changing the config reruns processing for the selected input.</small>
+            </label>
           </section>
 
           <section id="resultsPanel" class="results-panel">
@@ -108,88 +106,6 @@
           <h2 id="loadingTitle">Preparing review workspace…</h2>
           <p id="loadingMessage" class="loading-message">Loading selected files and building previews.</p>
         </div>
-      </div>
-
-      <div id="settingsOverlay" class="settings-overlay" hidden>
-        <section class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
-          <div class="settings-dialog-header">
-            <div>
-              <p class="loading-eyebrow">Persistent settings</p>
-              <h2 id="settingsTitle">Review settings</h2>
-            </div>
-            <button id="closeSettings" type="button" class="secondary-button">Close</button>
-          </div>
-
-          <p class="settings-copy">Define the de-identification rules this app should reuse across launches. Saving updates future runs and reruns the current input if one is selected.</p>
-
-          <section class="settings-section">
-            <h3>Client aliases</h3>
-            <label class="field-group">
-              <span>Client replacement label</span>
-              <input id="settingsClientReplacement" type="text" placeholder="CLIENT" />
-            </label>
-            <label class="field-group">
-              <span>Client variants</span>
-              <textarea id="settingsClientVariants" rows="4" placeholder="One client alias per line"></textarea>
-              <small class="field-help">These exact variants are redacted deterministically before writing output.</small>
-            </label>
-          </section>
-
-          <section class="settings-section">
-            <div class="settings-section-header">
-              <div>
-                <h3>Exact entity rules</h3>
-                <p>Define additional exact-match aliases such as providers, institutions, or family members.</p>
-              </div>
-              <button id="addExactEntity" type="button" class="secondary-button">Add rule</button>
-            </div>
-            <div id="exactEntitiesList" class="exact-entities-list"></div>
-          </section>
-
-          <section class="settings-section">
-            <h3>Pattern replacements</h3>
-            <div class="pattern-settings-grid">
-              <label class="pattern-setting-card">
-                <span class="pattern-setting-toggle"><input id="settingsDatesEnabled" type="checkbox" /> Dates</span>
-                <input id="settingsDatesReplacement" type="text" placeholder="[DATE]" />
-              </label>
-              <label class="pattern-setting-card">
-                <span class="pattern-setting-toggle"><input id="settingsEmailsEnabled" type="checkbox" /> Emails</span>
-                <input id="settingsEmailsReplacement" type="text" placeholder="[EMAIL]" />
-              </label>
-              <label class="pattern-setting-card">
-                <span class="pattern-setting-toggle"><input id="settingsPhonesEnabled" type="checkbox" /> Phones</span>
-                <input id="settingsPhonesReplacement" type="text" placeholder="[PHONE]" />
-              </label>
-            </div>
-          </section>
-
-          <section class="settings-section">
-            <h3>ML / NER</h3>
-            <label class="field-group checkbox-field">
-              <span class="pattern-setting-toggle"><input id="settingsNerEnabled" type="checkbox" /> Enable custom NER model override</span>
-            </label>
-            <div class="ner-settings-grid">
-              <label class="field-group">
-                <span>Model path</span>
-                <input id="settingsNerModelPath" type="text" placeholder="/path/to/model.onnx" />
-              </label>
-              <label class="field-group">
-                <span>Tokenizer path</span>
-                <input id="settingsNerTokenizerPath" type="text" placeholder="/path/to/tokenizer.json" />
-              </label>
-              <label class="field-group">
-                <span>Minimum confidence</span>
-                <input id="settingsNerMinConfidence" type="number" min="0" max="1" step="0.01" placeholder="0.70" />
-              </label>
-            </div>
-          </section>
-
-          <div class="settings-footer">
-            <button id="cancelSettings" type="button" class="secondary-button">Cancel</button>
-            <button id="saveSettings" type="button">Save settings</button>
-          </div>
-        </section>
       </div>
     </main>
 

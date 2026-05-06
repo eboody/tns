@@ -121,10 +121,10 @@ mod tests {
     #[test]
     fn apply_rules_replaces_variants_without_touching_embedded_words() {
         let config = Config {
-            client: Some(ClientConfig {
+            client: ClientConfig {
                 replacement: "CLIENT".into(),
                 variants: vec!["Jane Doe".into(), "Jane".into()],
-            }),
+            },
             exact_entities: vec![],
             patterns: Default::default(),
             ner: None,
@@ -140,10 +140,10 @@ mod tests {
     #[test]
     fn apply_rules_replaces_multiple_exact_entity_classes() {
         let config = Config {
-            client: Some(ClientConfig {
+            client: ClientConfig {
                 replacement: "CLIENT".into(),
                 variants: vec!["Jane Doe".into()],
-            }),
+            },
             exact_entities: vec![
                 ExactEntityConfig {
                     entity_type: "provider".into(),
@@ -172,10 +172,10 @@ mod tests {
     #[test]
     fn apply_rules_replaces_enabled_pattern_entities() {
         let config = Config {
-            client: Some(ClientConfig {
+            client: ClientConfig {
                 replacement: "CLIENT".into(),
                 variants: vec!["Jane Doe".into()],
-            }),
+            },
             exact_entities: vec![],
             patterns: PatternConfig {
                 dates: Some(PatternRuleConfig {
