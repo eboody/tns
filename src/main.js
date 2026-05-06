@@ -75,9 +75,27 @@ function renderWorkspace() {
 
 function renderSelectedFileStrip() {
   const selectedStatus = getSelectedFileStatus(workspace)
+  const reviewLabel = getFileReviewLabel(selectedStatus)
   previewTitle.textContent = selectedStatus?.path ?? 'No file selected'
   selectedFileCount.textContent = `${selectedStatus?.replacements ?? 0} redactions`
-  selectedFileStatus.textContent = getFileReviewLabel(selectedStatus)
+  selectedFileStatus.textContent = reviewLabel
+  selectedFileStatus.className = `status-badge ${selectedFileStatusClass(reviewLabel)}`
+}
+
+function selectedFileStatusClass(label) {
+  if (label === 'Ready') {
+    return 'status-good'
+  }
+
+  if (label === 'Needs attention') {
+    return 'status-attention'
+  }
+
+  if (label === 'Needs manual review') {
+    return 'status-warn'
+  }
+
+  return 'status-neutral'
 }
 
 pickInput.addEventListener('click', async () => {
