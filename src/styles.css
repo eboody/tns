@@ -72,8 +72,7 @@ main {
 
 .app-header,
 .selection-panel,
-.results-panel,
-.preview-panel {
+.results-panel {
   backdrop-filter: blur(18px);
 }
 
@@ -580,15 +579,37 @@ button:disabled {
   position: fixed;
   z-index: 1000;
   display: grid;
-  gap: 0.45rem;
-  min-width: 12rem;
-  max-width: 18rem;
-  padding: 0.75rem 0.85rem;
+  gap: 0.55rem;
+  min-width: 10.5rem;
+  max-width: 14rem;
+  padding: 0.7rem 0.75rem;
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 14px;
+  border-radius: 12px;
   background: rgba(20, 16, 14, 0.94);
   color: #fff;
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.28);
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.22);
+  pointer-events: auto;
+}
+
+.preview-action-tooltip::after {
+  content: '';
+  position: absolute;
+  left: var(--tooltip-arrow-left, 50%);
+  width: 12px;
+  height: 12px;
+  background: rgba(20, 16, 14, 0.94);
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.preview-action-tooltip[data-placement='top']::after {
+  bottom: -7px;
+}
+
+.preview-action-tooltip[data-placement='bottom']::after {
+  top: -7px;
+  transform: translateX(-50%) rotate(225deg);
 }
 
 .preview-action-tooltip[hidden] {
@@ -597,12 +618,17 @@ button:disabled {
 
 .preview-action-label {
   margin: 0;
-  font-size: 0.88rem;
-  line-height: 1.38;
+  font-size: 0.84rem;
+  font-weight: 500;
+  line-height: 1.32;
 }
 
 .preview-action-button {
   justify-self: start;
+  min-height: 38px;
+  padding: 0 14px;
+  border-radius: 12px;
+  font-size: 0.9rem;
 }
 
 @media (max-width: 1100px) {

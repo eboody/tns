@@ -52,7 +52,6 @@ pub struct RunSummary {
     pub mode: RunMode,
     pub output_path: Option<PathBuf>,
     pub audit_output_path: Option<PathBuf>,
-    pub preview_artifacts: Vec<PreviewArtifact>,
     pub replacements: usize,
     pub non_text_omissions_detected: bool,
     pub text_degraded_detected: bool,
@@ -63,12 +62,6 @@ pub struct RunSummary {
     pub file_statuses: Vec<RunFileStatus>,
     pub review_summary: String,
     pub coverage_note: &'static str,
-}
-
-#[derive(Debug, Clone)]
-pub struct PreviewArtifact {
-    pub path: PathBuf,
-    pub audit_report: AuditReport,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -139,7 +132,6 @@ fn run_single(options: RunOptions) -> Result<RunSummary> {
             mode: options.mode,
             output_path: None,
             audit_output_path: None,
-            preview_artifacts: Vec::new(),
             replacements: structured.findings.len(),
             non_text_omissions_detected,
             text_degraded_detected,
@@ -170,6 +162,10 @@ fn run_single(options: RunOptions) -> Result<RunSummary> {
     let output_path = options
         .output
         .unwrap_or_else(|| default_output_path(&options.input, ".deidentified", true));
+    let audit_output_path = options
+        .audit_output
+        .unwrap_or_else(|| default_output_path(&options.input, ".audit.json", false));
+
     if output_path == options.input {
         return Err(AppError::UnsafeOutputPath(output_path));
     }
@@ -195,15 +191,14 @@ fn run_single(options: RunOptions) -> Result<RunSummary> {
         structured.findings,
         review_flags,
     );
+    let audit_json =
+        serde_json::to_string_pretty(&audit_report).map_err(AppError::SerializeAuditReport)?;
+    write_text_file(&audit_output_path, &audit_json)?;
 
     Ok(RunSummary {
         mode: options.mode,
         output_path: Some(output_path.clone()),
-        audit_output_path: None,
-        preview_artifacts: vec![PreviewArtifact {
-            path: options.input.clone(),
-            audit_report: audit_report.clone(),
-        }],
+        audit_output_path: Some(audit_output_path.clone()),
         replacements: audit_report.replacements.len(),
         non_text_omissions_detected,
         text_degraded_detected,
@@ -224,7 +219,7 @@ fn run_single(options: RunOptions) -> Result<RunSummary> {
             low_confidence_review_required,
             extraction_provenance: Some(fidelity.provenance),
             output_path: Some(output_path.clone()),
-            audit_output_path: None,
+            audit_output_path: Some(audit_output_path.clone()),
         }],
         review_summary,
         coverage_note: COVERAGE_NOTE,
@@ -255,7 +250,6 @@ fn run_directory(options: RunOptions) -> Result<RunSummary> {
     let mut ocr_involved_files = Vec::new();
     let mut renamed = Vec::new();
     let mut file_statuses = Vec::new();
-    let mut preview_artifacts = Vec::new();
     let mut replacement_total = 0usize;
 
     for entry in WalkDir::new(&options.input) {
@@ -368,12 +362,8 @@ fn run_directory(options: RunOptions) -> Result<RunSummary> {
             low_confidence_review_required: summary.low_confidence_review_required,
             extraction_provenance: summary.extraction_provenance,
             output_path: summary.output_path,
-            audit_output_path: None,
+            audit_output_path: summary.audit_output_path,
         });
-        preview_artifacts.extend(summary.preview_artifacts.iter().cloned().map(|mut artifact| {
-            artifact.path = relative.clone();
-            artifact
-        }));
         processed.push(relative.clone());
         if summary.non_text_omissions_detected {
             non_text_omission_files.push(relative.clone());
@@ -415,8 +405,11 @@ fn run_directory(options: RunOptions) -> Result<RunSummary> {
         } else {
             None
         },
-        audit_output_path: None,
-        preview_artifacts,
+        audit_output_path: if options.mode == RunMode::Replace {
+            Some(audit_root)
+        } else {
+            None
+        },
         replacements: replacement_total,
         non_text_omissions_detected: !non_text_omission_files.is_empty(),
         text_degraded_detected: !text_degraded_files.is_empty(),
@@ -1102,21 +1095,20 @@ mod tests {
             summary.output_path,
             Some(temp.path().join("note.deidentified.md"))
         );
-        assert_eq!(summary.audit_output_path, None);
+        assert_eq!(
+            summary.audit_output_path,
+            Some(temp.path().join("note.audit.json"))
+        );
         assert_ne!(summary.output_path, Some(input));
 
         let output = fs::read_to_string(summary.output_path.unwrap()).unwrap();
         assert!(output.contains("[EMAIL_ADDRESS]"));
         assert!(output.contains("[PHONE_NUMBER]"));
 
-        let audit = &summary.preview_artifacts[0].audit_report;
-        assert_eq!(audit.replacements.len(), 2);
-        assert!(audit.replacements.iter().any(|record| record.entity_type == "EMAIL_ADDRESS"));
-        assert!(audit.replacements.iter().any(|record| record.entity_type == "PHONE_NUMBER"));
-        assert!(audit
-            .replacements
-            .iter()
-            .any(|record| record.reason.contains("redact-core pattern detection")));
+        let audit = fs::read_to_string(summary.audit_output_path.unwrap()).unwrap();
+        assert!(audit.contains("EMAIL_ADDRESS"));
+        assert!(audit.contains("PHONE_NUMBER"));
+        assert!(audit.contains("redact-core pattern detection"));
     }
 
     #[test]
@@ -1171,15 +1163,16 @@ mod tests {
         assert!(output.contains("[EMAIL_ADDRESS]"));
         assert!(output.contains("[PHONE_NUMBER]"));
 
-        let audit = &summary.preview_artifacts[0].audit_report;
-        assert!(audit.replacements.iter().any(|record| record.entity_type == "EMAIL_ADDRESS"));
-        assert!(audit.replacements.iter().any(|record| record.entity_type == "PHONE_NUMBER"));
-        assert!(audit.replacements.iter().any(|record| record.source == FindingSource::RedactCore));
-        assert!(audit.replacements.iter().any(|record| record.score == Some(0.8)));
-        assert!(!audit.review_flags.ml_active);
-        assert!(!audit.review_flags.has_ml_findings);
-        assert_eq!(audit.review_flags.extraction_status, ExtractionStatus::CleanText);
-        assert!(!audit.review_flags.residual_review_gaps.is_empty());
+        let audit = fs::read_to_string(summary.audit_output_path.unwrap()).unwrap();
+        assert!(audit.contains("EMAIL_ADDRESS"));
+        assert!(audit.contains("PHONE_NUMBER"));
+        assert!(audit.contains("\"source\": \"redact_core\""));
+        assert!(audit.contains("\"score\": 0.8"));
+        assert!(audit.contains("\"review_flags\""));
+        assert!(audit.contains("\"ml_active\": false"));
+        assert!(audit.contains("\"has_ml_findings\": false"));
+        assert!(audit.contains("\"residual_review_gaps\""));
+        assert!(audit.contains("\"extraction_status\": \"clean_text\""));
         assert_eq!(summary.replacements, 2);
     }
 
@@ -1530,9 +1523,9 @@ mod tests {
         })
         .unwrap();
 
-        let audit = &replace_summary.preview_artifacts[0].audit_report;
-        assert!(audit.replacements.iter().any(|record| record.source == FindingSource::Configured));
-        assert!(audit.replacements.iter().any(|record| record.source == FindingSource::RedactCore));
+        let audit = fs::read_to_string(replace_summary.audit_output_path.unwrap()).unwrap();
+        assert!(audit.contains("\"source\": \"configured\""));
+        assert!(audit.contains("\"source\": \"redact_core\""));
     }
 
     #[test]
@@ -1806,10 +1799,10 @@ mod tests {
         assert!(output.contains("Provider: [PROVIDER]"));
         assert!(output.contains("Email: [EMAIL_ADDRESS]"));
 
-        let audit = &summary.preview_artifacts[0].audit_report;
-        assert!(audit.replacements.iter().any(|record| record.entity_type == "CLIENT_NAME"));
-        assert!(audit.replacements.iter().any(|record| record.entity_type == "PROVIDER_NAME"));
-        assert!(audit.replacements.iter().any(|record| record.source == FindingSource::Custom));
+        let audit = fs::read_to_string(summary.audit_output_path.unwrap()).unwrap();
+        assert!(audit.contains("\"entity_type\": \"CLIENT_NAME\""));
+        assert!(audit.contains("\"entity_type\": \"PROVIDER_NAME\""));
+        assert!(audit.contains("\"source\": \"custom\""));
     }
 
     #[test]
@@ -1873,12 +1866,9 @@ mod tests {
         assert!(output.contains("Father: [FAMILY_MEMBER]"));
         assert!(output.contains("Guardian: [FAMILY_MEMBER]"));
 
-        let audit = &summary.preview_artifacts[0].audit_report;
-        assert!(audit.replacements.iter().any(|record| record.entity_type == "FAMILY_NAME"));
-        assert!(audit
-            .replacements
-            .iter()
-            .any(|record| record.replacement == "[FAMILY_MEMBER]"));
+        let audit = fs::read_to_string(summary.audit_output_path.unwrap()).unwrap();
+        assert!(audit.contains("\"entity_type\": \"FAMILY_NAME\""));
+        assert!(audit.contains("\"replacement\": \"[FAMILY_MEMBER]\""));
     }
 
     #[test]
@@ -1937,12 +1927,9 @@ mod tests {
         assert!(output.contains("Clinic: [INSTITUTION]"));
         assert!(output.contains("Employer: [INSTITUTION]"));
 
-        let audit = &summary.preview_artifacts[0].audit_report;
-        assert!(audit.replacements.iter().any(|record| record.entity_type == "INSTITUTION_NAME"));
-        assert!(audit
-            .replacements
-            .iter()
-            .any(|record| record.replacement == "[INSTITUTION]"));
+        let audit = fs::read_to_string(summary.audit_output_path.unwrap()).unwrap();
+        assert!(audit.contains("\"entity_type\": \"INSTITUTION_NAME\""));
+        assert!(audit.contains("\"replacement\": \"[INSTITUTION]\""));
     }
 
     #[test]
@@ -2309,7 +2296,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(summary.output_path, Some(output_dir.clone()));
-        assert_eq!(summary.audit_output_path, None);
+        assert_eq!(summary.audit_output_path, Some(audit_dir.clone()));
         assert_eq!(
             fs::read_to_string(output_dir.join("a.md")).unwrap(),
             "CLIENT emailed [EMAIL_ADDRESS]."
@@ -2358,12 +2345,20 @@ mod tests {
         .unwrap();
 
         assert_eq!(summary.output_path, Some(input_dir.join("redacted")));
-        assert_eq!(summary.audit_output_path, None);
+        assert_eq!(
+            summary.audit_output_path,
+            Some(input_dir.join("redacted/.audit"))
+        );
         assert_eq!(
             fs::read_to_string(input_dir.join("redacted").join("note.md")).unwrap(),
             "CLIENT emailed [EMAIL_ADDRESS]."
         );
-        assert!(summary.preview_artifacts.len() == 1);
+        assert!(
+            input_dir
+                .join("redacted/.audit")
+                .join("note.audit.json")
+                .exists()
+        );
     }
 
     #[test]
@@ -2478,8 +2473,7 @@ mod tests {
         .unwrap();
 
         assert!(output_dir.join("CLIENT report.md").exists());
-        assert!(!audit_dir.join("CLIENT report.audit.json").exists());
-        assert_eq!(summary.audit_output_path, None);
+        assert!(audit_dir.join("CLIENT report.audit.json").exists());
         assert!(summary.review_summary.contains("renamed outputs: 1"));
         assert!(
             summary
@@ -2562,7 +2556,10 @@ mod tests {
         })
         .unwrap();
 
-        assert_eq!(summary.audit_output_path, None);
+        assert_eq!(
+            summary.audit_output_path,
+            Some(temp.path().join("note.audit.json"))
+        );
     }
 
     #[test]
@@ -2585,9 +2582,9 @@ mod tests {
         })
         .unwrap();
 
-        let audit = &summary.preview_artifacts[0].audit_report;
-        assert!(audit.review_flags.non_text_omissions_detected);
-        assert_eq!(audit.review_flags.extraction_status, ExtractionStatus::NonTextOmissions);
+        let audit = fs::read_to_string(summary.audit_output_path.unwrap()).unwrap();
+        assert!(audit.contains("\"non_text_omissions_detected\": true"));
+        assert!(audit.contains("\"extraction_status\": \"non_text_omissions\""));
     }
 
     #[test]

@@ -7,7 +7,7 @@ export function createWorkspaceState(summary) {
     selectedPreviewPath: null,
     highlightsVisible: true,
     processingInFlight: false,
-    outputAvailable: false,
+    artifactsAvailable: false,
     summary
   }
 }
@@ -30,14 +30,14 @@ export function startProcessing(state, summary) {
   return {
     ...state,
     processingInFlight: true,
-    outputAvailable: false,
+    artifactsAvailable: false,
     fileStatuses: [],
     filePreviews: [],
     summary
   }
 }
 
-export function finishProcessing(state, { summary, fileStatuses, filePreviews, outputPath }) {
+export function finishProcessing(state, { summary, fileStatuses, filePreviews, outputPath, auditOutputPath }) {
   const nextPreviews = Array.isArray(filePreviews) ? filePreviews : []
   const nextSelectedPath =
     nextPreviews.find((preview) => (preview.path ?? '') === state.selectedPreviewPath)?.path ??
@@ -47,7 +47,7 @@ export function finishProcessing(state, { summary, fileStatuses, filePreviews, o
   return {
     ...state,
     processingInFlight: false,
-    outputAvailable: Boolean(outputPath),
+    artifactsAvailable: Boolean(outputPath || auditOutputPath),
     fileStatuses: Array.isArray(fileStatuses) ? fileStatuses : [],
     filePreviews: nextPreviews,
     selectedPreviewPath: nextSelectedPath,
@@ -59,7 +59,7 @@ export function failProcessing(state, summary) {
   return {
     ...state,
     processingInFlight: false,
-    outputAvailable: false,
+    artifactsAvailable: false,
     fileStatuses: [],
     filePreviews: [],
     selectedPreviewPath: null,

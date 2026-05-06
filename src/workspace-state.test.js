@@ -29,7 +29,7 @@ test('processing success selects the first preview and enables artifacts when ou
   })
 
   assert.equal(state.processingInFlight, false)
-  assert.equal(state.outputAvailable, true)
+  assert.equal(state.artifactsAvailable, true)
   assert.equal(state.selectedPreviewPath, '/tmp/input.docx')
   assert.equal(getSelectedPreview(state)?.path, '/tmp/input.docx')
 })
@@ -95,7 +95,7 @@ test('failure clears preview state and leaves artifacts unavailable', () => {
 
   state = failProcessing(state, 'Error: boom')
 
-  assert.equal(state.outputAvailable, false)
+  assert.equal(state.artifactsAvailable, false)
   assert.equal(state.filePreviews.length, 0)
   assert.equal(state.selectedPreviewPath, null)
   assert.equal(state.summary, 'Error: boom')

@@ -57,7 +57,7 @@ fn run_replace_job(
 
     let mut artifacts = artifacts.lock().map_err(|error| error.to_string())?;
     artifacts.output_path = Some(result.output_path.clone());
-    artifacts.audit_output_path = result.audit_output_path.clone();
+    artifacts.audit_output_path = Some(result.audit_output_path.clone());
 
     Ok(result)
 }

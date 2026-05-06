@@ -49,8 +49,8 @@ fn main() {
                     "audit: {}",
                     summary
                         .audit_output_path
-                        .map(|path| path.display().to_string())
-                        .unwrap_or_else(|| "disabled".to_string())
+                        .expect("replace audit path")
+                        .display()
                 );
                 println!("replacements: {}", summary.replacements);
                 if !summary.review_summary.is_empty() {

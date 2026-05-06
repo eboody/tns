@@ -81,12 +81,8 @@ fn run_case(case: &FixtureCase) {
     }
 
     if let Some(expected) = &case.expected_audit_contains {
-        let audit = summary
-            .preview_artifacts
-            .iter()
-            .map(|artifact| serde_json::to_string_pretty(&artifact.audit_report).unwrap())
-            .collect::<Vec<_>>()
-            .join("\n");
+        let audit_path = summary.audit_output_path.expect("replace mode audit path");
+        let audit = fs::read_to_string(audit_path).unwrap();
         for snippet in expected {
             assert!(
                 audit.contains(snippet),

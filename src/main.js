@@ -37,6 +37,7 @@ const previewActionLabel = document.getElementById('previewActionLabel')
 const previewActionButton = document.getElementById('previewActionButton')
 const summary = document.getElementById('summary')
 const openOutput = document.getElementById('openOutput')
+const openAudit = document.getElementById('openAudit')
 
 let workspace = createWorkspaceState(
   'Desktop shell loaded. Choose a file or folder to start local processing automatically.'
@@ -50,8 +51,9 @@ toggleHighlights.addEventListener('click', () => {
   applyHighlightVisibility()
 })
 
-function setResultActionsEnabled(outputEnabled) {
-  openOutput.disabled = !outputEnabled
+function setResultActionsEnabled(enabled) {
+  openOutput.disabled = !enabled
+  openAudit.disabled = !enabled
 }
 
 function setInputControlsEnabled(enabled) {
@@ -66,7 +68,7 @@ function renderWorkspace() {
   renderSelectedFileStrip()
   renderPreview(getSelectedPreview(workspace))
   summary.textContent = workspace.summary
-  setResultActionsEnabled(workspace.outputAvailable)
+  setResultActionsEnabled(workspace.artifactsAvailable)
   setInputControlsEnabled(!workspace.processingInFlight)
   applyHighlightVisibility()
 }
@@ -156,6 +158,7 @@ async function processSelectedInput({ sourceLabel }) {
     const reviewSummary = result.reviewSummary ?? ''
     const coverageNote = result.coverageNote ?? ''
     const outputPath = result.outputPath ?? ''
+    const auditOutputPath = result.auditOutputPath ?? ''
     const fileStatuses = result.fileStatuses ?? []
     const filePreviews = result.filePreviews ?? []
 
@@ -164,7 +167,7 @@ async function processSelectedInput({ sourceLabel }) {
       `replacements: ${replacements}`,
       `non-text omissions detected: ${nonTextOmissionsDetected}`,
       `output path: ${outputPath}`,
-      'audit log: disabled',
+      `audit path: ${auditOutputPath}`,
       '',
       reviewSummary,
       '',
@@ -175,7 +178,8 @@ async function processSelectedInput({ sourceLabel }) {
       summary: nextSummary,
       fileStatuses,
       filePreviews,
-      outputPath
+      outputPath,
+      auditOutputPath
     })
   } catch (error) {
     workspace = failProcessing(workspace, `Error: ${String(error)}`)
@@ -312,10 +316,6 @@ function toPreviewRequest(preview) {
   }
 }
 
-function isPreviewEditable(preview) {
-  return Boolean(preview?.editingEnabled)
-}
-
 function replacePreviewState(updatedPreview, replacements) {
   workspace = replacePreviewArtifacts(workspace, updatedPreview, replacements)
   renderWorkspace()
@@ -334,20 +334,31 @@ function hidePreviewActionTooltip() {
   previewActionTooltip.hidden = true
 }
 
-function showPreviewActionTooltip({ x, y, label, buttonText, action }) {
+function showPreviewActionTooltip({ rect, label, buttonText, action }) {
   pendingPreviewAction = action
   previewActionLabel.textContent = label
   previewActionButton.textContent = buttonText
   previewActionTooltip.hidden = false
 
-  const tooltipWidth = 220
+  const tooltipGap = 10
   const viewportPadding = 12
+  const tooltipWidth = previewActionTooltip.offsetWidth || 240
+  const tooltipHeight = previewActionTooltip.offsetHeight || 88
+  const targetCenterX = rect.left + rect.width / 2
+  const centeredLeft = targetCenterX - tooltipWidth / 2
   const clampedLeft = Math.min(
-    Math.max(x, viewportPadding),
+    Math.max(centeredLeft, viewportPadding),
     window.innerWidth - tooltipWidth - viewportPadding
   )
-  const top = Math.max(y, viewportPadding)
+  const preferredTop = rect.top - tooltipHeight - tooltipGap
+  const canPlaceAbove = preferredTop >= viewportPadding
+  const top = canPlaceAbove
+    ? preferredTop
+    : Math.min(rect.bottom + tooltipGap, window.innerHeight - tooltipHeight - viewportPadding)
+  const arrowLeft = Math.min(Math.max(targetCenterX - clampedLeft, 18), tooltipWidth - 18)
 
+  previewActionTooltip.dataset.placement = canPlaceAbove ? 'top' : 'bottom'
+  previewActionTooltip.style.setProperty('--tooltip-arrow-left', `${arrowLeft}px`)
   previewActionTooltip.style.left = `${clampedLeft}px`
   previewActionTooltip.style.top = `${top}px`
 }
@@ -361,6 +372,19 @@ function absoluteCodeUnitOffset(root, node, offset) {
   range.setStart(root, 0)
   range.setEnd(node, offset)
   return range.toString().length
+}
+
+function selectionAnchorRect(range) {
+  const rects = Array.from(range.getClientRects()).filter((rect) => rect.width > 0 && rect.height > 0)
+  const rect = rects[0] ?? range.getBoundingClientRect()
+
+  return {
+    left: rect.left,
+    top: rect.top,
+    width: rect.width,
+    height: rect.height,
+    bottom: rect.bottom
+  }
 }
 
 function selectionWithinPreview() {
@@ -391,7 +415,7 @@ function selectionWithinPreview() {
       sourcePreview,
       selectionStart: utf8ByteLength(fullText.slice(0, startCodeUnits)),
       selectionEnd: utf8ByteLength(fullText.slice(0, endCodeUnits)),
-      rect: range.getBoundingClientRect()
+      rect: selectionAnchorRect(range)
     }
   }
 
@@ -400,15 +424,14 @@ function selectionWithinPreview() {
 
 async function handleRedactionRemoval(markElement) {
   const preview = getCurrentPreview()
-  if (!preview || !isPreviewEditable(preview)) {
+  if (!preview) {
     return
   }
 
   const rect = markElement.getBoundingClientRect()
   showPreviewActionTooltip({
-    x: rect.left,
-    y: rect.bottom + 8,
-    label: 'Remove this redaction and save the change to the output and audit files.',
+    rect,
+    label: 'Remove this redaction?',
     buttonText: 'Remove redaction',
     action: async () => {
       try {
@@ -431,7 +454,7 @@ async function handleRedactionRemoval(markElement) {
 
 function maybeShowAddRedactionTooltip() {
   const preview = getCurrentPreview()
-  if (!preview || !isPreviewEditable(preview)) {
+  if (!preview) {
     hidePreviewActionTooltip()
     return
   }
@@ -442,11 +465,9 @@ function maybeShowAddRedactionTooltip() {
     return
   }
 
-  const rect = selection.rect
   showPreviewActionTooltip({
-    x: rect.left,
-    y: rect.bottom + 8,
-    label: 'Add a manual redaction for the selected text and save it to the output and audit files.',
+    rect: selection.rect,
+    label: 'Add redaction for selected text?',
     buttonText: 'Redact selection',
     action: async () => {
       try {
@@ -473,9 +494,7 @@ beforePreview.addEventListener('click', async (event) => {
   if (mark) {
     event.preventDefault()
     await handleRedactionRemoval(mark)
-    return
   }
-  maybeShowAddRedactionTooltip()
 })
 
 afterPreview.addEventListener('click', async (event) => {
@@ -483,9 +502,7 @@ afterPreview.addEventListener('click', async (event) => {
   if (mark) {
     event.preventDefault()
     await handleRedactionRemoval(mark)
-    return
   }
-  maybeShowAddRedactionTooltip()
 })
 
 beforePreview.addEventListener('mouseup', (event) => {
@@ -551,5 +568,13 @@ openOutput.addEventListener('click', async () => {
     await invoke('open_last_output_path')
   } catch (error) {
     summary.textContent = `Open output error: ${String(error)}\n\n${summary.textContent}`
+  }
+})
+
+openAudit.addEventListener('click', async () => {
+  try {
+    await invoke('open_last_audit_output_path')
+  } catch (error) {
+    summary.textContent = `Open audit error: ${String(error)}\n\n${summary.textContent}`
   }
 })
