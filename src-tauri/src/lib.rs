@@ -17,7 +17,10 @@ use audit::{AuditReport, ExtractionStatus, Finding, FindingSource, ReviewFlags};
 use config::{Config, NerConfig};
 use deidentify::{DeidentifyResult, apply_rules, build_rules};
 use error::{AppError, Result};
-use extraction::{classify_extraction_status, extract_input, extraction_status_label};
+use extraction::{
+    ExtractionFidelity, classify_extraction_status, extract_input, extraction_provenance_label,
+    extraction_status_label,
+};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use redact_core::AnalyzerEngine;
 use redact_core::recognizers::Recognizer;
@@ -101,6 +104,7 @@ fn run_single(options: RunOptions) -> Result<RunSummary> {
     validate_supported_input(&options.input)?;
 
     let extracted_input = extract_input(&options.input)?;
+    let fidelity = extracted_input.fidelity;
     let non_text_omissions_detected = extracted_input.non_text_omissions_detected();
     let text_degraded_detected = extracted_input.text_degraded_detected();
     let extraction_status = extracted_input.extraction_status();
@@ -110,8 +114,7 @@ fn run_single(options: RunOptions) -> Result<RunSummary> {
         &options.input,
         &structured.findings,
         structured.ml_active,
-        non_text_omissions_detected,
-        text_degraded_detected,
+        fidelity,
     );
 
     if options.mode != RunMode::Replace {
@@ -159,6 +162,7 @@ fn run_single(options: RunOptions) -> Result<RunSummary> {
             .findings
             .iter()
             .any(|finding| finding.source == FindingSource::Ml),
+        extraction_fidelity: fidelity,
         non_text_omissions_detected,
         text_degraded_detected,
         extraction_status,
@@ -549,32 +553,38 @@ fn build_review_summary(
     input: &Path,
     findings: &[Finding],
     ml_active: bool,
-    non_text_omissions_detected: bool,
-    text_degraded_detected: bool,
+    fidelity: ExtractionFidelity,
 ) -> String {
     let mut lines = vec![
         format!("input: {}", input.display()),
         format!("proposed structured replacements: {}", findings.len()),
+        format!(
+            "extraction provenance: {}",
+            extraction_provenance_label(fidelity.provenance)
+        ),
     ];
 
     if ml_active {
         lines.push("ml-assisted contextual recognition: enabled".to_string());
     }
-    if non_text_omissions_detected {
+    if fidelity.non_text_omissions_detected {
         lines.push("non-text extraction omissions detected: yes".to_string());
     }
-    if text_degraded_detected {
+    if fidelity.structural_loss_suspected {
+        lines.push("structural extraction loss suspected: yes".to_string());
+    }
+    if fidelity.text_degraded_detected {
         lines.push("text extraction fidelity degraded: yes".to_string());
         lines.push(
             "warning: extracted output may be limited by source text fidelity; review spacing and label boundaries carefully.".to_string(),
         );
     }
+    if fidelity.low_confidence_review_required {
+        lines.push("low-confidence extraction review required: yes".to_string());
+    }
     lines.push(format!(
         "extraction status: {}",
-        extraction_status_label(classify_extraction_status(
-            non_text_omissions_detected,
-            text_degraded_detected,
-        ))
+        extraction_status_label(fidelity.extraction_status())
     ));
 
     let mut policy_categories = Vec::new();
@@ -1581,9 +1591,9 @@ mod tests {
             std::path::Path::new("/tmp/fake.md"),
             &structured.findings,
             true,
-            false,
-            false,
+            crate::extraction::ExtractionFidelity::plain_text(),
         );
+        assert!(review_summary.contains("extraction provenance: plain_text"));
         assert!(review_summary.contains("[ml:PERSON] John Doe -> [PERSON]"));
         assert!(review_summary.contains("ml-assisted contextual recognition: enabled"));
         assert!(review_summary.contains("Currently ML-assisted contextual coverage:"));
@@ -1611,6 +1621,7 @@ mod tests {
             ReviewFlags {
                 ml_active: true,
                 has_ml_findings: true,
+                extraction_fidelity: crate::extraction::ExtractionFidelity::plain_text(),
                 non_text_omissions_detected: false,
                 text_degraded_detected: false,
                 extraction_status: ExtractionStatus::CleanText,
@@ -1621,6 +1632,7 @@ mod tests {
 
         assert!(audit_json.contains("\"ml_active\":true"));
         assert!(audit_json.contains("\"has_ml_findings\":true"));
+        assert!(audit_json.contains("\"extraction_fidelity\""));
         assert!(audit_json.contains("\"residual_review_gaps\""));
     }
 

@@ -2,6 +2,8 @@ use std::path::PathBuf;
 
 use serde::Serialize;
 
+use crate::extraction::ExtractionFidelity;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExtractionStatus {
@@ -86,6 +88,7 @@ pub struct AuditReport {
 pub struct ReviewFlags {
     pub ml_active: bool,
     pub has_ml_findings: bool,
+    pub extraction_fidelity: ExtractionFidelity,
     pub non_text_omissions_detected: bool,
     pub text_degraded_detected: bool,
     pub extraction_status: ExtractionStatus,

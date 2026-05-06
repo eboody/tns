@@ -1,12 +1,15 @@
 use std::{fs, path::Path};
 
+use serde::{Deserialize, Serialize};
+
 use crate::{
     audit::ExtractionStatus, docx_extract, error::AppError, error::Result, pdf_extract,
 };
 
 const OMITTED_NON_TEXT_CONTENT: &str = "[OMITTED_NON_TEXT_CONTENT]";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ExtractionProvenance {
     PlainText,
     DocxText,
@@ -14,13 +17,22 @@ pub enum ExtractionProvenance {
     OcrText,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExtractionFidelity {
     pub provenance: ExtractionProvenance,
     pub non_text_omissions_detected: bool,
     pub structural_loss_suspected: bool,
     pub text_degraded_detected: bool,
     pub low_confidence_review_required: bool,
+}
+
+pub fn extraction_provenance_label(provenance: ExtractionProvenance) -> &'static str {
+    match provenance {
+        ExtractionProvenance::PlainText => "plain_text",
+        ExtractionProvenance::DocxText => "docx_text",
+        ExtractionProvenance::PdfText => "pdf_text",
+        ExtractionProvenance::OcrText => "ocr_text",
+    }
 }
 
 impl ExtractionFidelity {
