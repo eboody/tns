@@ -37,7 +37,6 @@ const previewActionLabel = document.getElementById('previewActionLabel')
 const previewActionButton = document.getElementById('previewActionButton')
 const summary = document.getElementById('summary')
 const openOutput = document.getElementById('openOutput')
-const openAudit = document.getElementById('openAudit')
 
 let workspace = createWorkspaceState(
   'Desktop shell loaded. Choose a file or folder to start local processing automatically.'
@@ -51,9 +50,8 @@ toggleHighlights.addEventListener('click', () => {
   applyHighlightVisibility()
 })
 
-function setResultActionsEnabled(enabled) {
-  openOutput.disabled = !enabled.output
-  openAudit.disabled = !enabled.audit
+function setResultActionsEnabled(outputEnabled) {
+  openOutput.disabled = !outputEnabled
 }
 
 function setInputControlsEnabled(enabled) {
@@ -68,10 +66,7 @@ function renderWorkspace() {
   renderSelectedFileStrip()
   renderPreview(getSelectedPreview(workspace))
   summary.textContent = workspace.summary
-  setResultActionsEnabled({
-    output: workspace.outputAvailable,
-    audit: workspace.auditAvailable
-  })
+  setResultActionsEnabled(workspace.outputAvailable)
   setInputControlsEnabled(!workspace.processingInFlight)
   applyHighlightVisibility()
 }
@@ -161,7 +156,6 @@ async function processSelectedInput({ sourceLabel }) {
     const reviewSummary = result.reviewSummary ?? ''
     const coverageNote = result.coverageNote ?? ''
     const outputPath = result.outputPath ?? ''
-    const auditOutputPath = result.auditOutputPath ?? ''
     const fileStatuses = result.fileStatuses ?? []
     const filePreviews = result.filePreviews ?? []
 
@@ -170,7 +164,7 @@ async function processSelectedInput({ sourceLabel }) {
       `replacements: ${replacements}`,
       `non-text omissions detected: ${nonTextOmissionsDetected}`,
       `output path: ${outputPath}`,
-      auditOutputPath ? `audit path: ${auditOutputPath}` : 'audit log: disabled',
+      'audit log: disabled',
       '',
       reviewSummary,
       '',
@@ -181,8 +175,7 @@ async function processSelectedInput({ sourceLabel }) {
       summary: nextSummary,
       fileStatuses,
       filePreviews,
-      outputPath,
-      auditOutputPath
+      outputPath
     })
   } catch (error) {
     workspace = failProcessing(workspace, `Error: ${String(error)}`)
@@ -558,13 +551,5 @@ openOutput.addEventListener('click', async () => {
     await invoke('open_last_output_path')
   } catch (error) {
     summary.textContent = `Open output error: ${String(error)}\n\n${summary.textContent}`
-  }
-})
-
-openAudit.addEventListener('click', async () => {
-  try {
-    await invoke('open_last_audit_output_path')
-  } catch (error) {
-    summary.textContent = `Open audit error: ${String(error)}\n\n${summary.textContent}`
   }
 })
