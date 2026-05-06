@@ -7,6 +7,7 @@ import {
   createProfileFromActive,
   getActiveProfile,
   getCurrentCaseContext,
+  hasPendingMigrationNotice,
   loadAppSettings,
   saveAppSettings,
   setActiveProfileId,
@@ -32,6 +33,7 @@ const pickFolder = document.getElementById('pickFolder')
 const activeProfileSelect = document.getElementById('activeProfileSelect')
 const editSettings = document.getElementById('editSettings')
 const settingsSummary = document.getElementById('settingsSummary')
+const settingsMigrationNotice = document.getElementById('settingsMigrationNotice')
 const settingsOverlay = document.getElementById('settingsOverlay')
 const closeSettings = document.getElementById('closeSettings')
 const cancelSettings = document.getElementById('cancelSettings')
@@ -76,6 +78,7 @@ const openAudit = document.getElementById('openAudit')
 const loadingOverlay = document.getElementById('loadingOverlay')
 const loadingTitle = document.getElementById('loadingTitle')
 const loadingMessage = document.getElementById('loadingMessage')
+const settingsDialogMigrationNotice = document.getElementById('settingsDialogMigrationNotice')
 
 let appSettings = loadAppSettings()
 let settingsOpen = false
@@ -152,9 +155,11 @@ function renderSettingsSummary() {
   const configuredPatterns = [activeProfile.patterns.dates, activeProfile.patterns.emails, activeProfile.patterns.phones].filter((rule) => rule.enabled).length
   const hasClientAliases = Boolean(currentCaseContext.clientReplacement || currentCaseContext.clientVariants)
   const hasNerOverride = Boolean(activeProfile.ner.enabled)
+  const hasMigrationNotice = hasPendingMigrationNotice(appSettings)
 
   if (!hasClientAliases && configuredExactEntities.length === 0 && configuredPatterns === 0 && !hasNerOverride) {
     settingsSummary.textContent = `Active profile: ${activeProfile.name}. No additional case-specific de-identification settings configured.`
+    renderMigrationNotice(hasMigrationNotice)
     return
   }
 
@@ -173,6 +178,15 @@ function renderSettingsSummary() {
   }
 
   settingsSummary.textContent = `Persistent settings active: ${parts.join(', ')}.`
+  renderMigrationNotice(hasMigrationNotice)
+}
+
+function renderMigrationNotice(visible) {
+  const message = 'Legacy mixed settings were split into a reusable General profile and the current case context. Review both surfaces before your next run.'
+  settingsMigrationNotice.hidden = !visible
+  settingsDialogMigrationNotice.hidden = !visible
+  settingsMigrationNotice.textContent = visible ? message : ''
+  settingsDialogMigrationNotice.textContent = visible ? message : ''
 }
 
 function renderLoadingOverlay() {
@@ -306,6 +320,7 @@ function renderSelectedInput() {
 function populateSettingsForm(settings) {
   const activeProfile = getActiveProfile(settings)
   const currentCaseContext = getCurrentCaseContext(settings)
+  renderMigrationNotice(hasPendingMigrationNotice(settings))
 
   settingsClientReplacement.value = currentCaseContext.clientReplacement
   settingsClientVariants.value = currentCaseContext.clientVariants
