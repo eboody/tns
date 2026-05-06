@@ -52,8 +52,8 @@ toggleHighlights.addEventListener('click', () => {
 })
 
 function setResultActionsEnabled(enabled) {
-  openOutput.disabled = !enabled
-  openAudit.disabled = !enabled
+  openOutput.disabled = !enabled.output
+  openAudit.disabled = !enabled.audit
 }
 
 function setInputControlsEnabled(enabled) {
@@ -68,7 +68,10 @@ function renderWorkspace() {
   renderSelectedFileStrip()
   renderPreview(getSelectedPreview(workspace))
   summary.textContent = workspace.summary
-  setResultActionsEnabled(workspace.artifactsAvailable)
+  setResultActionsEnabled({
+    output: workspace.outputAvailable,
+    audit: workspace.auditAvailable
+  })
   setInputControlsEnabled(!workspace.processingInFlight)
   applyHighlightVisibility()
 }
@@ -167,7 +170,7 @@ async function processSelectedInput({ sourceLabel }) {
       `replacements: ${replacements}`,
       `non-text omissions detected: ${nonTextOmissionsDetected}`,
       `output path: ${outputPath}`,
-      `audit path: ${auditOutputPath}`,
+      auditOutputPath ? `audit path: ${auditOutputPath}` : 'audit log: disabled',
       '',
       reviewSummary,
       '',
@@ -316,6 +319,10 @@ function toPreviewRequest(preview) {
   }
 }
 
+function isPreviewEditable(preview) {
+  return Boolean(preview?.editingEnabled)
+}
+
 function replacePreviewState(updatedPreview, replacements) {
   workspace = replacePreviewArtifacts(workspace, updatedPreview, replacements)
   renderWorkspace()
@@ -400,7 +407,7 @@ function selectionWithinPreview() {
 
 async function handleRedactionRemoval(markElement) {
   const preview = getCurrentPreview()
-  if (!preview) {
+  if (!preview || !isPreviewEditable(preview)) {
     return
   }
 
@@ -431,7 +438,7 @@ async function handleRedactionRemoval(markElement) {
 
 function maybeShowAddRedactionTooltip() {
   const preview = getCurrentPreview()
-  if (!preview) {
+  if (!preview || !isPreviewEditable(preview)) {
     hidePreviewActionTooltip()
     return
   }

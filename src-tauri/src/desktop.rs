@@ -4,9 +4,9 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 
-use crate::{Result, RunFileStatus, RunMode, RunOptions, extraction, run};
+use crate::{PreviewArtifact, Result, RunFileStatus, RunMode, RunOptions, extraction, run};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DesktopReviewRequest {
@@ -40,7 +40,7 @@ pub struct DesktopReplaceResult {
     pub replacements: usize,
     pub non_text_omissions_detected: bool,
     pub output_path: PathBuf,
-    pub audit_output_path: PathBuf,
+    pub audit_output_path: Option<PathBuf>,
     pub file_statuses: Vec<RunFileStatus>,
     pub file_previews: Vec<DesktopFilePreview>,
     pub review_summary: String,
@@ -53,10 +53,12 @@ pub struct DesktopFilePreview {
     pub path: PathBuf,
     pub input_path: PathBuf,
     pub output_path: PathBuf,
-    pub audit_output_path: PathBuf,
+    pub audit_output_path: Option<PathBuf>,
     pub original_html: Option<String>,
     pub redacted_html: String,
     pub review: DesktopReviewMetadata,
+    pub editing_enabled: bool,
+    pub editing_disabled_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -119,7 +121,7 @@ pub struct DesktopAddRedactionRequest {
     pub path: PathBuf,
     pub input_path: PathBuf,
     pub output_path: PathBuf,
-    pub audit_output_path: PathBuf,
+    pub audit_output_path: Option<PathBuf>,
     pub source_preview: PreviewSelectionSource,
     pub selection_start: usize,
     pub selection_end: usize,
@@ -131,7 +133,7 @@ pub struct DesktopRemoveRedactionRequest {
     pub path: PathBuf,
     pub input_path: PathBuf,
     pub output_path: PathBuf,
-    pub audit_output_path: PathBuf,
+    pub audit_output_path: Option<PathBuf>,
     pub start: usize,
     pub end: usize,
     pub replacement: String,
@@ -175,13 +177,13 @@ pub fn run_replace_job(request: DesktopReplaceRequest) -> Result<DesktopReplaceR
         mode: RunMode::Replace,
     })?;
 
-    let file_previews = build_replace_previews(&summary.file_statuses, &summary.output_path)?;
+    let file_previews = build_replace_previews(&summary.preview_artifacts)?;
 
     Ok(DesktopReplaceResult {
         replacements: summary.replacements,
         non_text_omissions_detected: summary.non_text_omissions_detected,
         output_path: summary.output_path.expect("replace mode output path"),
-        audit_output_path: summary.audit_output_path.expect("replace mode audit path"),
+        audit_output_path: summary.audit_output_path,
         file_statuses: summary.file_statuses,
         file_previews,
         review_summary: summary.review_summary,
@@ -190,123 +192,69 @@ pub fn run_replace_job(request: DesktopReplaceRequest) -> Result<DesktopReplaceR
 }
 
 pub fn add_manual_redaction(request: DesktopAddRedactionRequest) -> Result<DesktopPreviewUpdateResult> {
-    let original_text = load_preview_input_as_markdown(&request.input_path)?;
-    let mut audit_report = read_editable_audit_report(&request.audit_output_path)?;
-    let (start, end) = map_selection_to_original_range(
-        &original_text,
-        &audit_report.replacements,
-        request.source_preview,
-        request.selection_start,
-        request.selection_end,
-    )?;
-
-    if overlaps_existing_replacement(&audit_report.replacements, start, end) {
-        return Err(crate::error::AppError::InvalidPreviewEdit(
-            "manual redactions must be selected outside existing highlights; click a highlight to remove it first".to_string(),
-        ));
-    }
-
-    let matched_text = original_text[start..end].to_string();
-    if matched_text.trim().is_empty() {
-        return Err(crate::error::AppError::InvalidPreviewEdit(
-            "selected text is empty or whitespace only".to_string(),
-        ));
-    }
-
-    audit_report.replacements.push(EditableAuditPreviewRecord {
-        source: json!("custom"),
-        entity_type: "MANUAL_REDACTION".to_string(),
-        matched_text,
-        replacement: "[MANUAL_REDACTION]".to_string(),
-        reason: "desktop manual selection".to_string(),
-        score: None,
-        start,
-        end,
-    });
-    sort_and_validate_replacements(&mut audit_report.replacements)?;
-
-    persist_preview_edit(
-        request.path,
-        request.output_path,
-        request.audit_output_path,
-        original_text,
-        audit_report,
-    )
+    let _ = request;
+    Err(crate::error::AppError::InvalidPreviewEdit(
+        "manual preview edits are temporarily disabled while audit logs are disabled"
+            .to_string(),
+    ))
 }
 
 pub fn remove_redaction(request: DesktopRemoveRedactionRequest) -> Result<DesktopPreviewUpdateResult> {
-    let original_text = load_preview_input_as_markdown(&request.input_path)?;
-    let mut audit_report = read_editable_audit_report(&request.audit_output_path)?;
-    let original_len = audit_report.replacements.len();
-
-    audit_report.replacements.retain(|record| {
-        !(record.start == request.start
-            && record.end == request.end
-            && record.replacement == request.replacement)
-    });
-
-    if audit_report.replacements.len() == original_len {
-        return Err(crate::error::AppError::InvalidPreviewEdit(
-            "clicked redaction no longer exists in the current preview".to_string(),
-        ));
-    }
-
-    sort_and_validate_replacements(&mut audit_report.replacements)?;
-
-    persist_preview_edit(
-        request.path,
-        request.output_path,
-        request.audit_output_path,
-        original_text,
-        audit_report,
-    )
+    let _ = request;
+    Err(crate::error::AppError::InvalidPreviewEdit(
+        "manual preview edits are temporarily disabled while audit logs are disabled"
+            .to_string(),
+    ))
 }
 
-fn build_replace_previews(
-    file_statuses: &[RunFileStatus],
-    _output_root: &Option<PathBuf>,
-) -> Result<Vec<DesktopFilePreview>> {
+fn build_replace_previews(preview_artifacts: &[PreviewArtifact]) -> Result<Vec<DesktopFilePreview>> {
     let mut previews = Vec::new();
 
-    for status in file_statuses {
-        let Some(output_path) = status.output_path.as_ref() else {
-            continue;
-        };
-        let Some(audit_path) = status.audit_output_path.as_ref() else {
-            continue;
-        };
-
-        let redacted_text =
-            fs::read_to_string(output_path).map_err(|source| crate::error::AppError::ReadFile {
-                path: output_path.clone(),
-                source,
-            })?;
-        let audit_json =
-            fs::read_to_string(audit_path).map_err(|source| crate::error::AppError::ReadFile {
-                path: audit_path.clone(),
-                source,
-            })?;
-        let audit_report: EditableAuditPreviewReport = serde_json::from_str(&audit_json)
+    for artifact in preview_artifacts {
+        let editable_audit_report = editable_audit_report_from_persisted_report(&artifact.audit_report)
             .map_err(crate::error::AppError::SerializeAuditReport)?;
+        let redacted_text = fs::read_to_string(&artifact.audit_report.output_path).map_err(
+            |source| crate::error::AppError::ReadFile {
+                path: artifact.audit_report.output_path.clone(),
+                source,
+            },
+        )?;
         previews.push(build_preview(
-            status.path.clone(),
-            output_path.clone(),
-            audit_path.clone(),
+            artifact.path.clone(),
             &redacted_text,
-            &audit_report,
+            &editable_audit_report,
         )?);
     }
 
     Ok(previews)
 }
 
-fn build_preview(
-    path: PathBuf,
-    output_path: PathBuf,
-    audit_output_path: PathBuf,
-    redacted_text: &str,
-    audit_report: &EditableAuditPreviewReport,
-) -> Result<DesktopFilePreview> {
+fn editable_audit_report_from_persisted_report(
+    audit_report: &crate::audit::AuditReport,
+) -> serde_json::Result<EditableAuditPreviewReport> {
+    Ok(EditableAuditPreviewReport {
+        input_path: audit_report.input_path.clone(),
+        output_path: audit_report.output_path.clone(),
+        review_flags: serde_json::to_value(&audit_report.review_flags)?,
+        replacements: audit_report
+            .replacements
+            .iter()
+            .cloned()
+            .map(|record| EditableAuditPreviewRecord {
+                source: serde_json::to_value(record.source).expect("serializable finding source"),
+                entity_type: record.entity_type,
+                matched_text: record.matched_text,
+                replacement: record.replacement,
+                reason: record.reason,
+                score: record.score,
+                start: record.start,
+                end: record.end,
+            })
+            .collect(),
+    })
+}
+
+fn build_preview(path: PathBuf, redacted_text: &str, audit_report: &EditableAuditPreviewReport) -> Result<DesktopFilePreview> {
     let original_text = load_preview_input_as_markdown(&audit_report.input_path).ok();
     let extraction_fidelity = audit_report.review_flags.get("extraction_fidelity");
     let non_text_omissions_detected = audit_report
@@ -356,8 +304,8 @@ fn build_preview(
     Ok(DesktopFilePreview {
         path,
         input_path: audit_report.input_path.clone(),
-        output_path,
-        audit_output_path,
+        output_path: audit_report.output_path.clone(),
+        audit_output_path: None,
         original_html,
         redacted_html,
         review: build_review_metadata(
@@ -367,6 +315,11 @@ fn build_preview(
             text_degraded_detected,
             structural_loss_suspected,
             low_confidence_review_required,
+        ),
+        editing_enabled: false,
+        editing_disabled_reason: Some(
+            "Manual preview edits are temporarily unavailable while audit logs are disabled."
+                .to_string(),
         ),
     })
 }
@@ -402,41 +355,6 @@ fn build_review_metadata(
         extraction_provenance: extraction_provenance.map(str::to_string),
         reasons,
     }
-}
-
-fn persist_preview_edit(
-    path: PathBuf,
-    output_path: PathBuf,
-    audit_output_path: PathBuf,
-    original_text: String,
-    mut audit_report: EditableAuditPreviewReport,
-) -> Result<DesktopPreviewUpdateResult> {
-    audit_report.output_path = output_path.clone();
-    let redacted_text = render_redacted_text(&original_text, &audit_report.replacements)?;
-    fs::write(&output_path, &redacted_text).map_err(|source| crate::error::AppError::WriteFile {
-        path: output_path.clone(),
-        source,
-    })?;
-
-    let audit_json = serde_json::to_string_pretty(&audit_report)
-        .map_err(crate::error::AppError::SerializeAuditReport)?;
-    fs::write(&audit_output_path, audit_json).map_err(|source| crate::error::AppError::WriteFile {
-        path: audit_output_path.clone(),
-        source,
-    })?;
-
-    Ok(DesktopPreviewUpdateResult {
-        preview: build_preview(path, output_path, audit_output_path, &redacted_text, &audit_report)?,
-        replacements: audit_report.replacements.len(),
-    })
-}
-
-fn read_editable_audit_report(path: &Path) -> Result<EditableAuditPreviewReport> {
-    let audit_json = fs::read_to_string(path).map_err(|source| crate::error::AppError::ReadFile {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    serde_json::from_str(&audit_json).map_err(crate::error::AppError::SerializeAuditReport)
 }
 
 fn load_preview_input_as_markdown(path: &Path) -> Result<String> {
@@ -500,120 +418,6 @@ fn render_highlighted_html(text: &str, ranges: &[HighlightRange]) -> String {
     html
 }
 
-fn render_redacted_text(text: &str, records: &[EditableAuditPreviewRecord]) -> Result<String> {
-    let mut output = String::new();
-    let mut cursor = 0usize;
-
-    for record in records {
-        validate_text_range(text, record.start, record.end)?;
-        if cursor > record.start {
-            return Err(crate::error::AppError::InvalidPreviewEdit(
-                "redaction ranges overlap in the current audit report".to_string(),
-            ));
-        }
-
-        output.push_str(&text[cursor..record.start]);
-        output.push_str(&record.replacement);
-        cursor = record.end;
-    }
-
-    output.push_str(&text[cursor..]);
-    Ok(output)
-}
-
-fn sort_and_validate_replacements(records: &mut [EditableAuditPreviewRecord]) -> Result<()> {
-    records.sort_by_key(|record| (record.start, record.end));
-
-    for window in records.windows(2) {
-        if window[0].end > window[1].start {
-            return Err(crate::error::AppError::InvalidPreviewEdit(
-                "redaction ranges overlap in the current audit report".to_string(),
-            ));
-        }
-    }
-
-    Ok(())
-}
-
-fn map_selection_to_original_range(
-    original_text: &str,
-    records: &[EditableAuditPreviewRecord],
-    source: PreviewSelectionSource,
-    selection_start: usize,
-    selection_end: usize,
-) -> Result<(usize, usize)> {
-    if selection_start >= selection_end {
-        return Err(crate::error::AppError::InvalidPreviewEdit(
-            "select some text before applying a manual redaction".to_string(),
-        ));
-    }
-
-    let (start, end) = match source {
-        PreviewSelectionSource::Original => (selection_start, selection_end),
-        PreviewSelectionSource::Redacted => (
-            map_redacted_offset_to_original(records, selection_start)?,
-            map_redacted_offset_to_original(records, selection_end)?,
-        ),
-    };
-
-    validate_text_range(original_text, start, end)?;
-    Ok((start, end))
-}
-
-fn map_redacted_offset_to_original(
-    records: &[EditableAuditPreviewRecord],
-    offset: usize,
-) -> Result<usize> {
-    let mut input_cursor = 0usize;
-    let mut output_cursor = 0usize;
-
-    for record in records {
-        let unchanged_len = record.start.saturating_sub(input_cursor);
-        let replacement_start = output_cursor + unchanged_len;
-        if offset <= replacement_start {
-            return Ok(input_cursor + offset.saturating_sub(output_cursor));
-        }
-
-        let replacement_end = replacement_start + record.replacement.len();
-        if offset < replacement_end {
-            return Err(crate::error::AppError::InvalidPreviewEdit(
-                "cannot add a new redaction from inside an existing redacted replacement".to_string(),
-            ));
-        }
-
-        input_cursor = record.end;
-        output_cursor = replacement_end;
-    }
-
-    Ok(input_cursor + offset.saturating_sub(output_cursor))
-}
-
-fn overlaps_existing_replacement(
-    records: &[EditableAuditPreviewRecord],
-    start: usize,
-    end: usize,
-) -> bool {
-    records
-        .iter()
-        .any(|record| start < record.end && end > record.start)
-}
-
-fn validate_text_range(text: &str, start: usize, end: usize) -> Result<()> {
-    if start > text.len() || end > text.len() || start >= end {
-        return Err(crate::error::AppError::InvalidPreviewEdit(
-            "selected text is outside the current preview bounds".to_string(),
-        ));
-    }
-
-    if !text.is_char_boundary(start) || !text.is_char_boundary(end) {
-        return Err(crate::error::AppError::InvalidPreviewEdit(
-            "selected text does not align to valid character boundaries".to_string(),
-        ));
-    }
-
-    Ok(())
-}
-
 fn escape_html(text: &str) -> String {
     text.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -634,8 +438,7 @@ mod tests {
     use super::{
         DesktopAddRedactionRequest, DesktopRemoveRedactionRequest, DesktopReplaceRequest,
         DesktopReviewReason, DesktopReviewRequest, PreviewSelectionSource, add_manual_redaction,
-        load_preview_input_as_markdown, read_editable_audit_report, remove_redaction,
-        run_replace_job, run_review_job,
+        load_preview_input_as_markdown, remove_redaction, run_replace_job, run_review_job,
     };
 
     #[test]
@@ -712,7 +515,7 @@ mod tests {
 
         assert_eq!(result.replacements, 2);
         assert_eq!(result.output_path, input_dir.join("redacted"));
-        assert_eq!(result.audit_output_path, input_dir.join("redacted/.audit"));
+        assert_eq!(result.audit_output_path, None);
         assert_eq!(result.file_statuses.len(), 1);
         assert_eq!(result.file_statuses[0].path, PathBuf::from("note.md"));
         assert_eq!(result.file_statuses[0].status, RunFileStatusKind::Processed);
@@ -721,8 +524,10 @@ mod tests {
             result.file_statuses[0].output_path,
             Some(input_dir.join("redacted/note.md"))
         );
+        assert_eq!(result.file_statuses[0].audit_output_path, None);
         assert_eq!(result.file_previews.len(), 1);
         assert_eq!(result.file_previews[0].path, PathBuf::from("note.md"));
+        assert!(!result.file_previews[0].editing_enabled);
         assert!(
             result.file_previews[0].original_html.as_ref().is_some_and(
                 |html| {
@@ -739,7 +544,7 @@ mod tests {
                 && result.file_previews[0].redacted_html.contains(">[EMAIL_ADDRESS]</mark>")
         );
         assert!(input_dir.join("redacted/note.md").exists());
-        assert!(input_dir.join("redacted/.audit/note.audit.json").exists());
+        assert!(!input_dir.join("redacted/.audit/note.audit.json").exists());
     }
 
     #[test]
@@ -805,7 +610,7 @@ mod tests {
     }
 
     #[test]
-    fn add_manual_redaction_persists_preview_edit() {
+    fn add_manual_redaction_is_disabled_without_audit_logs() {
         let temp = tempdir().unwrap();
         let input_dir = temp.path().join("input");
         let config = temp.path().join("deid.toml");
@@ -834,7 +639,7 @@ mod tests {
         let selection_start = original_text.find("emailed").unwrap();
         let selection_end = selection_start + "emailed".len();
 
-        let updated = add_manual_redaction(DesktopAddRedactionRequest {
+        let error = add_manual_redaction(DesktopAddRedactionRequest {
             path: preview.path.clone(),
             input_path: preview.input_path.clone(),
             output_path: preview.output_path.clone(),
@@ -843,26 +648,15 @@ mod tests {
             selection_start,
             selection_end,
         })
-        .unwrap();
+        .unwrap_err();
 
-        assert_eq!(updated.replacements, 3);
-        assert!(updated.preview.redacted_html.contains("[MANUAL_REDACTION]"));
-        assert!(
-            updated
-                .preview
-                .original_html
-                .as_ref()
-                .is_some_and(|html| html.contains("MANUAL_REDACTION"))
-        );
-        assert!(
-            fs::read_to_string(&preview.output_path)
-                .unwrap()
-                .contains("[MANUAL_REDACTION]")
-        );
+        assert!(error
+            .to_string()
+            .contains("manual preview edits are temporarily disabled"));
     }
 
     #[test]
-    fn remove_redaction_restores_original_segment() {
+    fn remove_redaction_is_disabled_without_audit_logs() {
         let temp = tempdir().unwrap();
         let input_dir = temp.path().join("input");
         let config = temp.path().join("deid.toml");
@@ -887,31 +681,21 @@ mod tests {
         })
         .unwrap();
         let preview = &result.file_previews[0];
-        let audit_report = read_editable_audit_report(&preview.audit_output_path).unwrap();
-        let email_record = audit_report
-            .replacements
-            .iter()
-            .find(|record| record.entity_type == "EMAIL_ADDRESS")
-            .unwrap();
 
-        let updated = remove_redaction(DesktopRemoveRedactionRequest {
+        let error = remove_redaction(DesktopRemoveRedactionRequest {
             path: preview.path.clone(),
             input_path: preview.input_path.clone(),
             output_path: preview.output_path.clone(),
             audit_output_path: preview.audit_output_path.clone(),
-            start: email_record.start,
-            end: email_record.end,
-            replacement: email_record.replacement.clone(),
+            start: 0,
+            end: 5,
+            replacement: "[EMAIL_ADDRESS]".to_string(),
         })
-        .unwrap();
+        .unwrap_err();
 
-        assert_eq!(updated.replacements, 1);
-        assert!(updated.preview.redacted_html.contains("jane@example.com"));
-        assert!(
-            fs::read_to_string(&preview.output_path)
-                .unwrap()
-                .contains("jane@example.com")
-        );
+        assert!(error
+            .to_string()
+            .contains("manual preview edits are temporarily disabled"));
     }
 
     fn write_test_pdf(path: &std::path::Path, text: &str) {
