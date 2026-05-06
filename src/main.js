@@ -1,6 +1,18 @@
 import './styles.css'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
+import {
+  createWorkspaceState,
+  failProcessing,
+  finishProcessing,
+  getSelectedPreview,
+  replacePreviewArtifacts,
+  selectPreviewPath,
+  setConfigPath,
+  setSelectedInput,
+  startProcessing,
+  toggleWorkspaceHighlights
+} from './workspace-state.js'
 
 const inputPath = document.getElementById('inputPath')
 const pickInput = document.getElementById('pickInput')
@@ -23,22 +35,16 @@ const summary = document.getElementById('summary')
 const openOutput = document.getElementById('openOutput')
 const openAudit = document.getElementById('openAudit')
 
-summary.textContent = 'Desktop shell loaded. Choose a file or folder to start local processing automatically.'
-let currentFilePreviews = []
-let currentFileStatuses = []
-let selectedPreviewPath = null
-let highlightsVisible = true
+let workspace = createWorkspaceState(
+  'Desktop shell loaded. Choose a file or folder to start local processing automatically.'
+)
 let pendingPreviewAction = null
-let processingInFlight = false
 
-setResultActionsEnabled(false)
-renderSelectedInput()
-renderPreview(null)
-
-setHighlightVisibility(true)
+renderWorkspace()
 
 toggleHighlights.addEventListener('click', () => {
-  setHighlightVisibility(!highlightsVisible)
+  workspace = toggleWorkspaceHighlights(workspace)
+  applyHighlightVisibility()
 })
 
 function setResultActionsEnabled(enabled) {
@@ -50,6 +56,16 @@ function setInputControlsEnabled(enabled) {
   pickInput.disabled = !enabled
   pickFolder.disabled = !enabled
   configPath.disabled = !enabled
+}
+
+function renderWorkspace() {
+  renderSelectedInput()
+  renderResultFiles()
+  renderPreview(getSelectedPreview(workspace))
+  summary.textContent = workspace.summary
+  setResultActionsEnabled(workspace.artifactsAvailable)
+  setInputControlsEnabled(!workspace.processingInFlight)
+  applyHighlightVisibility()
 }
 
 pickInput.addEventListener('click', async () => {
@@ -70,14 +86,15 @@ async function pickInputPath({ directory, label }) {
     })
 
     if (typeof selected === 'string') {
-      inputPath.value = selected
-      renderSelectedInput()
+      workspace = setSelectedInput(workspace, selected)
       await processSelectedInput({ sourceLabel: label })
     } else {
-      summary.textContent = `${capitalize(label)} selection cancelled.`
+      workspace = { ...workspace, summary: `${capitalize(label)} selection cancelled.` }
+      renderWorkspace()
     }
   } catch (error) {
-    summary.textContent = `${capitalize(label)} picker error: ${String(error)}`
+    workspace = { ...workspace, summary: `${capitalize(label)} picker error: ${String(error)}` }
+    renderWorkspace()
   }
 }
 
@@ -86,7 +103,8 @@ function capitalize(value) {
 }
 
 function renderSelectedInput() {
-  const value = inputPath.value.trim()
+  const value = workspace.inputPath.trim()
+  inputPath.value = value
   selectedFiles.replaceChildren()
   if (!value) {
     selectedFiles.appendChild(fileListItem('No file or folder selected yet.'))
@@ -97,16 +115,13 @@ function renderSelectedInput() {
 }
 
 async function processSelectedInput({ sourceLabel }) {
-  const value = inputPath.value.trim()
-  if (!value || processingInFlight) {
+  const value = workspace.inputPath.trim()
+  if (!value || workspace.processingInFlight) {
     return
   }
 
-  processingInFlight = true
-  summary.textContent = `Processing selected ${sourceLabel}...`
-  setInputControlsEnabled(false)
-  setResultActionsEnabled(false)
-  renderResultFiles([], [])
+  workspace = startProcessing(workspace, `Processing selected ${sourceLabel}...`)
+  renderWorkspace()
 
   try {
     const result = await invoke('run_replace_job', {
@@ -126,7 +141,7 @@ async function processSelectedInput({ sourceLabel }) {
     const fileStatuses = result.fileStatuses ?? result.file_statuses ?? []
     const filePreviews = result.filePreviews ?? result.file_previews ?? []
 
-    summary.textContent = [
+    const nextSummary = [
       `mode: live review (processed automatically after ${sourceLabel} selection)`,
       `replacements: ${replacements}`,
       `non-text omissions detected: ${nonTextOmissionsDetected}`,
@@ -137,14 +152,19 @@ async function processSelectedInput({ sourceLabel }) {
       '',
       `note: ${coverageNote}`
     ].join('\n')
-    renderResultFiles(fileStatuses, filePreviews)
-    setResultActionsEnabled(true)
+
+    workspace = finishProcessing(workspace, {
+      summary: nextSummary,
+      fileStatuses,
+      filePreviews,
+      outputPath,
+      auditOutputPath
+    })
   } catch (error) {
-    summary.textContent = `Error: ${String(error)}`
-  } finally {
-    processingInFlight = false
-    setInputControlsEnabled(true)
+    workspace = failProcessing(workspace, `Error: ${String(error)}`)
   }
+
+  renderWorkspace()
 }
 
 function fileListItem(primary, badge, secondary) {
@@ -175,16 +195,14 @@ function countHighlights(html) {
   return (html.match(/<mark\b/g) ?? []).length
 }
 
-function setHighlightVisibility(visible) {
-  highlightsVisible = visible
-  previewPanel.classList.toggle('highlights-hidden', !visible)
-  toggleHighlights.textContent = visible ? 'Hide highlights' : 'Show highlights'
+function applyHighlightVisibility() {
+  previewPanel.classList.toggle('highlights-hidden', !workspace.highlightsVisible)
+  toggleHighlights.textContent = workspace.highlightsVisible ? 'Hide highlights' : 'Show highlights'
 }
 
 function renderPreview(preview) {
   if (!preview) {
     previewPanel.hidden = false
-    selectedPreviewPath = null
     hidePreviewActionTooltip()
     previewTitle.textContent = 'Select a processed file to inspect its before/after preview.'
     previewHighlightCount.textContent = '0 highlighted spans'
@@ -195,7 +213,6 @@ function renderPreview(preview) {
     return
   }
 
-  selectedPreviewPath = preview.path ?? null
   hidePreviewActionTooltip()
   previewTitle.textContent = preview.path ?? ''
   const note = preview.previewNote ?? preview.preview_note ?? ''
@@ -215,20 +232,14 @@ function selectPreview(item, preview) {
     element.classList.remove('preview-selected')
   }
   item.classList.add('preview-selected')
+  workspace = selectPreviewPath(workspace, preview.path ?? null)
   renderPreview(preview)
 }
 
-function renderResultFiles(fileStatuses, filePreviews = []) {
-  const statuses = Array.isArray(fileStatuses) ? fileStatuses : []
-  currentFileStatuses = statuses
-  currentFilePreviews = Array.isArray(filePreviews) ? filePreviews : []
+function renderResultFiles() {
+  const statuses = workspace.fileStatuses
   resultFiles.replaceChildren()
   resultsPanel.hidden = statuses.length === 0
-  const initialPreview =
-    currentFilePreviews.find((preview) => (preview.path ?? '') === selectedPreviewPath) ??
-    currentFilePreviews[0] ??
-    null
-  renderPreview(initialPreview)
 
   for (const [index, status] of statuses.entries()) {
     const path = status.path ?? ''
@@ -258,11 +269,11 @@ function renderResultFiles(fileStatuses, filePreviews = []) {
       .join(' · ')
 
     const item = fileListItem(path, kind, details)
-    const previewIndex = currentFilePreviews.findIndex((preview) => (preview.path ?? '') === path)
+    const previewIndex = workspace.filePreviews.findIndex((preview) => (preview.path ?? '') === path)
     if (previewIndex >= 0) {
       item.classList.add('preview-selectable')
-      item.addEventListener('click', () => selectPreview(item, currentFilePreviews[previewIndex]))
-      if ((currentFilePreviews[previewIndex].path ?? '') === selectedPreviewPath || (index === 0 && !selectedPreviewPath)) {
+      item.addEventListener('click', () => selectPreview(item, workspace.filePreviews[previewIndex]))
+      if ((workspace.filePreviews[previewIndex].path ?? '') === workspace.selectedPreviewPath || (index === 0 && !workspace.selectedPreviewPath)) {
         item.classList.add('preview-selected')
       }
     }
@@ -271,7 +282,7 @@ function renderResultFiles(fileStatuses, filePreviews = []) {
 }
 
 function getCurrentPreview() {
-  return currentFilePreviews.find((preview) => (preview.path ?? '') === selectedPreviewPath) ?? null
+  return getSelectedPreview(workspace)
 }
 
 function toPreviewRequest(preview) {
@@ -284,14 +295,8 @@ function toPreviewRequest(preview) {
 }
 
 function replacePreviewState(updatedPreview, replacements) {
-  const previewPath = updatedPreview.path ?? ''
-  currentFilePreviews = currentFilePreviews.map((preview) =>
-    (preview.path ?? '') === previewPath ? updatedPreview : preview
-  )
-  currentFileStatuses = currentFileStatuses.map((status) =>
-    (status.path ?? '') === previewPath ? { ...status, replacements } : status
-  )
-  renderResultFiles(currentFileStatuses, currentFilePreviews)
+  workspace = replacePreviewArtifacts(workspace, updatedPreview, replacements)
+  renderWorkspace()
 }
 
 function appendSummary(message) {
@@ -510,7 +515,9 @@ document.addEventListener('click', (event) => {
 })
 
 configPath.addEventListener('change', async () => {
-  if (!inputPath.value.trim()) {
+  workspace = setConfigPath(workspace, configPath.value)
+
+  if (!workspace.inputPath.trim()) {
     return
   }
 

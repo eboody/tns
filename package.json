@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "test": "node --test src/*.test.js",
     "tauri": "tauri",
     "stage:runtime": "node ./scripts/stage-ort-runtime.mjs",
     "stage:runtime:linux": "node ./scripts/stage-ort-runtime.mjs --target linux-x64",
