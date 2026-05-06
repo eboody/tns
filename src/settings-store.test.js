@@ -9,7 +9,6 @@ import {
   loadAppSettings,
   normalizeAppSettings,
   saveAppSettings,
-  setActiveProfileId,
   updateActiveProfileAndCaseContext
 } from './settings-store.js'
 
@@ -134,29 +133,4 @@ test('updateActiveProfileAndCaseContext updates only the split active settings s
     clientVariants: 'Jane Doe',
     exactEntities: []
   })
-})
-
-test('setActiveProfileId switches the active reusable profile when it exists', () => {
-  const settings = normalizeAppSettings({
-    globalSettings: { activeProfileId: 'general' },
-    profiles: [
-      DEFAULT_APP_SETTINGS.profiles[0],
-      {
-        id: 'court',
-        name: 'Court documents',
-        patterns: {
-          dates: { enabled: true, replacement: '[DATE]' },
-          emails: { enabled: false, replacement: '[EMAIL]' },
-          phones: { enabled: true, replacement: '[PHONE]' }
-        },
-        ner: DEFAULT_APP_SETTINGS.profiles[0].ner
-      }
-    ]
-  })
-
-  const updated = setActiveProfileId(settings, 'court')
-
-  assert.equal(updated.globalSettings.activeProfileId, 'court')
-  assert.equal(getActiveProfile(updated).name, 'Court documents')
-  assert.deepEqual(getCurrentCaseContext(updated), DEFAULT_APP_SETTINGS.currentCaseContext)
 })

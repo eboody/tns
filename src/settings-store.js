@@ -80,18 +80,6 @@ export function getCurrentCaseContext(settings) {
   return normalizeAppSettings(settings).currentCaseContext
 }
 
-export function setActiveProfileId(settings, profileId) {
-  const normalized = normalizeAppSettings(settings)
-
-  return normalizeAppSettings({
-    ...normalized,
-    globalSettings: {
-      ...normalized.globalSettings,
-      activeProfileId: profileId
-    }
-  })
-}
-
 export function updateActiveProfileAndCaseContext(settings, { profile, caseContext }) {
   const normalized = normalizeAppSettings(settings)
 

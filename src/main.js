@@ -8,7 +8,6 @@ import {
   getCurrentCaseContext,
   loadAppSettings,
   saveAppSettings,
-  setActiveProfileId,
   updateActiveProfileAndCaseContext
 } from './settings-store.js'
 import {
@@ -28,7 +27,6 @@ import {
 const inputPath = document.getElementById('inputPath')
 const pickInput = document.getElementById('pickInput')
 const pickFolder = document.getElementById('pickFolder')
-const activeProfileSelect = document.getElementById('activeProfileSelect')
 const editSettings = document.getElementById('editSettings')
 const settingsSummary = document.getElementById('settingsSummary')
 const settingsOverlay = document.getElementById('settingsOverlay')
@@ -272,18 +270,6 @@ function nextPaint() {
 
 function renderSelectedInput() {
   inputPath.value = workspace.inputPath.trim()
-  const activeProfile = getActiveProfile(appSettings)
-
-  activeProfileSelect.replaceChildren(
-    ...appSettings.profiles.map((profile) => {
-      const option = document.createElement('option')
-      option.value = profile.id
-      option.textContent = profile.name
-      option.selected = profile.id === activeProfile.id
-      return option
-    })
-  )
-  activeProfileSelect.disabled = workspace.processingInFlight || appSettings.profiles.length === 0
 }
 
 function populateSettingsForm(settings) {
@@ -820,15 +806,6 @@ addExactEntity.addEventListener('click', () => {
   exactEntitiesList.appendChild(createExactEntityRow())
 })
 saveSettingsButton.addEventListener('click', saveSettingsAndMaybeRerun)
-activeProfileSelect.addEventListener('change', async (event) => {
-  const nextProfileId = event.target.value
-  appSettings = saveAppSettings(setActiveProfileId(appSettings, nextProfileId))
-  renderWorkspace()
-
-  if (workspace.inputPath.trim()) {
-    await processSelectedInput({ sourceLabel: 'profile' })
-  }
-})
 settingsOverlay.addEventListener('click', (event) => {
   if (event.target === settingsOverlay) {
     closeSettingsDialog()
