@@ -94,10 +94,19 @@
 
           <div id="previewActionTooltip" class="preview-action-tooltip" hidden>
             <p id="previewActionLabel" class="preview-action-label"></p>
-            <button id="previewActionButton" type="button" class="preview-action-button"></button>
+            <button id="previewActionButton" type="button" class="preview-action-button secondary-button"></button>
           </div>
         </section>
       </section>
+
+      <div id="loadingOverlay" class="loading-overlay" hidden aria-live="polite" aria-busy="true">
+        <div class="loading-dialog" role="status" aria-label="Processing selected input">
+          <div class="loading-spinner" aria-hidden="true"></div>
+          <p class="loading-eyebrow">Processing locally</p>
+          <h2 id="loadingTitle">Preparing review workspace…</h2>
+          <p id="loadingMessage" class="loading-message">Loading selected files and building previews.</p>
+        </div>
+      </div>
     </main>
 
     <script type="module" src="/src/main.js"></script>

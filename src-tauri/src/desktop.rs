@@ -101,6 +101,7 @@ struct HighlightRange {
     start: usize,
     end: usize,
     label: String,
+    manual_number: Option<usize>,
     original_start: usize,
     original_end: usize,
     replacement: String,
@@ -189,7 +190,9 @@ pub fn run_replace_job(request: DesktopReplaceRequest) -> Result<DesktopReplaceR
     })
 }
 
-pub fn add_manual_redaction(request: DesktopAddRedactionRequest) -> Result<DesktopPreviewUpdateResult> {
+pub fn add_manual_redaction(
+    request: DesktopAddRedactionRequest,
+) -> Result<DesktopPreviewUpdateResult> {
     let original_text = load_preview_input_as_markdown(&request.input_path)?;
     let mut audit_report = read_editable_audit_report(&request.audit_output_path)?;
     let (start, end) = map_selection_to_original_range(
@@ -234,7 +237,9 @@ pub fn add_manual_redaction(request: DesktopAddRedactionRequest) -> Result<Deskt
     )
 }
 
-pub fn remove_redaction(request: DesktopRemoveRedactionRequest) -> Result<DesktopPreviewUpdateResult> {
+pub fn remove_redaction(
+    request: DesktopRemoveRedactionRequest,
+) -> Result<DesktopPreviewUpdateResult> {
     let original_text = load_preview_input_as_markdown(&request.input_path)?;
     let mut audit_report = read_editable_audit_report(&request.audit_output_path)?;
     let original_len = audit_report.replacements.len();
@@ -332,21 +337,7 @@ fn build_preview(
         .and_then(Value::as_str);
 
     let original_html = original_text.as_ref().map(|text| {
-        render_highlighted_html(
-            text,
-            &audit_report
-                .replacements
-                .iter()
-                .map(|record| HighlightRange {
-                    start: record.start,
-                    end: record.end,
-                    label: record.entity_type.clone(),
-                    original_start: record.start,
-                    original_end: record.end,
-                    replacement: record.replacement.clone(),
-                })
-                .collect::<Vec<_>>(),
-        )
+        render_highlighted_html(text, &map_original_highlights(&audit_report.replacements))
     });
     let redacted_html = render_highlighted_html(
         redacted_text,
@@ -413,29 +404,40 @@ fn persist_preview_edit(
 ) -> Result<DesktopPreviewUpdateResult> {
     audit_report.output_path = output_path.clone();
     let redacted_text = render_redacted_text(&original_text, &audit_report.replacements)?;
-    fs::write(&output_path, &redacted_text).map_err(|source| crate::error::AppError::WriteFile {
-        path: output_path.clone(),
-        source,
+    fs::write(&output_path, &redacted_text).map_err(|source| {
+        crate::error::AppError::WriteFile {
+            path: output_path.clone(),
+            source,
+        }
     })?;
 
     let audit_json = serde_json::to_string_pretty(&audit_report)
         .map_err(crate::error::AppError::SerializeAuditReport)?;
-    fs::write(&audit_output_path, audit_json).map_err(|source| crate::error::AppError::WriteFile {
-        path: audit_output_path.clone(),
-        source,
+    fs::write(&audit_output_path, audit_json).map_err(|source| {
+        crate::error::AppError::WriteFile {
+            path: audit_output_path.clone(),
+            source,
+        }
     })?;
 
     Ok(DesktopPreviewUpdateResult {
-        preview: build_preview(path, output_path, audit_output_path, &redacted_text, &audit_report)?,
+        preview: build_preview(
+            path,
+            output_path,
+            audit_output_path,
+            &redacted_text,
+            &audit_report,
+        )?,
         replacements: audit_report.replacements.len(),
     })
 }
 
 fn read_editable_audit_report(path: &Path) -> Result<EditableAuditPreviewReport> {
-    let audit_json = fs::read_to_string(path).map_err(|source| crate::error::AppError::ReadFile {
-        path: path.to_path_buf(),
-        source,
-    })?;
+    let audit_json =
+        fs::read_to_string(path).map_err(|source| crate::error::AppError::ReadFile {
+            path: path.to_path_buf(),
+            source,
+        })?;
     serde_json::from_str(&audit_json).map_err(crate::error::AppError::SerializeAuditReport)
 }
 
@@ -447,14 +449,22 @@ fn map_redacted_highlights(records: &[EditableAuditPreviewRecord]) -> Vec<Highli
     let mut ranges = Vec::with_capacity(records.len());
     let mut input_cursor = 0usize;
     let mut output_cursor = 0usize;
+    let mut manual_redaction_number = 0usize;
 
     for record in records {
+        let manual_number = if is_manual_redaction(record) {
+            manual_redaction_number += 1;
+            Some(manual_redaction_number)
+        } else {
+            None
+        };
         let start = output_cursor + record.start.saturating_sub(input_cursor);
         let end = start + record.replacement.len();
         ranges.push(HighlightRange {
             start,
             end,
-            label: record.entity_type.clone(),
+            label: highlight_label(record, manual_number),
+            manual_number,
             original_start: record.start,
             original_end: record.end,
             replacement: record.replacement.clone(),
@@ -464,6 +474,43 @@ fn map_redacted_highlights(records: &[EditableAuditPreviewRecord]) -> Vec<Highli
     }
 
     ranges
+}
+
+fn map_original_highlights(records: &[EditableAuditPreviewRecord]) -> Vec<HighlightRange> {
+    let mut manual_redaction_number = 0usize;
+
+    records
+        .iter()
+        .map(|record| {
+            let manual_number = if is_manual_redaction(record) {
+                manual_redaction_number += 1;
+                Some(manual_redaction_number)
+            } else {
+                None
+            };
+
+            HighlightRange {
+                start: record.start,
+                end: record.end,
+                label: highlight_label(record, manual_number),
+                manual_number,
+                original_start: record.start,
+                original_end: record.end,
+                replacement: record.replacement.clone(),
+            }
+        })
+        .collect()
+}
+
+fn is_manual_redaction(record: &EditableAuditPreviewRecord) -> bool {
+    record.entity_type == "MANUAL_REDACTION"
+}
+
+fn highlight_label(record: &EditableAuditPreviewRecord, manual_number: Option<usize>) -> String {
+    match manual_number {
+        Some(number) => format!("Manual redaction {number}"),
+        None => record.entity_type.clone(),
+    }
 }
 
 fn render_highlighted_html(text: &str, ranges: &[HighlightRange]) -> String {
@@ -487,6 +534,12 @@ fn render_highlighted_html(text: &str, ranges: &[HighlightRange]) -> String {
         html.push_str(&range.original_end.to_string());
         html.push_str("\" data-record-replacement=\"");
         html.push_str(&escape_html(&range.replacement));
+        if let Some(number) = range.manual_number {
+            html.push_str("\" data-manual-number=\"");
+            html.push_str(&number.to_string());
+        }
+        html.push_str("\" data-record-label=\"");
+        html.push_str(&escape_html(&range.label));
         html.push_str("\">");
         html.push_str(&escape_html(&text[range.start..range.end]));
         html.push_str("</mark>");
@@ -577,7 +630,8 @@ fn map_redacted_offset_to_original(
         let replacement_end = replacement_start + record.replacement.len();
         if offset < replacement_end {
             return Err(crate::error::AppError::InvalidPreviewEdit(
-                "cannot add a new redaction from inside an existing redacted replacement".to_string(),
+                "cannot add a new redaction from inside an existing redacted replacement"
+                    .to_string(),
             ));
         }
 
@@ -625,6 +679,7 @@ fn escape_html(text: &str) -> String {
 mod tests {
     use std::{fs, path::PathBuf};
 
+    use serde_json::json;
     use tempfile::tempdir;
 
     use crate::RunFileStatusKind;
@@ -633,9 +688,10 @@ mod tests {
 
     use super::{
         DesktopAddRedactionRequest, DesktopRemoveRedactionRequest, DesktopReplaceRequest,
-        DesktopReviewReason, DesktopReviewRequest, PreviewSelectionSource, add_manual_redaction,
-        load_preview_input_as_markdown, read_editable_audit_report, remove_redaction,
-        run_replace_job, run_review_job,
+        DesktopReviewReason, DesktopReviewRequest, EditableAuditPreviewRecord,
+        PreviewSelectionSource, add_manual_redaction, load_preview_input_as_markdown,
+        map_original_highlights, read_editable_audit_report, remove_redaction, run_replace_job,
+        run_review_job,
     };
 
     #[test]
@@ -724,19 +780,22 @@ mod tests {
         assert_eq!(result.file_previews.len(), 1);
         assert_eq!(result.file_previews[0].path, PathBuf::from("note.md"));
         assert!(
-            result.file_previews[0].original_html.as_ref().is_some_and(
-                |html| {
+            result.file_previews[0]
+                .original_html
+                .as_ref()
+                .is_some_and(|html| {
                     html.contains("data-record-start=")
                         && html.contains("title=\"EMAIL_ADDRESS\"")
                         && html.contains(">jane@example.com</mark>")
-                }
-            )
+                })
         );
         assert!(
             result.file_previews[0]
                 .redacted_html
                 .contains("title=\"EMAIL_ADDRESS\"")
-                && result.file_previews[0].redacted_html.contains(">[EMAIL_ADDRESS]</mark>")
+                && result.file_previews[0]
+                    .redacted_html
+                    .contains(">[EMAIL_ADDRESS]</mark>")
         );
         assert!(input_dir.join("redacted/note.md").exists());
         assert!(input_dir.join("redacted/.audit/note.audit.json").exists());
@@ -765,7 +824,10 @@ mod tests {
         assert_eq!(result.file_previews.len(), 1);
         let preview = &result.file_previews[0];
         assert_eq!(preview.path, input);
-        assert_eq!(preview.review.extraction_provenance.as_deref(), Some("pdf_text"));
+        assert_eq!(
+            preview.review.extraction_provenance.as_deref(),
+            Some("pdf_text")
+        );
         assert!(
             preview
                 .original_html
@@ -798,10 +860,12 @@ mod tests {
         })
         .unwrap();
 
-        assert!(result.file_previews[0]
-            .review
-            .reasons
-            .contains(&DesktopReviewReason::NonTextOmissionsDetected));
+        assert!(
+            result.file_previews[0]
+                .review
+                .reasons
+                .contains(&DesktopReviewReason::NonTextOmissionsDetected)
+        );
     }
 
     #[test]
@@ -852,13 +916,62 @@ mod tests {
                 .preview
                 .original_html
                 .as_ref()
-                .is_some_and(|html| html.contains("MANUAL_REDACTION"))
+                .is_some_and(|html| html.contains("Manual redaction 1"))
+        );
+        assert!(
+            updated
+                .preview
+                .redacted_html
+                .contains("data-manual-number=\"1\"")
         );
         assert!(
             fs::read_to_string(&preview.output_path)
                 .unwrap()
                 .contains("[MANUAL_REDACTION]")
         );
+    }
+
+    #[test]
+    fn manual_redaction_highlights_are_numbered_in_document_order() {
+        let highlights = map_original_highlights(&[
+            EditableAuditPreviewRecord {
+                source: json!("custom"),
+                entity_type: "MANUAL_REDACTION".to_string(),
+                matched_text: "beta".to_string(),
+                replacement: "[MANUAL_REDACTION]".to_string(),
+                reason: "desktop manual selection".to_string(),
+                score: None,
+                start: 6,
+                end: 10,
+            },
+            EditableAuditPreviewRecord {
+                source: json!("custom"),
+                entity_type: "EMAIL_ADDRESS".to_string(),
+                matched_text: "jane@example.com".to_string(),
+                replacement: "[EMAIL_ADDRESS]".to_string(),
+                reason: "pattern".to_string(),
+                score: Some(0.8),
+                start: 11,
+                end: 27,
+            },
+            EditableAuditPreviewRecord {
+                source: json!("custom"),
+                entity_type: "MANUAL_REDACTION".to_string(),
+                matched_text: "gamma".to_string(),
+                replacement: "[MANUAL_REDACTION]".to_string(),
+                reason: "desktop manual selection".to_string(),
+                score: None,
+                start: 28,
+                end: 33,
+            },
+        ]);
+
+        assert_eq!(highlights[0].manual_number, Some(1));
+        assert_eq!(highlights[0].label, "Manual redaction 1");
+        assert_eq!(highlights[1].manual_number, None);
+        assert_eq!(highlights[1].label, "EMAIL_ADDRESS");
+        assert_eq!(highlights[2].manual_number, Some(2));
+        assert_eq!(highlights[2].label, "Manual redaction 2");
     }
 
     #[test]

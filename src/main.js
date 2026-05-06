@@ -38,6 +38,9 @@ const previewActionButton = document.getElementById('previewActionButton')
 const summary = document.getElementById('summary')
 const openOutput = document.getElementById('openOutput')
 const openAudit = document.getElementById('openAudit')
+const loadingOverlay = document.getElementById('loadingOverlay')
+const loadingTitle = document.getElementById('loadingTitle')
+const loadingMessage = document.getElementById('loadingMessage')
 
 let workspace = createWorkspaceState(
   'Desktop shell loaded. Choose a file or folder to start local processing automatically.'
@@ -95,10 +98,24 @@ function renderWorkspace() {
   renderResultFiles()
   renderSelectedFileStrip()
   renderPreview(getSelectedPreview(workspace))
+  renderLoadingOverlay()
   summary.textContent = workspace.summary
   setResultActionsEnabled(workspace.artifactsAvailable)
   setInputControlsEnabled(!workspace.processingInFlight)
   applyHighlightVisibility()
+}
+
+function renderLoadingOverlay() {
+  if (!workspace.processingInFlight) {
+    loadingOverlay.hidden = true
+    return
+  }
+
+  loadingTitle.textContent = workspace.inputPath.trim()
+    ? 'Preparing review workspace…'
+    : 'Processing selection…'
+  loadingMessage.textContent = workspace.summary || 'Loading selected files and building previews.'
+  loadingOverlay.hidden = false
 }
 
 function renderSelectedFileStrip() {
@@ -135,7 +152,9 @@ pickFolder.addEventListener('click', async () => {
 })
 
 async function pickInputPath({ directory, label }) {
-  summary.textContent = `Opening ${label} picker...`
+  workspace = startProcessing(workspace, `Opening ${label} picker...`)
+  renderWorkspace()
+  await nextPaint()
 
   try {
     const selected = await open({
@@ -144,20 +163,41 @@ async function pickInputPath({ directory, label }) {
     })
 
     if (typeof selected === 'string') {
-      workspace = setSelectedInput(workspace, selected)
+      workspace = {
+        ...setSelectedInput(workspace, selected),
+        processingInFlight: false
+      }
       await processSelectedInput({ sourceLabel: label })
     } else {
-      workspace = { ...workspace, summary: `${capitalize(label)} selection cancelled.` }
+      workspace = {
+        ...workspace,
+        processingInFlight: false,
+        summary: `${capitalize(label)} selection cancelled.`
+      }
       renderWorkspace()
     }
   } catch (error) {
-    workspace = { ...workspace, summary: `${capitalize(label)} picker error: ${String(error)}` }
+    workspace = {
+      ...workspace,
+      processingInFlight: false,
+      summary: `${capitalize(label)} picker error: ${String(error)}`
+    }
     renderWorkspace()
   }
 }
 
 function capitalize(value) {
   return value.charAt(0).toUpperCase() + value.slice(1)
+}
+
+function nextPaint() {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        setTimeout(resolve, 0)
+      })
+    })
+  })
 }
 
 function renderSelectedInput() {
@@ -172,6 +212,7 @@ async function processSelectedInput({ sourceLabel }) {
 
   workspace = startProcessing(workspace, `Processing selected ${sourceLabel}...`)
   renderWorkspace()
+  await nextPaint()
 
   try {
     const result = await invoke('run_replace_job', {
@@ -457,9 +498,13 @@ async function handleRedactionRemoval(markElement) {
   }
 
   const rect = markElement.getBoundingClientRect()
+  const recordLabel = markElement.dataset.recordLabel ?? 'this redaction'
+  const removalLabel = markElement.dataset.manualNumber
+    ? `Remove ${recordLabel.toLowerCase()}?`
+    : 'Remove this redaction?'
   showPreviewActionTooltip({
     rect,
-    label: 'Remove this redaction?',
+    label: removalLabel,
     buttonText: 'Remove redaction',
     action: async () => {
       try {
@@ -554,6 +599,9 @@ beforePreview.addEventListener('keyup', () => {
 afterPreview.addEventListener('keyup', () => {
   setTimeout(maybeShowAddRedactionTooltip, 0)
 })
+
+beforePreview.addEventListener('scroll', hidePreviewActionTooltip)
+afterPreview.addEventListener('scroll', hidePreviewActionTooltip)
 
 previewActionButton.addEventListener('click', async () => {
   if (!pendingPreviewAction) {
