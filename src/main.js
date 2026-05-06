@@ -606,14 +606,14 @@ function targetElement(target) {
   return target instanceof Element ? target : target?.parentElement ?? null
 }
 
-function clearFocusedRedactions() {
-  for (const mark of document.querySelectorAll('.preview-text mark.focused-redaction')) {
-    mark.classList.remove('focused-redaction')
+function clearRedactionClass(className) {
+  for (const mark of document.querySelectorAll(`.preview-text mark.${className}`)) {
+    mark.classList.remove(className)
   }
 }
 
-function focusMatchingRedactions({ start, end, replacement }) {
-  clearFocusedRedactions()
+function setMatchingRedactionClass({ start, end, replacement }, className) {
+  clearRedactionClass(className)
 
   for (const mark of document.querySelectorAll('.preview-text mark[data-record-start]')) {
     if (
@@ -621,9 +621,25 @@ function focusMatchingRedactions({ start, end, replacement }) {
       && mark.dataset.recordEnd === String(end)
       && mark.dataset.recordReplacement === replacement
     ) {
-      mark.classList.add('focused-redaction')
+      mark.classList.add(className)
     }
   }
+}
+
+function clearFocusedRedactions() {
+  clearRedactionClass('focused-redaction')
+}
+
+function clearHoveredRedactions() {
+  clearRedactionClass('hovered-redaction')
+}
+
+function focusMatchingRedactions(identity) {
+  setMatchingRedactionClass(identity, 'focused-redaction')
+}
+
+function hoverMatchingRedactions(identity) {
+  setMatchingRedactionClass(identity, 'hovered-redaction')
 }
 
 function hidePreviewActionTooltip() {
@@ -882,6 +898,34 @@ afterPreview.addEventListener('click', async (event) => {
     await handleRedactionRemoval(mark)
   }
 })
+
+function handleRedactionHover(event) {
+  const mark = targetElement(event.target)?.closest('mark[data-record-start]')
+  if (!mark) {
+    clearHoveredRedactions()
+    return
+  }
+
+  hoverMatchingRedactions({
+    start: Number(mark.dataset.recordStart ?? 0),
+    end: Number(mark.dataset.recordEnd ?? 0),
+    replacement: mark.dataset.recordReplacement ?? ''
+  })
+}
+
+function handleRedactionHoverLeave(event) {
+  const related = targetElement(event.relatedTarget)
+  if (related?.closest('mark[data-record-start]')) {
+    return
+  }
+
+  clearHoveredRedactions()
+}
+
+beforePreview.addEventListener('mouseover', handleRedactionHover)
+afterPreview.addEventListener('mouseover', handleRedactionHover)
+beforePreview.addEventListener('mouseout', handleRedactionHoverLeave)
+afterPreview.addEventListener('mouseout', handleRedactionHoverLeave)
 
 beforePreview.addEventListener('mouseup', (event) => {
   if (targetElement(event.target)?.closest('mark[data-record-start]')) {
