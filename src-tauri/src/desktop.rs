@@ -486,6 +486,9 @@ fn build_manual_replacements_for_exact_matches(
         .match_indices(matched_text)
         .filter_map(|(start, _)| {
             let end = start + matched_text.len();
+            if !has_exact_match_boundaries(original_text, start, end, matched_text) {
+                return None;
+            }
             if overlaps_existing_replacement(existing_replacements, start, end) {
                 return None;
             }
@@ -502,6 +505,39 @@ fn build_manual_replacements_for_exact_matches(
             })
         })
         .collect()
+}
+
+fn has_exact_match_boundaries(text: &str, start: usize, end: usize, matched_text: &str) -> bool {
+    let Some(first_char) = matched_text.chars().next() else {
+        return false;
+    };
+    let Some(last_char) = matched_text.chars().next_back() else {
+        return false;
+    };
+
+    let left_ok = if is_wordish(first_char) {
+        text[..start]
+            .chars()
+            .next_back()
+            .is_none_or(|ch| !is_wordish(ch))
+    } else {
+        true
+    };
+
+    let right_ok = if is_wordish(last_char) {
+        text[end..]
+            .chars()
+            .next()
+            .is_none_or(|ch| !is_wordish(ch))
+    } else {
+        true
+    };
+
+    left_ok && right_ok
+}
+
+fn is_wordish(ch: char) -> bool {
+    ch.is_alphanumeric() || ch == '_'
 }
 
 pub fn remove_redaction(
@@ -1351,6 +1387,20 @@ mod tests {
         assert!(replacements
             .iter()
             .all(|record| record.reason == "desktop manual exact-match propagation"));
+    }
+
+    #[test]
+    fn manual_redaction_exact_match_propagation_does_not_match_inside_larger_words() {
+        let replacements = build_manual_replacements_for_exact_matches(
+            "CA CASE CA, SCAFFOLD",
+            "CA",
+            &[],
+        );
+
+        assert_eq!(replacements.len(), 2);
+        assert_eq!(replacements[0].matched_text, "CA");
+        assert_eq!(replacements[0].start, 0);
+        assert_eq!(replacements[1].start, 8);
     }
 
     #[test]
