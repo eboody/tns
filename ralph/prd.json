@@ -23,8 +23,8 @@
       "Render shell from one explicit workspace state model",
       "Keep selected-file and artifact state coherent across updates"
     ],
-    "passes": false,
-    "notes": "Follow-up after issue 45"
+    "passes": true,
+    "notes": "Completed 2026-05-05: introduced a tested workspace state module that now owns selected input, processing state, preview selection, highlight visibility, and artifact availability."
   },
   {
     "id": "47",
@@ -36,8 +36,8 @@
       "Show primary input surface in the left rail",
       "Allow moving between files from the file list"
     ],
-    "passes": false,
-    "notes": "Blocked by 45"
+    "passes": true,
+    "notes": "Completed 2026-05-05: moved the input surface into the left rail, made the file list the persistent navigation panel, and removed sidebar run-detail duplication."
   },
   {
     "id": "48",
@@ -49,8 +49,8 @@
       "Show filename, redaction count, and review status in one place",
       "Remove duplicate status surfaces"
     ],
-    "passes": false,
-    "notes": "Blocked by 47"
+    "passes": true,
+    "notes": "Completed 2026-05-05: added a canonical selected-file strip above preview and reduced file-row detail so selected-file status now has one primary home."
   },
   {
     "id": "49",
@@ -62,8 +62,8 @@
       "Render notice only for exceptional review context",
       "Avoid repeating selected-file status in warnings"
     ],
-    "passes": false,
-    "notes": "Blocked by 48"
+    "passes": true,
+    "notes": "Completed 2026-05-05: introduced explanation-only review notices by filtering preview-note prose down to the exceptional reasons users actually need to act on."
   },
   {
     "id": "50",
@@ -75,8 +75,8 @@
       "Add/remove redactions from preview",
       "Observe persisted output and audit artifacts update immediately"
     ],
-    "passes": false,
-    "notes": "Blocked by 45"
+    "passes": true,
+    "notes": "Completed 2026-05-05: clarified that preview edits save immediately and kept persisted-output behavior explicit in the workspace."
   },
   {
     "id": "51",
@@ -88,8 +88,8 @@
       "Buttons stay disabled before artifacts exist",
       "Buttons open artifact locations after a successful run"
     ],
-    "passes": false,
-    "notes": "Blocked by 45"
+    "passes": true,
+    "notes": "Completed 2026-05-05: artifact actions now open containing folders rather than artifact files, matching the UI contract and staying gated by artifact availability."
   },
   {
     "id": "52",
@@ -101,7 +101,7 @@
       "Use one response-field naming convention",
       "Expose structured review metadata needed by the streamlined shell"
     ],
-    "passes": false,
-    "notes": "Blocked by 49 and 46"
+    "passes": true,
+    "notes": "Completed 2026-05-05: normalized desktop response fields to camelCase and replaced preview-note prose with structured review metadata consumed by the frontend."
   }
 ]
