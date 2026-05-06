@@ -1,7 +1,8 @@
-export const DEFAULT_APP_SETTINGS = {
-  clientReplacement: '',
-  clientVariants: '',
-  exactEntities: [],
+export const DEFAULT_PROFILE_ID = 'general'
+
+const DEFAULT_PROFILE = {
+  id: DEFAULT_PROFILE_ID,
+  name: 'General',
   patterns: {
     dates: { enabled: false, replacement: '[DATE]' },
     emails: { enabled: false, replacement: '[EMAIL]' },
@@ -12,6 +13,18 @@ export const DEFAULT_APP_SETTINGS = {
     modelPath: '',
     tokenizerPath: '',
     minConfidence: '0.7'
+  }
+}
+
+export const DEFAULT_APP_SETTINGS = {
+  globalSettings: {
+    activeProfileId: DEFAULT_PROFILE_ID
+  },
+  profiles: [DEFAULT_PROFILE],
+  currentCaseContext: {
+    clientReplacement: '',
+    clientVariants: '',
+    exactEntities: []
   }
 }
 
@@ -46,23 +59,93 @@ export function saveAppSettings(settings, storage = globalThis.localStorage) {
 }
 
 export function normalizeAppSettings(settings = {}) {
+  const legacySettings = isLegacySettingsShape(settings) ? settings : null
+  const profiles = normalizeProfiles(settings.profiles, legacySettings)
+
   return {
-    clientReplacement: normalizeString(settings.clientReplacement),
-    clientVariants: normalizeMultilineString(settings.clientVariants),
-    exactEntities: Array.isArray(settings.exactEntities)
-      ? settings.exactEntities.map(normalizeExactEntity).filter(hasMeaningfulExactEntity)
-      : [],
+    globalSettings: {
+      activeProfileId: normalizeActiveProfileId(settings.globalSettings?.activeProfileId, profiles)
+    },
+    profiles,
+    currentCaseContext: normalizeCaseContext(settings.currentCaseContext ?? legacySettings ?? {})
+  }
+}
+
+export function getActiveProfile(settings) {
+  const normalized = normalizeAppSettings(settings)
+  return normalized.profiles.find((profile) => profile.id === normalized.globalSettings.activeProfileId) ?? normalized.profiles[0]
+}
+
+export function getCurrentCaseContext(settings) {
+  return normalizeAppSettings(settings).currentCaseContext
+}
+
+export function updateActiveProfileAndCaseContext(settings, { profile, caseContext }) {
+  const normalized = normalizeAppSettings(settings)
+
+  return normalizeAppSettings({
+    globalSettings: normalized.globalSettings,
+    profiles: normalized.profiles.map((candidate) =>
+      candidate.id === normalized.globalSettings.activeProfileId ? normalizeProfile({ ...candidate, ...profile }) : candidate
+    ),
+    currentCaseContext: {
+      ...normalized.currentCaseContext,
+      ...caseContext
+    }
+  })
+}
+
+function isLegacySettingsShape(settings) {
+  return Object.hasOwn(settings, 'clientReplacement')
+    || Object.hasOwn(settings, 'clientVariants')
+    || Object.hasOwn(settings, 'exactEntities')
+    || Object.hasOwn(settings, 'patterns')
+    || Object.hasOwn(settings, 'ner')
+}
+
+function normalizeProfiles(profiles, legacySettings) {
+  if (Array.isArray(profiles) && profiles.length > 0) {
+    return profiles.map(normalizeProfile)
+  }
+
+  return [normalizeProfile({
+    id: DEFAULT_PROFILE_ID,
+    name: 'General',
+    patterns: legacySettings?.patterns,
+    ner: legacySettings?.ner
+  })]
+}
+
+function normalizeProfile(profile = {}) {
+  return {
+    id: normalizeString(profile.id) || DEFAULT_PROFILE_ID,
+    name: normalizeString(profile.name) || 'General',
     patterns: {
-      dates: normalizePatternRule(settings.patterns?.dates, DEFAULT_APP_SETTINGS.patterns.dates.replacement),
-      emails: normalizePatternRule(settings.patterns?.emails, DEFAULT_APP_SETTINGS.patterns.emails.replacement),
-      phones: normalizePatternRule(settings.patterns?.phones, DEFAULT_APP_SETTINGS.patterns.phones.replacement)
+      dates: normalizePatternRule(profile.patterns?.dates, DEFAULT_PROFILE.patterns.dates.replacement),
+      emails: normalizePatternRule(profile.patterns?.emails, DEFAULT_PROFILE.patterns.emails.replacement),
+      phones: normalizePatternRule(profile.patterns?.phones, DEFAULT_PROFILE.patterns.phones.replacement)
     },
     ner: {
-      enabled: Boolean(settings.ner?.enabled),
-      modelPath: normalizeString(settings.ner?.modelPath),
-      tokenizerPath: normalizeString(settings.ner?.tokenizerPath),
-      minConfidence: normalizeConfidence(settings.ner?.minConfidence)
+      enabled: Boolean(profile.ner?.enabled),
+      modelPath: normalizeString(profile.ner?.modelPath),
+      tokenizerPath: normalizeString(profile.ner?.tokenizerPath),
+      minConfidence: normalizeConfidence(profile.ner?.minConfidence)
     }
+  }
+}
+
+function normalizeActiveProfileId(activeProfileId, profiles) {
+  const normalizedId = normalizeString(activeProfileId)
+  return profiles.some((profile) => profile.id === normalizedId) ? normalizedId : profiles[0]?.id ?? DEFAULT_PROFILE_ID
+}
+
+function normalizeCaseContext(caseContext = {}) {
+  return {
+    clientReplacement: normalizeString(caseContext.clientReplacement),
+    clientVariants: normalizeMultilineString(caseContext.clientVariants),
+    exactEntities: Array.isArray(caseContext.exactEntities)
+      ? caseContext.exactEntities.map(normalizeExactEntity).filter(hasMeaningfulExactEntity)
+      : []
   }
 }
 
@@ -104,5 +187,5 @@ function normalizeConfidence(value) {
     return String(value)
   }
 
-  return typeof value === 'string' && value.trim() ? value.trim() : DEFAULT_APP_SETTINGS.ner.minConfidence
+  return typeof value === 'string' && value.trim() ? value.trim() : DEFAULT_PROFILE.ner.minConfidence
 }
