@@ -3,8 +3,12 @@ use std::{fs, path::Path};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    audit::ExtractionStatus, docx_extract, error::AppError, error::Result, ocr_extract,
-    pdf_extract,
+    audit::ExtractionStatus,
+    docx_extract,
+    error::AppError,
+    error::Result,
+    extractor_pipeline::{ExtractionAttemptRecord, select_first_success},
+    ocr_extract, pdf_extract,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -14,6 +18,16 @@ pub enum ExtractionProvenance {
     DocxText,
     PdfText,
     OcrText,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExtractionStrategy {
+    PlainText,
+    DocxXml,
+    PdfLopdf,
+    PdfPdftotext,
+    PdfOcr,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -31,6 +45,16 @@ pub fn extraction_provenance_label(provenance: ExtractionProvenance) -> &'static
         ExtractionProvenance::DocxText => "docx_text",
         ExtractionProvenance::PdfText => "pdf_text",
         ExtractionProvenance::OcrText => "ocr_text",
+    }
+}
+
+pub fn extraction_strategy_label(strategy: ExtractionStrategy) -> &'static str {
+    match strategy {
+        ExtractionStrategy::PlainText => "plain_text",
+        ExtractionStrategy::DocxXml => "docx_xml",
+        ExtractionStrategy::PdfLopdf => "pdf_lopdf",
+        ExtractionStrategy::PdfPdftotext => "pdf_pdftotext",
+        ExtractionStrategy::PdfOcr => "pdf_ocr",
     }
 }
 
@@ -91,9 +115,24 @@ impl ExtractionFidelity {
 pub struct ExtractedInput {
     pub text: String,
     pub fidelity: ExtractionFidelity,
+    pub strategy: ExtractionStrategy,
+    pub attempts: Vec<ExtractionAttemptRecord>,
 }
 
 impl ExtractedInput {
+    fn successful(
+        text: String,
+        fidelity: ExtractionFidelity,
+        strategy: ExtractionStrategy,
+    ) -> Self {
+        Self {
+            text,
+            fidelity,
+            strategy,
+            attempts: vec![ExtractionAttemptRecord::succeeded(strategy)],
+        }
+    }
+
     pub fn non_text_omissions_detected(&self) -> bool {
         self.fidelity.non_text_omissions_detected
     }
@@ -110,9 +149,12 @@ impl ExtractedInput {
 pub fn extract_input(input: &Path) -> Result<ExtractedInput> {
     match input.extension().and_then(|ext| ext.to_str()) {
         Some("md" | "txt") => fs::read_to_string(input)
-            .map(|text| ExtractedInput {
-                text,
-                fidelity: ExtractionFidelity::plain_text(),
+            .map(|text| {
+                ExtractedInput::successful(
+                    text,
+                    ExtractionFidelity::plain_text(),
+                    ExtractionStrategy::PlainText,
+                )
             })
             .map_err(|source| AppError::ReadFile {
                 path: input.to_path_buf(),
@@ -120,41 +162,58 @@ pub fn extract_input(input: &Path) -> Result<ExtractedInput> {
             }),
         Some("docx") => {
             let extracted = docx_extract::extract_docx(input)?;
-            Ok(ExtractedInput {
-                text: extracted.text,
-                fidelity: ExtractionFidelity::docx(
+            Ok(ExtractedInput::successful(
+                extracted.text,
+                ExtractionFidelity::docx(
                     extracted.non_text_omissions_detected,
                     extracted.structural_loss_suspected,
                 ),
-            })
+                ExtractionStrategy::DocxXml,
+            ))
         }
-        Some("pdf") => {
-            match pdf_extract::extract_pdf(input) {
-                Ok(extracted) => Ok(ExtractedInput {
-                    text: extracted.text,
-                    fidelity: ExtractionFidelity::pdf(
+        Some("pdf") => extract_pdf_input(input),
+        _ => Err(AppError::UnsupportedInputFormat(input.to_path_buf())),
+    }
+}
+
+fn extract_pdf_input(input: &Path) -> Result<ExtractedInput> {
+    let selected = select_first_success(
+        [
+            pdf_extract::extract_pdf_with_lopdf(input).map(|extracted| {
+                ExtractedInput::successful(
+                    extracted.text,
+                    ExtractionFidelity::pdf(
                         extracted.text_degraded_detected,
                         extracted.low_confidence_review_required,
                     ),
-                }),
-                Err(AppError::Analysis(message))
-                    if message.contains("no extractable text")
-                        || message.contains("failed to extract PDF text") =>
-                {
-                    if let Some(ocr) = ocr_extract::extract_pdf_via_ocr(input)? {
-                        Ok(ExtractedInput {
-                            text: ocr.text,
-                            fidelity: ExtractionFidelity::ocr(false, true, false),
-                        })
-                    } else {
-                        Err(AppError::Analysis(message))
-                    }
-                }
-                Err(error) => Err(error),
-            }
-        }
-        _ => Err(AppError::UnsupportedInputFormat(input.to_path_buf())),
-    }
+                    ExtractionStrategy::PdfLopdf,
+                )
+            }),
+            pdf_extract::extract_pdf_with_pdftotext(input).map(|extracted| {
+                ExtractedInput::successful(
+                    extracted.text,
+                    ExtractionFidelity::pdf(
+                        extracted.text_degraded_detected,
+                        extracted.low_confidence_review_required,
+                    ),
+                    ExtractionStrategy::PdfPdftotext,
+                )
+            }),
+            ocr_extract::extract_pdf_via_ocr_attempt(input).map(|ocr| {
+                ExtractedInput::successful(
+                    ocr.text,
+                    ExtractionFidelity::ocr(false, true, false),
+                    ExtractionStrategy::PdfOcr,
+                )
+            }),
+        ],
+        "PDF contains no extractable text; treat as non-extractable or low-confidence",
+    )?;
+
+    let mut extracted = selected.value;
+    extracted.strategy = selected.strategy;
+    extracted.attempts = selected.attempts;
+    Ok(extracted)
 }
 
 pub fn classify_extraction_status(
@@ -182,7 +241,9 @@ pub fn extraction_status_label(status: ExtractionStatus) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use super::{ExtractionFidelity, ExtractionProvenance};
+    use super::{
+        ExtractionFidelity, ExtractionProvenance, ExtractionStrategy, extraction_strategy_label,
+    };
     use crate::audit::ExtractionStatus;
 
     #[test]
@@ -203,7 +264,10 @@ mod tests {
 
         assert_eq!(fidelity.provenance, ExtractionProvenance::DocxText);
         assert!(!fidelity.low_confidence_review_required);
-        assert_eq!(fidelity.extraction_status(), ExtractionStatus::NonTextOmissions);
+        assert_eq!(
+            fidelity.extraction_status(),
+            ExtractionStatus::NonTextOmissions
+        );
     }
 
     #[test]
@@ -221,6 +285,25 @@ mod tests {
 
         assert!(fidelity.structural_loss_suspected);
         assert!(fidelity.low_confidence_review_required);
-        assert_eq!(fidelity.extraction_status(), ExtractionStatus::TextDegradedWithNonTextOmissions);
+        assert_eq!(
+            fidelity.extraction_status(),
+            ExtractionStatus::TextDegradedWithNonTextOmissions
+        );
+    }
+
+    #[test]
+    fn extraction_strategy_labels_match_serialized_values() {
+        assert_eq!(
+            extraction_strategy_label(ExtractionStrategy::PlainText),
+            "plain_text"
+        );
+        assert_eq!(
+            extraction_strategy_label(ExtractionStrategy::DocxXml),
+            "docx_xml"
+        );
+        assert_eq!(
+            extraction_strategy_label(ExtractionStrategy::PdfPdftotext),
+            "pdf_pdftotext"
+        );
     }
 }

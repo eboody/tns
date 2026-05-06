@@ -6,6 +6,7 @@ pub mod desktop;
 pub mod docx_extract;
 pub mod error;
 pub mod extraction;
+mod extractor_pipeline;
 pub mod ocr_extract;
 pub mod pdf_extract;
 mod safe_harbor_policy;
@@ -19,8 +20,8 @@ use config::{Config, NerConfig};
 use deidentify::{DeidentifyResult, apply_rules, build_rules};
 use error::{AppError, Result};
 use extraction::{
-    ExtractionFidelity, ExtractionProvenance, classify_extraction_status, extract_input,
-    extraction_provenance_label, extraction_status_label,
+    ExtractionFidelity, ExtractionProvenance, ExtractionStrategy, classify_extraction_status,
+    extract_input, extraction_provenance_label, extraction_status_label, extraction_strategy_label,
 };
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use redact_core::AnalyzerEngine;
@@ -126,6 +127,7 @@ fn run_single(options: RunOptions) -> Result<RunSummary> {
         &structured.findings,
         structured.ml_active,
         fidelity,
+        extracted_input.strategy,
     );
 
     if options.mode != RunMode::Replace {
@@ -607,6 +609,7 @@ fn build_review_summary(
     findings: &[Finding],
     ml_active: bool,
     fidelity: ExtractionFidelity,
+    strategy: ExtractionStrategy,
 ) -> String {
     let mut lines = vec![
         format!("input: {}", input.display()),
@@ -614,6 +617,10 @@ fn build_review_summary(
         format!(
             "extraction provenance: {}",
             extraction_provenance_label(fidelity.provenance)
+        ),
+        format!(
+            "extraction strategy: {}",
+            extraction_strategy_label(strategy)
         ),
     ];
 
@@ -1686,8 +1693,10 @@ mod tests {
             &structured.findings,
             true,
             crate::extraction::ExtractionFidelity::plain_text(),
+            crate::extraction::ExtractionStrategy::PlainText,
         );
         assert!(review_summary.contains("extraction provenance: plain_text"));
+        assert!(review_summary.contains("extraction strategy: plain_text"));
         assert!(review_summary.contains("[ml:PERSON] John Doe -> [PERSON]"));
         assert!(review_summary.contains("ml-assisted contextual recognition: enabled"));
         assert!(review_summary.contains("Currently ML-assisted contextual coverage:"));

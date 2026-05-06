@@ -6,6 +6,7 @@ use std::{
 };
 
 use crate::error::{AppError, Result};
+use crate::{extraction::ExtractionStrategy, extractor_pipeline::ExtractionAttempt};
 
 #[derive(Debug, Clone)]
 pub struct OcrExtraction {
@@ -13,6 +14,14 @@ pub struct OcrExtraction {
 }
 
 pub fn extract_pdf_via_ocr(path: &Path) -> Result<Option<OcrExtraction>> {
+    Ok(match extract_pdf_via_ocr_attempt(path) {
+        ExtractionAttempt::Extracted { value, .. } => Some(value),
+        ExtractionAttempt::Empty { .. } | ExtractionAttempt::Unavailable { .. } => None,
+        ExtractionAttempt::Failed { detail, .. } => return Err(AppError::Analysis(detail)),
+    })
+}
+
+pub fn extract_pdf_via_ocr_attempt(path: &Path) -> ExtractionAttempt<OcrExtraction> {
     extract_pdf_via_ocr_with_tools(path, "pdftoppm", "ocrs")
 }
 
@@ -20,12 +29,20 @@ fn extract_pdf_via_ocr_with_tools(
     path: &Path,
     pdftoppm_tool: &str,
     ocr_tool: &str,
-) -> Result<Option<OcrExtraction>> {
+) -> ExtractionAttempt<OcrExtraction> {
     if !tool_available(pdftoppm_tool) || !tool_available(ocr_tool) {
-        return Ok(None);
+        return ExtractionAttempt::unavailable(
+            ExtractionStrategy::PdfOcr,
+            Some(format!("{pdftoppm_tool} or {ocr_tool} unavailable")),
+        );
     }
 
-    let scratch = create_scratch_dir()?;
+    let scratch = match create_scratch_dir() {
+        Ok(path) => path,
+        Err(error) => {
+            return ExtractionAttempt::failed(ExtractionStrategy::PdfOcr, error.to_string());
+        }
+    };
     let prefix = scratch.join("page");
 
     let pdftoppm_status = Command::new(pdftoppm_tool)
@@ -33,25 +50,44 @@ fn extract_pdf_via_ocr_with_tools(
         .arg(path)
         .arg(&prefix)
         .status()
-        .map_err(|error| AppError::Analysis(format!("failed to run {pdftoppm_tool}: {error}")))?;
+        .map_err(|error| format!("failed to run {pdftoppm_tool}: {error}"));
+
+    let pdftoppm_status = match pdftoppm_status {
+        Ok(status) => status,
+        Err(detail) => {
+            cleanup_scratch_dir(&scratch);
+            return ExtractionAttempt::failed(ExtractionStrategy::PdfOcr, detail);
+        }
+    };
 
     if !pdftoppm_status.success() {
         cleanup_scratch_dir(&scratch);
-        return Err(AppError::Analysis(format!(
-            "{pdftoppm_tool} failed while preparing OCR fallback images"
-        )));
+        return ExtractionAttempt::failed(
+            ExtractionStrategy::PdfOcr,
+            format!("{pdftoppm_tool} failed while preparing OCR fallback images"),
+        );
     }
 
-    let mut image_paths = fs::read_dir(&scratch)
-        .map_err(|error| AppError::Analysis(format!("failed to read OCR scratch dir: {error}")))?
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("png"))
-        .collect::<Vec<_>>();
+    let read_dir =
+        fs::read_dir(&scratch).map_err(|error| format!("failed to read OCR scratch dir: {error}"));
+    let mut image_paths = match read_dir {
+        Ok(paths) => paths
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("png"))
+            .collect::<Vec<_>>(),
+        Err(detail) => {
+            cleanup_scratch_dir(&scratch);
+            return ExtractionAttempt::failed(ExtractionStrategy::PdfOcr, detail);
+        }
+    };
     image_paths.sort();
 
     if image_paths.is_empty() {
         cleanup_scratch_dir(&scratch);
-        return Ok(None);
+        return ExtractionAttempt::empty(
+            ExtractionStrategy::PdfOcr,
+            Some("no rasterized pages produced".to_string()),
+        );
     }
 
     let mut pages = Vec::new();
@@ -59,19 +95,35 @@ fn extract_pdf_via_ocr_with_tools(
         let output = Command::new(ocr_tool)
             .arg(image_path)
             .output()
-            .map_err(|error| AppError::Analysis(format!("failed to run {ocr_tool}: {error}")))?;
+            .map_err(|error| format!("failed to run {ocr_tool}: {error}"));
+
+        let output = match output {
+            Ok(output) => output,
+            Err(detail) => {
+                cleanup_scratch_dir(&scratch);
+                return ExtractionAttempt::failed(ExtractionStrategy::PdfOcr, detail);
+            }
+        };
 
         if !output.status.success() {
             cleanup_scratch_dir(&scratch);
-            return Err(AppError::Analysis(format!(
-                "{ocr_tool} failed while extracting OCR fallback text"
-            )));
+            return ExtractionAttempt::failed(
+                ExtractionStrategy::PdfOcr,
+                format!("{ocr_tool} failed while extracting OCR fallback text"),
+            );
         }
 
         let page_text = String::from_utf8(output.stdout)
-            .map_err(|error| AppError::Analysis(format!("OCR output was not valid UTF-8: {error}")))?
-            .trim()
-            .to_string();
+            .map_err(|error| format!("OCR output was not valid UTF-8: {error}"));
+        let page_text = match page_text {
+            Ok(page_text) => page_text,
+            Err(detail) => {
+                cleanup_scratch_dir(&scratch);
+                return ExtractionAttempt::failed(ExtractionStrategy::PdfOcr, detail);
+            }
+        }
+        .trim()
+        .to_string();
         if !page_text.is_empty() {
             pages.push(page_text);
         }
@@ -80,12 +132,18 @@ fn extract_pdf_via_ocr_with_tools(
     cleanup_scratch_dir(&scratch);
 
     if pages.is_empty() {
-        return Ok(None);
+        return ExtractionAttempt::empty(
+            ExtractionStrategy::PdfOcr,
+            Some("OCR produced no text".to_string()),
+        );
     }
 
-    Ok(Some(OcrExtraction {
-        text: pages.join("\n\n"),
-    }))
+    ExtractionAttempt::extracted(
+        ExtractionStrategy::PdfOcr,
+        OcrExtraction {
+            text: pages.join("\n\n"),
+        },
+    )
 }
 
 fn tool_available(tool: &str) -> bool {
@@ -119,6 +177,8 @@ mod tests {
     use std::{fs, os::unix::fs::PermissionsExt};
 
     use tempfile::tempdir;
+
+    use crate::extractor_pipeline::ExtractionAttempt;
 
     use super::extract_pdf_via_ocr_with_tools;
 
@@ -154,10 +214,11 @@ esac\n",
             &pdf,
             pdftoppm.to_str().unwrap(),
             ocrs.to_str().unwrap(),
-        )
-        .unwrap()
-        .unwrap();
+        );
 
-        assert_eq!(extracted.text, "OCR page 1\n\nOCR page 2");
+        assert!(matches!(
+            extracted,
+            ExtractionAttempt::Extracted { value, .. } if value.text == "OCR page 1\n\nOCR page 2"
+        ));
     }
 }
