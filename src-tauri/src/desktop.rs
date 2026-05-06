@@ -17,6 +17,7 @@ pub struct DesktopReviewRequest {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DesktopReviewResult {
     pub replacements: usize,
     pub non_text_omissions_detected: bool,
@@ -34,6 +35,7 @@ pub struct DesktopReplaceRequest {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DesktopReplaceResult {
     pub replacements: usize,
     pub non_text_omissions_detected: bool,
@@ -46,6 +48,7 @@ pub struct DesktopReplaceResult {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DesktopFilePreview {
     pub path: PathBuf,
     pub input_path: PathBuf,
@@ -53,7 +56,24 @@ pub struct DesktopFilePreview {
     pub audit_output_path: PathBuf,
     pub original_html: Option<String>,
     pub redacted_html: String,
-    pub preview_note: Option<String>,
+    pub review: DesktopReviewMetadata,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopReviewMetadata {
+    pub requires_manual_review: bool,
+    pub extraction_provenance: Option<String>,
+    pub reasons: Vec<DesktopReviewReason>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DesktopReviewReason {
+    OriginalPreviewUnavailable,
+    NonTextOmissionsDetected,
+    TextDegradedDetected,
+    StructuralLossSuspected,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -118,6 +138,7 @@ pub struct DesktopRemoveRedactionRequest {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct DesktopPreviewUpdateResult {
     pub preview: DesktopFilePreview,
     pub replacements: usize,
@@ -339,7 +360,7 @@ fn build_preview(
         audit_output_path,
         original_html,
         redacted_html,
-        preview_note: build_preview_note(
+        review: build_review_metadata(
             original_text.is_none(),
             extraction_provenance,
             non_text_omissions_detected,
@@ -350,50 +371,36 @@ fn build_preview(
     })
 }
 
-fn build_preview_note(
+fn build_review_metadata(
     original_preview_unavailable: bool,
     extraction_provenance: Option<&str>,
     non_text_omissions_detected: bool,
     text_degraded_detected: bool,
     structural_loss_suspected: bool,
     low_confidence_review_required: bool,
-) -> Option<String> {
-    let mut notes = Vec::new();
+) -> DesktopReviewMetadata {
+    let mut reasons = Vec::new();
 
     if original_preview_unavailable {
-        notes.push(
-            "Original preview is not available for this file type in the current desktop slice."
-                .to_string(),
-        );
-    }
-    if let Some(provenance) = extraction_provenance {
-        notes.push(format!("Extraction provenance: {provenance}."));
+        reasons.push(DesktopReviewReason::OriginalPreviewUnavailable);
     }
     if non_text_omissions_detected {
-        notes.push(
-            "Non-text content omissions were detected during extraction, so embedded visual content may still require manual review.".to_string(),
-        );
+        reasons.push(DesktopReviewReason::NonTextOmissionsDetected);
     }
     if text_degraded_detected {
-        notes.push(
-            "Extracted text fidelity is degraded for this file, so review spacing and label boundaries carefully.".to_string(),
-        );
+        reasons.push(DesktopReviewReason::TextDegradedDetected);
     }
     if structural_loss_suspected {
-        notes.push(
-            "Structural extraction loss is suspected for this file, so table or form layout meaning may be flattened.".to_string(),
-        );
-    }
-    if low_confidence_review_required {
-        notes.push(
-            "This file requires low-confidence extraction review before relying on the extracted text alone.".to_string(),
-        );
+        reasons.push(DesktopReviewReason::StructuralLossSuspected);
     }
 
-    if notes.is_empty() {
-        None
-    } else {
-        Some(notes.join(" "))
+    DesktopReviewMetadata {
+        requires_manual_review: non_text_omissions_detected
+            || text_degraded_detected
+            || structural_loss_suspected
+            || low_confidence_review_required,
+        extraction_provenance: extraction_provenance.map(str::to_string),
+        reasons,
     }
 }
 
@@ -626,9 +633,9 @@ mod tests {
 
     use super::{
         DesktopAddRedactionRequest, DesktopRemoveRedactionRequest, DesktopReplaceRequest,
-        DesktopReviewRequest, PreviewSelectionSource, add_manual_redaction, remove_redaction,
-        read_editable_audit_report, load_preview_input_as_markdown, run_replace_job,
-        run_review_job,
+        DesktopReviewReason, DesktopReviewRequest, PreviewSelectionSource, add_manual_redaction,
+        load_preview_input_as_markdown, read_editable_audit_report, remove_redaction,
+        run_replace_job, run_review_job,
     };
 
     #[test]
@@ -758,12 +765,7 @@ mod tests {
         assert_eq!(result.file_previews.len(), 1);
         let preview = &result.file_previews[0];
         assert_eq!(preview.path, input);
-        assert!(
-            preview
-                .preview_note
-                .as_ref()
-                .is_some_and(|note| note.contains("Extraction provenance: pdf_text."))
-        );
+        assert_eq!(preview.review.extraction_provenance.as_deref(), Some("pdf_text"));
         assert!(
             preview
                 .original_html
@@ -797,9 +799,9 @@ mod tests {
         .unwrap();
 
         assert!(result.file_previews[0]
-            .preview_note
-            .as_ref()
-            .is_some_and(|note| note.contains("Non-text content omissions were detected")));
+            .review
+            .reasons
+            .contains(&DesktopReviewReason::NonTextOmissionsDetected));
     }
 
     #[test]

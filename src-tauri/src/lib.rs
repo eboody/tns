@@ -75,6 +75,7 @@ pub enum RunFileStatusKind {
 }
 
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RunFileStatus {
     pub path: PathBuf,
     pub status: RunFileStatusKind,

@@ -1,23 +1,20 @@
-const EXPLANATION_PATTERNS = [
-  /original preview is not available/i,
-  /non-text content omissions were detected/i,
-  /extracted text fidelity is degraded/i,
-  /structural extraction loss is suspected/i
-]
+const REASON_LABELS = {
+  original_preview_unavailable:
+    'Original preview is not available for this file type in the current desktop slice.',
+  non_text_omissions_detected:
+    'Non-text content omissions were detected during extraction, so embedded visual content may still require manual review.',
+  text_degraded_detected:
+    'Extracted text fidelity is degraded for this file, so review spacing and label boundaries carefully.',
+  structural_loss_suspected:
+    'Structural extraction loss is suspected for this file, so table or form layout meaning may be flattened.'
+}
 
-export function buildReviewNotice(rawNote) {
-  if (!rawNote) {
+export function buildReviewNotice(review) {
+  if (!review || !Array.isArray(review.reasons)) {
     return null
   }
 
-  const sentences = rawNote
-    .split(/(?<=\.)\s+/)
-    .map((sentence) => sentence.trim())
-    .filter(Boolean)
-
-  const explanatorySentences = sentences.filter((sentence) =>
-    EXPLANATION_PATTERNS.some((pattern) => pattern.test(sentence))
-  )
+  const explanatorySentences = review.reasons.map((reason) => REASON_LABELS[reason]).filter(Boolean)
 
   if (explanatorySentences.length === 0) {
     return null

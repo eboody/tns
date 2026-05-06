@@ -136,14 +136,13 @@ async function processSelectedInput({ sourceLabel }) {
     })
 
     const replacements = result.replacements
-    const nonTextOmissionsDetected =
-      result.nonTextOmissionsDetected ?? result.non_text_omissions_detected ?? false
-    const reviewSummary = result.reviewSummary ?? result.review_summary ?? ''
-    const coverageNote = result.coverageNote ?? result.coverage_note ?? ''
-    const outputPath = result.outputPath ?? result.output_path ?? ''
-    const auditOutputPath = result.auditOutputPath ?? result.audit_output_path ?? ''
-    const fileStatuses = result.fileStatuses ?? result.file_statuses ?? []
-    const filePreviews = result.filePreviews ?? result.file_previews ?? []
+    const nonTextOmissionsDetected = result.nonTextOmissionsDetected
+    const reviewSummary = result.reviewSummary ?? ''
+    const coverageNote = result.coverageNote ?? ''
+    const outputPath = result.outputPath ?? ''
+    const auditOutputPath = result.auditOutputPath ?? ''
+    const fileStatuses = result.fileStatuses ?? []
+    const filePreviews = result.filePreviews ?? []
 
     const nextSummary = [
       `mode: live review (processed automatically after ${sourceLabel} selection)`,
@@ -218,9 +217,9 @@ function renderPreview(preview) {
 
   hidePreviewActionTooltip()
   previewTitle.textContent = preview.path ?? ''
-  const note = buildReviewNotice(preview.previewNote ?? preview.preview_note ?? '')
-  const beforeHtml = preview.originalHtml ?? preview.original_html ?? 'Original preview unavailable.'
-  const afterHtml = preview.redactedHtml ?? preview.redacted_html ?? ''
+  const note = buildReviewNotice(preview.review)
+  const beforeHtml = preview.originalHtml ?? 'Original preview unavailable.'
+  const afterHtml = preview.redactedHtml ?? ''
   const highlightCount = countHighlights(beforeHtml) + countHighlights(afterHtml)
 
   previewHighlightCount.textContent = `${highlightCount} highlighted spans`
@@ -253,15 +252,13 @@ function renderResultFiles() {
     const path = status.path ?? ''
     const kind = status.status ?? 'unknown'
     const replacements = status.replacements ?? 0
-    const reviewSensitive = status.reviewSensitive ?? status.review_sensitive ?? false
-    const omissions =
-      status.nonTextOmissionsDetected ?? status.non_text_omissions_detected ?? false
-    const degraded = status.textDegradedDetected ?? status.text_degraded_detected ?? false
-    const structuralLoss = status.structuralLossSuspected ?? status.structural_loss_suspected ?? false
-    const lowConfidence =
-      status.lowConfidenceReviewRequired ?? status.low_confidence_review_required ?? false
-    const provenance = status.extractionProvenance ?? status.extraction_provenance ?? ''
-    const outputPath = status.outputPath ?? status.output_path ?? ''
+    const reviewSensitive = status.reviewSensitive ?? false
+    const omissions = status.nonTextOmissionsDetected ?? false
+    const degraded = status.textDegradedDetected ?? false
+    const structuralLoss = status.structuralLossSuspected ?? false
+    const lowConfidence = status.lowConfidenceReviewRequired ?? false
+    const provenance = status.extractionProvenance ?? ''
+    const outputPath = status.outputPath ?? ''
 
     const details = getFileReviewLabel({
       status: kind,

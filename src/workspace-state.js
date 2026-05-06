@@ -116,15 +116,10 @@ export function getFileReviewLabel(status) {
   const kind = status.status ?? 'unknown'
   const needsReview =
     status.reviewSensitive ??
-    status.review_sensitive ??
     status.lowConfidenceReviewRequired ??
-    status.low_confidence_review_required ??
     status.nonTextOmissionsDetected ??
-    status.non_text_omissions_detected ??
     status.textDegradedDetected ??
-    status.text_degraded_detected ??
     status.structuralLossSuspected ??
-    status.structural_loss_suspected ??
     false
 
   if (kind === 'unsupported' || kind === 'extraction_failed' || kind === 'skipped') {
