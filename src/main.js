@@ -46,6 +46,34 @@ let pendingPreviewAction = null
 
 renderWorkspace()
 
+if (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost') {
+  window.__tnsDesktopDebug = {
+    setWorkspaceFixture(nextWorkspace) {
+      workspace = {
+        ...workspace,
+        ...nextWorkspace
+      }
+      renderWorkspace()
+    },
+    selectionWithinPreview() {
+      return selectionWithinPreview()
+    },
+    showSelectionTooltip() {
+      maybeShowAddRedactionTooltip()
+      const rect = previewActionTooltip.getBoundingClientRect()
+      return {
+        hidden: previewActionTooltip.hidden,
+        left: rect.left,
+        top: rect.top,
+        width: rect.width,
+        height: rect.height,
+        placement: previewActionTooltip.dataset.placement,
+        arrowLeft: getComputedStyle(previewActionTooltip).getPropertyValue('--tooltip-arrow-left')
+      }
+    }
+  }
+}
+
 toggleHighlights.addEventListener('click', () => {
   workspace = toggleWorkspaceHighlights(workspace)
   applyHighlightVisibility()
