@@ -185,8 +185,20 @@ main {
 
 .preview-title {
   margin: 0;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.selected-file-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.selected-file-count {
+  color: #475569;
   font-weight: 600;
-  color: #4b5563;
 }
 
 .preview-note {

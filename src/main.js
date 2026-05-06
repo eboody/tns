@@ -5,6 +5,8 @@ import {
   createWorkspaceState,
   failProcessing,
   finishProcessing,
+  getFileReviewLabel,
+  getSelectedFileStatus,
   getSelectedPreview,
   replacePreviewArtifacts,
   selectPreviewPath,
@@ -22,6 +24,8 @@ const resultsPanel = document.getElementById('resultsPanel')
 const resultFiles = document.getElementById('resultFiles')
 const previewPanel = document.getElementById('previewPanel')
 const previewTitle = document.getElementById('previewTitle')
+const selectedFileCount = document.getElementById('selectedFileCount')
+const selectedFileStatus = document.getElementById('selectedFileStatus')
 const previewHighlightCount = document.getElementById('previewHighlightCount')
 const toggleHighlights = document.getElementById('toggleHighlights')
 const previewNote = document.getElementById('previewNote')
@@ -60,11 +64,19 @@ function setInputControlsEnabled(enabled) {
 function renderWorkspace() {
   renderSelectedInput()
   renderResultFiles()
+  renderSelectedFileStrip()
   renderPreview(getSelectedPreview(workspace))
   summary.textContent = workspace.summary
   setResultActionsEnabled(workspace.artifactsAvailable)
   setInputControlsEnabled(!workspace.processingInFlight)
   applyHighlightVisibility()
+}
+
+function renderSelectedFileStrip() {
+  const selectedStatus = getSelectedFileStatus(workspace)
+  previewTitle.textContent = selectedStatus?.path ?? 'No file selected'
+  selectedFileCount.textContent = `${selectedStatus?.replacements ?? 0} redactions`
+  selectedFileStatus.textContent = getFileReviewLabel(selectedStatus)
 }
 
 pickInput.addEventListener('click', async () => {
@@ -195,7 +207,6 @@ function renderPreview(preview) {
   if (!preview) {
     previewPanel.hidden = false
     hidePreviewActionTooltip()
-    previewTitle.textContent = 'Select a processed file to inspect its before/after preview.'
     previewHighlightCount.textContent = '0 highlighted spans'
     previewNote.hidden = true
     previewNote.textContent = ''
@@ -251,18 +262,17 @@ function renderResultFiles() {
     const provenance = status.extractionProvenance ?? status.extraction_provenance ?? ''
     const outputPath = status.outputPath ?? status.output_path ?? ''
 
-    const details = [
-      `${replacements} replacements`,
-      reviewSensitive ? 'review-sensitive' : 'no review flags',
-      provenance ? `provenance: ${provenance}` : null,
-      omissions ? 'non-text omissions' : null,
-      degraded ? 'text degraded' : null,
-      structuralLoss ? 'structural loss suspected' : null,
-      lowConfidence ? 'low-confidence review' : null,
-      outputPath ? `output: ${outputPath}` : null
-    ]
-      .filter(Boolean)
-      .join(' · ')
+    const details = getFileReviewLabel({
+      status: kind,
+      replacements,
+      reviewSensitive,
+      nonTextOmissionsDetected: omissions,
+      textDegradedDetected: degraded,
+      structuralLossSuspected: structuralLoss,
+      lowConfidenceReviewRequired: lowConfidence,
+      extractionProvenance: provenance,
+      outputPath
+    })
 
     const item = fileListItem(path, kind, details)
     const previewIndex = workspace.filePreviews.findIndex((preview) => (preview.path ?? '') === path)

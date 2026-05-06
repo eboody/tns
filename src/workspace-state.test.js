@@ -5,7 +5,9 @@ import {
   createWorkspaceState,
   failProcessing,
   finishProcessing,
+  getFileReviewLabel,
   getSelectedPreview,
+  getSelectedFileStatus,
   replacePreviewArtifacts,
   selectPreviewPath,
   setSelectedInput,
@@ -102,4 +104,22 @@ test('failure clears preview state and leaves artifacts unavailable', () => {
 test('highlight visibility toggles through workspace state', () => {
   const state = toggleWorkspaceHighlights(createWorkspaceState('ready'))
   assert.equal(state.highlightsVisible, false)
+})
+
+test('selected file status follows the selected preview path', () => {
+  let state = finishProcessing(createWorkspaceState('ready'), {
+    summary: 'done',
+    fileStatuses: [
+      { path: '/tmp/a.md', replacements: 1, status: 'processed' },
+      { path: '/tmp/b.md', replacements: 2, status: 'processed', reviewSensitive: true }
+    ],
+    filePreviews: [{ path: '/tmp/a.md' }, { path: '/tmp/b.md' }],
+    outputPath: '/tmp/out',
+    auditOutputPath: '/tmp/audit'
+  })
+
+  state = selectPreviewPath(state, '/tmp/b.md')
+
+  assert.equal(getSelectedFileStatus(state)?.path, '/tmp/b.md')
+  assert.equal(getFileReviewLabel(getSelectedFileStatus(state)), 'Needs manual review')
 })

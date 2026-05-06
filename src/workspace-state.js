@@ -103,3 +103,33 @@ export function toggleWorkspaceHighlights(state) {
 export function getSelectedPreview(state) {
   return state.filePreviews.find((preview) => (preview.path ?? '') === state.selectedPreviewPath) ?? null
 }
+
+export function getSelectedFileStatus(state) {
+  return state.fileStatuses.find((status) => (status.path ?? '') === state.selectedPreviewPath) ?? state.fileStatuses[0] ?? null
+}
+
+export function getFileReviewLabel(status) {
+  if (!status) {
+    return 'Waiting for input'
+  }
+
+  const kind = status.status ?? 'unknown'
+  const needsReview =
+    status.reviewSensitive ??
+    status.review_sensitive ??
+    status.lowConfidenceReviewRequired ??
+    status.low_confidence_review_required ??
+    status.nonTextOmissionsDetected ??
+    status.non_text_omissions_detected ??
+    status.textDegradedDetected ??
+    status.text_degraded_detected ??
+    status.structuralLossSuspected ??
+    status.structural_loss_suspected ??
+    false
+
+  if (kind === 'unsupported' || kind === 'extraction_failed' || kind === 'skipped') {
+    return 'Needs attention'
+  }
+
+  return needsReview ? 'Needs manual review' : 'Ready'
+}
