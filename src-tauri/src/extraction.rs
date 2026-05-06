@@ -6,8 +6,6 @@ use crate::{
     audit::ExtractionStatus, docx_extract, error::AppError, error::Result, pdf_extract,
 };
 
-const OMITTED_NON_TEXT_CONTENT: &str = "[OMITTED_NON_TEXT_CONTENT]";
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ExtractionProvenance {
@@ -120,11 +118,13 @@ pub fn extract_input(input: &Path) -> Result<ExtractedInput> {
                 source,
             }),
         Some("docx") => {
-            let text = docx_extract::extract_docx_to_markdown(input)?;
-            let non_text_omissions_detected = text.contains(OMITTED_NON_TEXT_CONTENT);
+            let extracted = docx_extract::extract_docx(input)?;
             Ok(ExtractedInput {
-                text,
-                fidelity: ExtractionFidelity::docx(non_text_omissions_detected, false),
+                text: extracted.text,
+                fidelity: ExtractionFidelity::docx(
+                    extracted.non_text_omissions_detected,
+                    extracted.structural_loss_suspected,
+                ),
             })
         }
         Some("pdf") => {

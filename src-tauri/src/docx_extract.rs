@@ -10,7 +10,18 @@ use crate::error::{AppError, Result};
 
 const OMITTED_NON_TEXT_CONTENT: &str = "[OMITTED_NON_TEXT_CONTENT]";
 
+#[derive(Debug, Clone)]
+pub struct DocxExtraction {
+    pub text: String,
+    pub non_text_omissions_detected: bool,
+    pub structural_loss_suspected: bool,
+}
+
 pub fn extract_docx_to_markdown(path: &Path) -> Result<String> {
+    Ok(extract_docx(path)?.text)
+}
+
+pub fn extract_docx(path: &Path) -> Result<DocxExtraction> {
     let file = File::open(path).map_err(|source| AppError::ReadFile {
         path: path.to_path_buf(),
         source,
@@ -30,7 +41,7 @@ pub fn extract_docx_to_markdown(path: &Path) -> Result<String> {
     parse_document_xml_to_markdown(&document_xml)
 }
 
-fn parse_document_xml_to_markdown(xml: &str) -> Result<String> {
+fn parse_document_xml_to_markdown(xml: &str) -> Result<DocxExtraction> {
     let mut reader = Reader::from_str(xml);
 
     let mut paragraphs = Vec::new();
@@ -38,6 +49,7 @@ fn parse_document_xml_to_markdown(xml: &str) -> Result<String> {
     let mut in_paragraph = false;
     let mut in_text = false;
     let mut saw_non_text = false;
+    let mut structural_loss_suspected = false;
 
     loop {
         match reader.read_event() {
@@ -57,6 +69,9 @@ fn parse_document_xml_to_markdown(xml: &str) -> Result<String> {
                         saw_non_text = true;
                     }
                 }
+                b"w:tbl" | b"w:tr" | b"w:tc" | b"w:numPr" => {
+                    structural_loss_suspected = true;
+                }
                 _ => {}
             },
             Ok(Event::Empty(e)) => match e.name().as_ref() {
@@ -74,6 +89,9 @@ fn parse_document_xml_to_markdown(xml: &str) -> Result<String> {
                     if in_paragraph && !current_paragraph.ends_with('\n') {
                         current_paragraph.push('\n');
                     }
+                }
+                b"w:tbl" | b"w:tr" | b"w:tc" | b"w:numPr" => {
+                    structural_loss_suspected = true;
                 }
                 _ => {}
             },
@@ -119,7 +137,12 @@ fn parse_document_xml_to_markdown(xml: &str) -> Result<String> {
         }
     }
 
-    Ok(paragraphs.join("\n\n"))
+    let text = paragraphs.join("\n\n");
+    Ok(DocxExtraction {
+        non_text_omissions_detected: text.contains(OMITTED_NON_TEXT_CONTENT),
+        structural_loss_suspected,
+        text,
+    })
 }
 
 fn normalize_paragraph_text(text: &str) -> String {
@@ -149,9 +172,11 @@ mod tests {
 
         let markdown = parse_document_xml_to_markdown(xml).unwrap();
         assert_eq!(
-            markdown,
+            markdown.text,
             "Hello world\n\nImage follows [OMITTED_NON_TEXT_CONTENT]"
         );
+        assert!(markdown.non_text_omissions_detected);
+        assert!(!markdown.structural_loss_suspected);
     }
 
     #[test]
@@ -174,7 +199,8 @@ mod tests {
         "#;
 
         let markdown = parse_document_xml_to_markdown(xml).unwrap();
-        assert_eq!(markdown, "Name: Jane Doe\n\nEvaluation Date(s): 12/17/2025 12/19/2025");
+        assert_eq!(markdown.text, "Name: Jane Doe\n\nEvaluation Date(s): 12/17/2025 12/19/2025");
+        assert!(!markdown.structural_loss_suspected);
     }
 
     #[test]
@@ -194,7 +220,8 @@ mod tests {
         "#;
 
         let markdown = parse_document_xml_to_markdown(xml).unwrap();
-        assert_eq!(markdown, "Provider Shina Halavi, PhD\nPacific Ocean Pediatrics");
+        assert_eq!(markdown.text, "Provider Shina Halavi, PhD\nPacific Ocean Pediatrics");
+        assert!(!markdown.structural_loss_suspected);
     }
 
     #[test]
@@ -209,8 +236,29 @@ mod tests {
 
         let markdown = parse_document_xml_to_markdown(&fixture).unwrap();
         assert_eq!(
-            markdown,
+            markdown.text,
             "Name: Jane Doe\n\nEvaluation Date(s): 12/17/2025 12/19/2025\n\nProvider Shina Halavi, PhD\nPacific Ocean Pediatrics"
         );
+        assert!(!markdown.structural_loss_suspected);
+    }
+
+    #[test]
+    fn parse_document_xml_marks_table_structure_as_lossy() {
+        let xml = r#"
+            <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+              <w:body>
+                <w:tbl>
+                  <w:tr>
+                    <w:tc><w:p><w:r><w:t>Course</w:t></w:r></w:p></w:tc>
+                    <w:tc><w:p><w:r><w:t>Grade</w:t></w:r></w:p></w:tc>
+                  </w:tr>
+                </w:tbl>
+              </w:body>
+            </w:document>
+        "#;
+
+        let markdown = parse_document_xml_to_markdown(xml).unwrap();
+        assert_eq!(markdown.text, "Course\n\nGrade");
+        assert!(markdown.structural_loss_suspected);
     }
 }
