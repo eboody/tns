@@ -19,10 +19,15 @@
       </header>
 
       <section class="controls-panel">
+        <div class="input-panel-copy">
+          <h2>Choose input</h2>
+          <p>Pick a file or folder to start de-identification automatically. Review happens in the workspace below.</p>
+        </div>
+
         <label class="field-group field-group-grow">
           <span>Input file or folder</span>
           <div class="picker-row">
-            <input id="inputPath" type="text" placeholder="/path/to/file-or-folder" />
+            <input id="inputPath" type="text" placeholder="No file or folder selected yet" readonly />
             <button id="pickInput" type="button">Choose file</button>
             <button id="pickFolder" type="button">Choose folder</button>
           </div>
@@ -31,12 +36,8 @@
         <label class="field-group">
           <span>Optional config path</span>
           <input id="configPath" type="text" placeholder="/path/to/deid.toml" />
+          <small class="field-help">Changing the config reruns processing for the selected input.</small>
         </label>
-
-        <div class="actions-row">
-          <button id="runReview">Run review</button>
-          <button id="runReplace" type="button">Run replace</button>
-        </div>
       </section>
 
       <section class="workspace">

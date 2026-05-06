@@ -1,27 +1,22 @@
-# Ralph Runbook
+# Ralph runbook
 
-## Current initiative
+## Scope
 
-- Improve text extraction fidelity and honesty (GitHub parent issue #37)
+Execute GitHub issues #45-#52 one at a time as bounded slices for PRD #44.
 
-## Iteration guardrails
+## Guardrails
 
-- One logical issue slice per iteration.
-- Prefer invariant-shaping work before source-specific heuristics or UI polish.
-- Do not collapse "text exists" into "clean extraction".
-- Keep normalization separate from quality judgment.
-- Keep offsets aligned with the final extracted-text surface shown to the user.
-- Treat OCR as a real supported direction for this initiative, including fallback and redundancy, but keep provenance explicit.
-- Do not claim full semantic layout reconstruction for PDF, DOCX tables, or OCR transcripts.
+- Prefer frontend-first changes unless a backend contract change is required.
+- Preserve persisted preview edit correctness.
+- Keep one logical issue per iteration.
 
-## Required feedback loops for each implementation slice
+## Feedback loops
 
-1. `cargo test --manifest-path src-tauri/Cargo.toml`
-2. `cargo check --manifest-path src-tauri/Cargo.toml`
-3. `npm run build` only if a slice changes desktop UI or frontend assets
+- `npm run build`
+- `cargo test`
+- Targeted browser/UI verification for shell changes when practical
 
-## Current scope note
+## Commit/close policy
 
-- Issue #38 is the first active AFK slice.
-- Issues #40, #41, and #42 should reuse the same canonical fidelity model rather than invent source-local flags.
-- Issue #43 is the final triage/UI integration slice after the core fidelity and provenance work is in place.
+- Commit after each completed issue.
+- Close the corresponding GitHub issue after verification and commit.

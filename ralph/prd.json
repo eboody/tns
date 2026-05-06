@@ -1,87 +1,107 @@
 [
   {
-    "id": "issue-38",
+    "id": "45",
+    "category": "integration",
+    "priority": "high",
+    "risk": "high",
+    "description": "Replace the mode chooser with a single input-driven auto-process flow that populates persisted-output review results without run buttons.",
+    "verify": [
+      "Choose a file or folder from the desktop shell",
+      "Observe processing begin without a separate run button",
+      "Observe file results and preview-ready data populate the workspace"
+    ],
+    "passes": true,
+    "notes": "Completed 2026-05-05: input selection now auto-processes via persisted-output workflow with no run buttons."
+  },
+  {
+    "id": "46",
     "category": "architecture",
     "priority": "high",
-    "risk": "high",
-    "description": "Define one canonical extraction fidelity model that truthfully represents provenance, omission, structural loss, degradation suspicion, and low-confidence review posture.",
-    "verify": [
-      "Run cargo test --manifest-path src-tauri/Cargo.toml",
-      "Run cargo check --manifest-path src-tauri/Cargo.toml",
-      "Verify representative clean and risky extraction cases produce canonical fidelity states without falsely reporting clean extraction"
-    ],
-    "passes": true,
-    "notes": "Completed by introducing a canonical extraction fidelity model with provenance, structural-loss suspicion, omission, degradation, and low-confidence posture, then routing existing extraction consumers through that model without broadening user-facing output yet."
-  },
-  {
-    "id": "issue-39",
-    "category": "integration",
-    "priority": "high",
     "risk": "medium",
-    "description": "Surface canonical fidelity state through review summaries and machine-readable audit output so users see one consistent extraction trust story.",
+    "description": "Introduce a desktop workspace view-model for coherent rendering.",
     "verify": [
-      "Run cargo test --manifest-path src-tauri/Cargo.toml",
-      "Run cargo check --manifest-path src-tauri/Cargo.toml",
-      "Verify review and audit outputs match for representative clean and risky extraction cases"
+      "Render shell from one explicit workspace state model",
+      "Keep selected-file and artifact state coherent across updates"
     ],
-    "passes": true,
-    "notes": "Completed by surfacing canonical extraction fidelity through review summaries and audit JSON, including provenance and low-confidence/structural-loss signals while keeping the slice bounded away from broader triage UI work."
+    "passes": false,
+    "notes": "Follow-up after issue 45"
   },
   {
-    "id": "issue-40",
-    "category": "extraction",
-    "priority": "high",
-    "risk": "medium",
-    "description": "Make DOCX extraction explicitly report omitted non-text content and structural flattening so review trust matches what the extractor really preserved.",
-    "verify": [
-      "Run cargo test --manifest-path src-tauri/Cargo.toml",
-      "Run cargo check --manifest-path src-tauri/Cargo.toml",
-      "Verify representative DOCX fixtures surface omission and flattening signals end-to-end"
-    ],
-    "passes": true,
-    "notes": "Completed by teaching DOCX extraction to return fidelity evidence directly, including explicit non-text omissions and structural-loss suspicion for flattened constructs such as tables, then flowing that through the shared fidelity model."
-  },
-  {
-    "id": "issue-41",
-    "category": "extraction",
-    "priority": "high",
-    "risk": "high",
-    "description": "Detect low-confidence and degraded PDF extraction separately from hard extraction failure, including token-fusion and page-furniture style hazards.",
-    "verify": [
-      "Run cargo test --manifest-path src-tauri/Cargo.toml",
-      "Run cargo check --manifest-path src-tauri/Cargo.toml",
-      "Verify clean, degraded, and non-extractable PDF fixtures produce distinct observable outcomes"
-    ],
-    "passes": true,
-    "notes": "Completed by separating hard PDF extraction failure from successful-but-risky extraction and making low-confidence review posture come from explicit hazard detection such as token fusion and repeated page furniture rather than mere normalization changes."
-  },
-  {
-    "id": "issue-42",
-    "category": "integration",
-    "priority": "high",
-    "risk": "high",
-    "description": "Introduce OCR-backed extraction provenance with redundancy and fallback so native extraction can be supplemented or replaced when untrustworthy.",
-    "verify": [
-      "Run cargo test --manifest-path src-tauri/Cargo.toml",
-      "Run cargo check --manifest-path src-tauri/Cargo.toml",
-      "Verify at least one fallback or redundancy case changes observable provenance and review posture"
-    ],
-    "passes": true,
-    "notes": "Completed as a bounded OCR fallback slice: PDFs without native extractable text can now fall back to local OCR tooling, provenance is marked as OCR-backed, and review/audit output explicitly warns when OCR participated."
-  },
-  {
-    "id": "issue-43",
+    "id": "47",
     "category": "ui",
     "priority": "medium",
     "risk": "medium",
-    "description": "Make degraded, OCR-involved, omitted-content, and low-confidence files triageable in directory summaries and the desktop results workflow.",
+    "description": "Turn the left rail into a focused input and file navigation surface.",
     "verify": [
-      "Run cargo test --manifest-path src-tauri/Cargo.toml",
-      "Run cargo check --manifest-path src-tauri/Cargo.toml",
-      "Run npm run build if frontend assets change",
-      "Verify representative DOCX, PDF, and OCR-involved files are surfaced correctly in summaries and desktop views"
+      "Show primary input surface in the left rail",
+      "Allow moving between files from the file list"
     ],
-    "passes": true,
-    "notes": "Completed by surfacing provenance, structural-loss suspicion, low-confidence review posture, and OCR involvement in run-level summaries, desktop file rows, and preview notes so risky files are triageable without opening each one blindly."
+    "passes": false,
+    "notes": "Blocked by 45"
+  },
+  {
+    "id": "48",
+    "category": "ui",
+    "priority": "medium",
+    "risk": "medium",
+    "description": "Make the selected-file strip the canonical source of selected-file status.",
+    "verify": [
+      "Show filename, redaction count, and review status in one place",
+      "Remove duplicate status surfaces"
+    ],
+    "passes": false,
+    "notes": "Blocked by 47"
+  },
+  {
+    "id": "49",
+    "category": "ui",
+    "priority": "medium",
+    "risk": "low",
+    "description": "Reduce warning noise to explanation-only notices.",
+    "verify": [
+      "Render notice only for exceptional review context",
+      "Avoid repeating selected-file status in warnings"
+    ],
+    "passes": false,
+    "notes": "Blocked by 48"
+  },
+  {
+    "id": "50",
+    "category": "integration",
+    "priority": "high",
+    "risk": "high",
+    "description": "Preserve and clarify live persisted edit behavior in preview.",
+    "verify": [
+      "Add/remove redactions from preview",
+      "Observe persisted output and audit artifacts update immediately"
+    ],
+    "passes": false,
+    "notes": "Blocked by 45"
+  },
+  {
+    "id": "51",
+    "category": "integration",
+    "priority": "medium",
+    "risk": "low",
+    "description": "Keep output and audit actions aligned with artifact availability.",
+    "verify": [
+      "Buttons stay disabled before artifacts exist",
+      "Buttons open artifact locations after a successful run"
+    ],
+    "passes": false,
+    "notes": "Blocked by 45"
+  },
+  {
+    "id": "52",
+    "category": "contract",
+    "priority": "medium",
+    "risk": "medium",
+    "description": "Normalize desktop response contracts and structured review metadata.",
+    "verify": [
+      "Use one response-field naming convention",
+      "Expose structured review metadata needed by the streamlined shell"
+    ],
+    "passes": false,
+    "notes": "Blocked by 49 and 46"
   }
 ]

@@ -20,17 +20,16 @@ const previewActionTooltip = document.getElementById('previewActionTooltip')
 const previewActionLabel = document.getElementById('previewActionLabel')
 const previewActionButton = document.getElementById('previewActionButton')
 const summary = document.getElementById('summary')
-const runReview = document.getElementById('runReview')
-const runReplace = document.getElementById('runReplace')
 const openOutput = document.getElementById('openOutput')
 const openAudit = document.getElementById('openAudit')
 
-summary.textContent = 'Desktop shell loaded. Choose a file or folder, then run review or replace.'
+summary.textContent = 'Desktop shell loaded. Choose a file or folder to start local processing automatically.'
 let currentFilePreviews = []
 let currentFileStatuses = []
 let selectedPreviewPath = null
 let highlightsVisible = true
 let pendingPreviewAction = null
+let processingInFlight = false
 
 setResultActionsEnabled(false)
 renderSelectedInput()
@@ -45,6 +44,12 @@ toggleHighlights.addEventListener('click', () => {
 function setResultActionsEnabled(enabled) {
   openOutput.disabled = !enabled
   openAudit.disabled = !enabled
+}
+
+function setInputControlsEnabled(enabled) {
+  pickInput.disabled = !enabled
+  pickFolder.disabled = !enabled
+  configPath.disabled = !enabled
 }
 
 pickInput.addEventListener('click', async () => {
@@ -67,7 +72,7 @@ async function pickInputPath({ directory, label }) {
     if (typeof selected === 'string') {
       inputPath.value = selected
       renderSelectedInput()
-      summary.textContent = `Selected ${label}: ${selected}`
+      await processSelectedInput({ sourceLabel: label })
     } else {
       summary.textContent = `${capitalize(label)} selection cancelled.`
     }
@@ -80,8 +85,6 @@ function capitalize(value) {
   return value.charAt(0).toUpperCase() + value.slice(1)
 }
 
-inputPath.addEventListener('input', renderSelectedInput)
-
 function renderSelectedInput() {
   const value = inputPath.value.trim()
   selectedFiles.replaceChildren()
@@ -91,6 +94,57 @@ function renderSelectedInput() {
   }
 
   selectedFiles.appendChild(fileListItem(value, 'ready'))
+}
+
+async function processSelectedInput({ sourceLabel }) {
+  const value = inputPath.value.trim()
+  if (!value || processingInFlight) {
+    return
+  }
+
+  processingInFlight = true
+  summary.textContent = `Processing selected ${sourceLabel}...`
+  setInputControlsEnabled(false)
+  setResultActionsEnabled(false)
+  renderResultFiles([], [])
+
+  try {
+    const result = await invoke('run_replace_job', {
+      input: value,
+      config: configPath.value || null,
+      includePatterns: [],
+      excludePatterns: []
+    })
+
+    const replacements = result.replacements
+    const nonTextOmissionsDetected =
+      result.nonTextOmissionsDetected ?? result.non_text_omissions_detected ?? false
+    const reviewSummary = result.reviewSummary ?? result.review_summary ?? ''
+    const coverageNote = result.coverageNote ?? result.coverage_note ?? ''
+    const outputPath = result.outputPath ?? result.output_path ?? ''
+    const auditOutputPath = result.auditOutputPath ?? result.audit_output_path ?? ''
+    const fileStatuses = result.fileStatuses ?? result.file_statuses ?? []
+    const filePreviews = result.filePreviews ?? result.file_previews ?? []
+
+    summary.textContent = [
+      `mode: live review (processed automatically after ${sourceLabel} selection)`,
+      `replacements: ${replacements}`,
+      `non-text omissions detected: ${nonTextOmissionsDetected}`,
+      `output path: ${outputPath}`,
+      `audit path: ${auditOutputPath}`,
+      '',
+      reviewSummary,
+      '',
+      `note: ${coverageNote}`
+    ].join('\n')
+    renderResultFiles(fileStatuses, filePreviews)
+    setResultActionsEnabled(true)
+  } catch (error) {
+    summary.textContent = `Error: ${String(error)}`
+  } finally {
+    processingInFlight = false
+    setInputControlsEnabled(true)
+  }
 }
 
 function fileListItem(primary, badge, secondary) {
@@ -455,90 +509,12 @@ document.addEventListener('click', (event) => {
   hidePreviewActionTooltip()
 })
 
-runReview.addEventListener('click', async () => {
+configPath.addEventListener('change', async () => {
   if (!inputPath.value.trim()) {
-    summary.textContent = 'Please choose or enter an input file or folder first.'
     return
   }
 
-  summary.textContent = 'Running local review workflow...'
-  setResultActionsEnabled(false)
-  renderResultFiles([], [])
-
-  try {
-    const result = await invoke('run_review_job', {
-      input: inputPath.value,
-      config: configPath.value || null,
-      includePatterns: [],
-      excludePatterns: []
-    })
-
-    const replacements = result.replacements
-    const nonTextOmissionsDetected =
-      result.nonTextOmissionsDetected ?? result.non_text_omissions_detected ?? false
-    const reviewSummary = result.reviewSummary ?? result.review_summary ?? ''
-    const coverageNote = result.coverageNote ?? result.coverage_note ?? ''
-    const fileStatuses = result.fileStatuses ?? result.file_statuses ?? []
-
-    summary.textContent = [
-      'mode: review (no files written)',
-      `replacements: ${replacements}`,
-      `non-text omissions detected: ${nonTextOmissionsDetected}`,
-      '',
-      reviewSummary,
-      '',
-      `note: ${coverageNote}`
-    ].join('\n')
-    renderResultFiles(fileStatuses, [])
-  } catch (error) {
-    summary.textContent = `Error: ${String(error)}`
-  }
-})
-
-runReplace.addEventListener('click', async () => {
-  if (!inputPath.value.trim()) {
-    summary.textContent = 'Please choose or enter an input file or folder first.'
-    return
-  }
-
-  summary.textContent = 'Running local replace workflow...'
-  setResultActionsEnabled(false)
-  renderResultFiles([], [])
-
-  try {
-    const result = await invoke('run_replace_job', {
-      input: inputPath.value,
-      config: configPath.value || null,
-      includePatterns: [],
-      excludePatterns: []
-    })
-
-    const replacements = result.replacements
-    const nonTextOmissionsDetected =
-      result.nonTextOmissionsDetected ?? result.non_text_omissions_detected ?? false
-    const reviewSummary = result.reviewSummary ?? result.review_summary ?? ''
-    const coverageNote = result.coverageNote ?? result.coverage_note ?? ''
-    const outputPath = result.outputPath ?? result.output_path ?? ''
-    const auditOutputPath = result.auditOutputPath ?? result.audit_output_path ?? ''
-    const fileStatuses = result.fileStatuses ?? result.file_statuses ?? []
-    const filePreviews = result.filePreviews ?? result.file_previews ?? []
-
-    summary.textContent = [
-      'mode: replace (files written)',
-      `replacements: ${replacements}`,
-      `non-text omissions detected: ${nonTextOmissionsDetected}`,
-      `output path: ${outputPath}`,
-      `audit path: ${auditOutputPath}`,
-      '',
-      reviewSummary,
-      '',
-      `note: ${coverageNote}`
-    ].join('\n')
-    renderResultFiles(fileStatuses, filePreviews)
-    setResultActionsEnabled(true)
-  } catch (error) {
-    summary.textContent = `Error: ${String(error)}`
-  }
+  await processSelectedInput({ sourceLabel: 'config' })
 })
 
 openOutput.addEventListener('click', async () => {
