@@ -131,7 +131,7 @@ mod tests {
         let pdftoppm = temp.path().join("fake-pdftoppm.sh");
         fs::write(
             &pdftoppm,
-            "#!/usr/bin/env bash\nprefix=\"${@: -1}\"\nprintf 'img' > \"${prefix}-1.png\"\nprintf 'img' > \"${prefix}-2.png\"\n",
+            "#!/usr/bin/env bash\nif [ \"$1\" = \"--help\" ]; then exit 0; fi\nprefix=\"${@: -1}\"\nprintf 'img' > \"${prefix}-1.png\"\nprintf 'img' > \"${prefix}-2.png\"\n",
         )
         .unwrap();
         let mut perms = fs::metadata(&pdftoppm).unwrap().permissions();
@@ -141,7 +141,7 @@ mod tests {
         let ocrs = temp.path().join("fake-ocrs.sh");
         fs::write(
             &ocrs,
-            "#!/usr/bin/env bash\ncase \"$1\" in\n  *-1.png) printf 'OCR page 1' ;;
+            "#!/usr/bin/env bash\nif [ \"$1\" = \"--help\" ]; then exit 0; fi\ncase \"$1\" in\n  *-1.png) printf 'OCR page 1' ;;
   *-2.png) printf 'OCR page 2' ;;
 esac\n",
         )
