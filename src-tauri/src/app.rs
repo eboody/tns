@@ -107,9 +107,21 @@ fn open_existing_path(app: &tauri::AppHandle, path: PathBuf) -> Result<(), Strin
         return Err(format!("Path no longer exists: {}", path.display()));
     }
 
+    let open_target = artifact_open_target(&path)?;
+
     app.opener()
-        .open_path(path.to_string_lossy().into_owned(), None::<&str>)
+        .open_path(open_target.to_string_lossy().into_owned(), None::<&str>)
         .map_err(|error| error.to_string())
+}
+
+fn artifact_open_target(path: &std::path::Path) -> Result<PathBuf, String> {
+    if path.is_dir() {
+        return Ok(path.to_path_buf());
+    }
+
+    path.parent()
+        .map(|parent| parent.to_path_buf())
+        .ok_or_else(|| format!("Path has no parent directory to open: {}", path.display()))
 }
 
 fn configure_default_auto_ner_assets(app: &AppHandle) {
@@ -177,4 +189,27 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::artifact_open_target;
+    use std::{fs, path::Path};
+    use tempfile::tempdir;
+
+    #[test]
+    fn artifact_open_target_returns_parent_directory_for_file_paths() {
+        let path = Path::new("/tmp/output/note.deidentified.md");
+
+        assert_eq!(artifact_open_target(path).unwrap(), Path::new("/tmp/output"));
+    }
+
+    #[test]
+    fn artifact_open_target_preserves_directory_paths() {
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("output");
+        fs::create_dir_all(&path).unwrap();
+
+        assert_eq!(artifact_open_target(&path).unwrap(), path);
+    }
 }
