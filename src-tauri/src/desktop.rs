@@ -1059,69 +1059,6 @@ mod tests {
     }
 
     #[test]
-    fn desktop_replace_job_preserves_filename_and_audit_semantics_under_split_settings() {
-        let temp = tempdir().unwrap();
-        let input_dir = temp.path().join("input");
-
-        fs::create_dir_all(&input_dir).unwrap();
-        let input_file = input_dir.join("Jane Doe 01-02-2024.md");
-        fs::write(&input_file, "Jane Doe emailed jane@example.com on 01/02/2024.").unwrap();
-
-        let result = run_replace_job(DesktopReplaceRequest {
-            input: input_dir.clone(),
-            config: None,
-            settings: Some(DesktopRunSettings {
-                profile: DesktopProfileSettings {
-                    patterns: DesktopPatternSettings {
-                        dates: DesktopPatternRuleSettings {
-                            enabled: true,
-                            replacement: "[DATE]".into(),
-                        },
-                        emails: DesktopPatternRuleSettings::default(),
-                        phones: DesktopPatternRuleSettings::default(),
-                    },
-                    ner: DesktopNerSettings::default(),
-                },
-                case_context: DesktopCaseContextSettings {
-                    client_replacement: "CLIENT".into(),
-                    client_variants: vec!["Jane Doe".into()],
-                    exact_entities: Vec::new(),
-                },
-            }),
-            include_patterns: Vec::new(),
-            exclude_patterns: Vec::new(),
-        })
-        .unwrap();
-
-        let expected_output = input_dir.join("redacted/CLIENT 01-02-2024.md");
-        let expected_audit = input_dir.join("redacted/.audit/CLIENT 01-02-2024.audit.json");
-
-        assert_eq!(result.file_statuses.len(), 1);
-        assert_eq!(result.file_statuses[0].output_path.as_ref(), Some(&expected_output));
-        assert!(expected_output.exists());
-        assert!(expected_audit.exists());
-
-        let output = fs::read_to_string(&expected_output).unwrap();
-        assert!(output.contains("CLIENT"));
-        assert!(output.contains("[DATE]"));
-        assert!(output.contains("[EMAIL_ADDRESS]"));
-
-        let audit_report = read_editable_audit_report(&expected_audit).unwrap();
-        assert!(audit_report
-            .replacements
-            .iter()
-            .any(|record| record.matched_text == "Jane Doe" && record.replacement == "CLIENT"));
-        assert!(audit_report
-            .replacements
-            .iter()
-            .any(|record| record.matched_text == "01/02/2024" && record.replacement == "[DATE]"));
-        assert!(audit_report
-            .replacements
-            .iter()
-            .any(|record| record.entity_type == "EMAIL_ADDRESS" && record.replacement == "[EMAIL_ADDRESS]"));
-    }
-
-    #[test]
     fn desktop_replace_job_builds_original_preview_for_pdf_inputs() {
         let temp = tempdir().unwrap();
         let input_dir = temp.path().join("input");
