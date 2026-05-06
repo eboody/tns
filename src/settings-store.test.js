@@ -7,7 +7,6 @@ import {
   DEFAULT_PROFILE_ID,
   getActiveProfile,
   getCurrentCaseContext,
-  hasPendingMigrationNotice,
   loadAppSettings,
   normalizeAppSettings,
   saveAppSettings,
@@ -60,8 +59,7 @@ test('saveAppSettings persists normalized split settings', () => {
 
   assert.deepEqual(saved, {
     globalSettings: {
-      activeProfileId: 'general',
-      migrationNoticePending: false
+      activeProfileId: 'general'
     },
     profiles: [{
       id: 'general',
@@ -83,13 +81,7 @@ test('saveAppSettings persists normalized split settings', () => {
 })
 
 test('normalizeAppSettings falls back for malformed values', () => {
-  assert.deepEqual(normalizeAppSettings({ ner: { minConfidence: null }, exactEntities: [42] }), {
-    ...DEFAULT_APP_SETTINGS,
-    globalSettings: {
-      ...DEFAULT_APP_SETTINGS.globalSettings,
-      migrationNoticePending: true
-    }
-  })
+  assert.deepEqual(normalizeAppSettings({ ner: { minConfidence: null }, exactEntities: [42] }), DEFAULT_APP_SETTINGS)
 })
 
 test('normalizeAppSettings migrates legacy mixed settings into General profile and current case context', () => {
@@ -106,7 +98,6 @@ test('normalizeAppSettings migrates legacy mixed settings into General profile a
   })
 
   assert.equal(normalized.globalSettings.activeProfileId, DEFAULT_PROFILE_ID)
-  assert.equal(normalized.globalSettings.migrationNoticePending, true)
   assert.deepEqual(normalized.profiles, [{
     id: 'general',
     name: 'General',
@@ -122,7 +113,6 @@ test('normalizeAppSettings migrates legacy mixed settings into General profile a
     clientVariants: 'Jane Doe',
     exactEntities: [{ entityType: 'provider', replacement: '[PROVIDER]', variants: 'Dr. Smith' }]
   })
-  assert.equal(hasPendingMigrationNotice(normalized), true)
 })
 
 test('updateActiveProfileAndCaseContext updates only the split active settings surfaces', () => {

@@ -18,8 +18,7 @@ const DEFAULT_PROFILE = {
 
 export const DEFAULT_APP_SETTINGS = {
   globalSettings: {
-    activeProfileId: DEFAULT_PROFILE_ID,
-    migrationNoticePending: false
+    activeProfileId: DEFAULT_PROFILE_ID
   },
   profiles: [DEFAULT_PROFILE],
   currentCaseContext: {
@@ -65,16 +64,11 @@ export function normalizeAppSettings(settings = {}) {
 
   return {
     globalSettings: {
-      activeProfileId: normalizeActiveProfileId(settings.globalSettings?.activeProfileId, profiles),
-      migrationNoticePending: legacySettings !== null || Boolean(settings.globalSettings?.migrationNoticePending)
+      activeProfileId: normalizeActiveProfileId(settings.globalSettings?.activeProfileId, profiles)
     },
     profiles,
     currentCaseContext: normalizeCaseContext(settings.currentCaseContext ?? legacySettings ?? {})
   }
-}
-
-export function hasPendingMigrationNotice(settings) {
-  return Boolean(normalizeAppSettings(settings).globalSettings.migrationNoticePending)
 }
 
 export function getActiveProfile(settings) {
