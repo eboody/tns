@@ -6,6 +6,7 @@ pub mod desktop;
 pub mod docx_extract;
 pub mod error;
 pub mod extraction;
+pub mod ocr_extract;
 pub mod pdf_extract;
 mod safe_harbor_policy;
 
@@ -577,6 +578,11 @@ fn build_review_summary(
         lines.push("text extraction fidelity degraded: yes".to_string());
         lines.push(
             "warning: extracted output may be limited by source text fidelity; review spacing and label boundaries carefully.".to_string(),
+        );
+    }
+    if matches!(fidelity.provenance, extraction::ExtractionProvenance::OcrText) {
+        lines.push(
+            "warning: OCR participated in extraction, so spelling, casing, and layout fidelity may be imperfect.".to_string(),
         );
     }
     if fidelity.low_confidence_review_required {

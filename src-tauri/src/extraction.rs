@@ -3,7 +3,8 @@ use std::{fs, path::Path};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    audit::ExtractionStatus, docx_extract, error::AppError, error::Result, pdf_extract,
+    audit::ExtractionStatus, docx_extract, error::AppError, error::Result, ocr_extract,
+    pdf_extract,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -128,14 +129,29 @@ pub fn extract_input(input: &Path) -> Result<ExtractedInput> {
             })
         }
         Some("pdf") => {
-            let extracted = pdf_extract::extract_pdf(input)?;
-            Ok(ExtractedInput {
-                text: extracted.text,
-                fidelity: ExtractionFidelity::pdf(
-                    extracted.text_degraded_detected,
-                    extracted.low_confidence_review_required,
-                ),
-            })
+            match pdf_extract::extract_pdf(input) {
+                Ok(extracted) => Ok(ExtractedInput {
+                    text: extracted.text,
+                    fidelity: ExtractionFidelity::pdf(
+                        extracted.text_degraded_detected,
+                        extracted.low_confidence_review_required,
+                    ),
+                }),
+                Err(AppError::Analysis(message))
+                    if message.contains("no extractable text")
+                        || message.contains("failed to extract PDF text") =>
+                {
+                    if let Some(ocr) = ocr_extract::extract_pdf_via_ocr(input)? {
+                        Ok(ExtractedInput {
+                            text: ocr.text,
+                            fidelity: ExtractionFidelity::ocr(false, true, false),
+                        })
+                    } else {
+                        Err(AppError::Analysis(message))
+                    }
+                }
+                Err(error) => Err(error),
+            }
         }
         _ => Err(AppError::UnsupportedInputFormat(input.to_path_buf())),
     }
