@@ -257,10 +257,6 @@ main {
   gap: 12px;
 }
 
-.settings-section-header .secondary-button {
-  flex: 0 0 auto;
-}
-
 .settings-section-header p {
   margin: 0.35rem 0 0;
   color: var(--text-dim);

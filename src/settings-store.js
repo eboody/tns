@@ -92,26 +92,6 @@ export function setActiveProfileId(settings, profileId) {
   })
 }
 
-export function createProfileFromActive(settings, { name, profile }) {
-  const normalized = normalizeAppSettings(settings)
-  const activeProfile = getActiveProfile(normalized)
-  const nextProfile = normalizeProfile({
-    ...activeProfile,
-    ...profile,
-    id: buildProfileId(name, normalized.profiles),
-    name
-  })
-
-  return normalizeAppSettings({
-    ...normalized,
-    globalSettings: {
-      ...normalized.globalSettings,
-      activeProfileId: nextProfile.id
-    },
-    profiles: [...normalized.profiles, nextProfile]
-  })
-}
-
 export function updateActiveProfileAndCaseContext(settings, { profile, caseContext }) {
   const normalized = normalizeAppSettings(settings)
 
@@ -220,20 +200,4 @@ function normalizeConfidence(value) {
   }
 
   return typeof value === 'string' && value.trim() ? value.trim() : DEFAULT_PROFILE.ner.minConfidence
-}
-
-function buildProfileId(name, profiles) {
-  const base = normalizeString(name)
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '') || 'profile'
-
-  let candidate = base
-  let suffix = 2
-  while (profiles.some((profile) => profile.id === candidate)) {
-    candidate = `${base}-${suffix}`
-    suffix += 1
-  }
-
-  return candidate
 }
