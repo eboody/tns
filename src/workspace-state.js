@@ -1,7 +1,6 @@
 export function createWorkspaceState(summary) {
   return {
     inputPath: '',
-    configPath: '',
     fileStatuses: [],
     filePreviews: [],
     selectedPreviewPath: null,
@@ -16,13 +15,6 @@ export function setSelectedInput(state, inputPath) {
   return {
     ...state,
     inputPath
-  }
-}
-
-export function setConfigPath(state, configPath) {
-  return {
-    ...state,
-    configPath
   }
 }
 
