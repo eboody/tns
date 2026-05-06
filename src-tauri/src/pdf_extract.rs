@@ -1,4 +1,7 @@
-use std::path::Path;
+use std::{
+    path::Path,
+    process::{Command, Stdio},
+};
 
 use lopdf::Document;
 use regex::Regex;
@@ -17,21 +20,10 @@ pub fn extract_pdf_to_markdown(path: &Path) -> Result<String> {
 }
 
 pub fn extract_pdf(path: &Path) -> Result<PdfExtraction> {
-    let doc = Document::load(path)
-        .map_err(|error| AppError::Analysis(format!("failed to load PDF: {error}")))?;
-
-    let pages = doc.get_pages();
-    let page_numbers: Vec<u32> = pages.keys().copied().collect();
-    let text = doc
-        .extract_text(&page_numbers)
-        .map_err(|error| AppError::Analysis(format!("failed to extract PDF text: {error}")))?;
-
-    if text.trim().is_empty() {
-        return Err(AppError::Analysis(
-            "PDF contains no extractable text; treat as non-extractable or low-confidence"
-                .to_string(),
-        ));
-    }
+    let text = resolve_pdf_text_attempts([
+        extract_pdf_text_with_lopdf(path),
+        extract_pdf_text_with_pdftotext(path, "pdftotext"),
+    ])?;
 
     let token_fusion_suspected = token_fusion_suspected(&text);
     let repeated_page_furniture_suspected = repeated_page_furniture_suspected(&text);
@@ -41,6 +33,131 @@ pub fn extract_pdf(path: &Path) -> Result<PdfExtraction> {
         low_confidence_review_required: token_fusion_suspected || repeated_page_furniture_suspected,
         text: normalized,
     })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PdfTextAttempt {
+    Extracted(String),
+    Empty { extractor: String },
+    Failed { extractor: String, message: String },
+    Unavailable { extractor: String },
+}
+
+fn resolve_pdf_text_attempts(attempts: impl IntoIterator<Item = PdfTextAttempt>) -> Result<String> {
+    let mut attempted_extractors = Vec::new();
+    let mut failure_details = Vec::new();
+
+    for attempt in attempts {
+        match attempt {
+            PdfTextAttempt::Extracted(text) => return Ok(text),
+            PdfTextAttempt::Empty { extractor } => {
+                attempted_extractors.push(extractor.clone());
+                failure_details.push(format!("{extractor}: no text extracted"));
+            }
+            PdfTextAttempt::Failed { extractor, message } => {
+                attempted_extractors.push(extractor.clone());
+                failure_details.push(format!("{extractor}: {message}"));
+            }
+            PdfTextAttempt::Unavailable { extractor } => {
+                failure_details.push(format!("{extractor}: tool unavailable"));
+            }
+        }
+    }
+
+    let attempted_summary = if attempted_extractors.is_empty() {
+        "available PDF text extractors".to_string()
+    } else {
+        attempted_extractors.join(", ")
+    };
+    let detail_suffix = if failure_details.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", failure_details.join("; "))
+    };
+
+    Err(AppError::Analysis(format!(
+        "PDF contains no extractable text after trying {attempted_summary}{detail_suffix}; treat as non-extractable or low-confidence"
+    )))
+}
+
+fn extract_pdf_text_with_lopdf(path: &Path) -> PdfTextAttempt {
+    let doc = match Document::load(path) {
+        Ok(doc) => doc,
+        Err(error) => {
+            return PdfTextAttempt::Failed {
+                extractor: "lopdf".to_string(),
+                message: format!("failed to load PDF: {error}"),
+            };
+        }
+    };
+
+    let pages = doc.get_pages();
+    let page_numbers: Vec<u32> = pages.keys().copied().collect();
+    match doc.extract_text(&page_numbers) {
+        Ok(text) if text.trim().is_empty() => PdfTextAttempt::Empty {
+            extractor: "lopdf".to_string(),
+        },
+        Ok(text) => PdfTextAttempt::Extracted(text),
+        Err(error) => PdfTextAttempt::Failed {
+            extractor: "lopdf".to_string(),
+            message: format!("failed to extract PDF text: {error}"),
+        },
+    }
+}
+
+fn extract_pdf_text_with_pdftotext(path: &Path, tool: &str) -> PdfTextAttempt {
+    if !tool_available(tool) {
+        return PdfTextAttempt::Unavailable {
+            extractor: tool.to_string(),
+        };
+    }
+
+    let output = match Command::new(tool)
+        .arg("-layout")
+        .arg("-nopgbrk")
+        .arg(path)
+        .arg("-")
+        .output()
+    {
+        Ok(output) => output,
+        Err(error) => {
+            return PdfTextAttempt::Failed {
+                extractor: tool.to_string(),
+                message: format!("failed to run {tool}: {error}"),
+            };
+        }
+    };
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let detail = if stderr.is_empty() {
+            format!("{tool} exited with status {}", output.status)
+        } else {
+            stderr
+        };
+        return PdfTextAttempt::Failed {
+            extractor: tool.to_string(),
+            message: detail,
+        };
+    }
+
+    let text = String::from_utf8_lossy(&output.stdout).into_owned();
+    if text.trim().is_empty() {
+        PdfTextAttempt::Empty {
+            extractor: tool.to_string(),
+        }
+    } else {
+        PdfTextAttempt::Extracted(text)
+    }
+}
+
+fn tool_available(tool: &str) -> bool {
+    Command::new(tool)
+        .arg("-h")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success() || !status.success())
 }
 
 fn token_fusion_suspected(text: &str) -> bool {
@@ -101,9 +218,70 @@ fn normalize_extracted_pdf_text(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::{fs, path::PathBuf};
+    use std::{fs, os::unix::fs::PermissionsExt, path::PathBuf};
 
-    use super::{normalize_extracted_pdf_text, repeated_page_furniture_suspected, token_fusion_suspected};
+    use tempfile::tempdir;
+
+    use super::{
+        PdfTextAttempt, extract_pdf_text_with_pdftotext, normalize_extracted_pdf_text,
+        repeated_page_furniture_suspected, resolve_pdf_text_attempts, token_fusion_suspected,
+    };
+
+    #[test]
+    fn resolve_pdf_text_attempts_uses_fallback_text_when_primary_is_empty() {
+        let text = resolve_pdf_text_attempts([
+            PdfTextAttempt::Empty {
+                extractor: "lopdf".to_string(),
+            },
+            PdfTextAttempt::Extracted("fallback text".to_string()),
+        ])
+        .unwrap();
+
+        assert_eq!(text, "fallback text");
+    }
+
+    #[test]
+    fn resolve_pdf_text_attempts_reports_all_failures_when_no_strategy_succeeds() {
+        let error = resolve_pdf_text_attempts([
+            PdfTextAttempt::Failed {
+                extractor: "lopdf".to_string(),
+                message: "failed to extract PDF text: broken xref".to_string(),
+            },
+            PdfTextAttempt::Unavailable {
+                extractor: "pdftotext".to_string(),
+            },
+        ])
+        .unwrap_err();
+
+        let message = error.to_string();
+        assert!(message.contains("PDF contains no extractable text after trying lopdf"));
+        assert!(message.contains("lopdf: failed to extract PDF text: broken xref"));
+        assert!(message.contains("pdftotext: tool unavailable"));
+    }
+
+    #[test]
+    fn pdftotext_strategy_reads_stdout_when_tool_succeeds() {
+        let temp = tempdir().unwrap();
+        let pdf = temp.path().join("input.pdf");
+        fs::write(&pdf, b"fake pdf bytes").unwrap();
+
+        let tool = temp.path().join("fake-pdftotext.sh");
+        fs::write(
+            &tool,
+            "#!/usr/bin/env bash\nif [ \"$1\" = \"-h\" ]; then exit 0; fi\nprintf 'Extracted via pdftotext'\n",
+        )
+        .unwrap();
+        let mut perms = fs::metadata(&tool).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&tool, perms).unwrap();
+
+        let attempt = extract_pdf_text_with_pdftotext(&pdf, tool.to_str().unwrap());
+
+        assert_eq!(
+            attempt,
+            PdfTextAttempt::Extracted("Extracted via pdftotext".to_string())
+        );
+    }
 
     #[test]
     fn normalize_extracted_pdf_text_repairs_obvious_label_boundaries() {

@@ -119,7 +119,8 @@ fn run_single(options: RunOptions) -> Result<RunSummary> {
     let low_confidence_review_required = fidelity.low_confidence_review_required;
     let extraction_status = extracted_input.extraction_status();
 
-    let structured = apply_deidentification_pipeline(&extracted_input.text, options.config.as_deref())?;
+    let structured =
+        apply_deidentification_pipeline(&extracted_input.text, options.config.as_deref())?;
     let review_summary = build_review_summary(
         &options.input,
         &structured.findings,
@@ -631,7 +632,10 @@ fn build_review_summary(
             "warning: extracted output may be limited by source text fidelity; review spacing and label boundaries carefully.".to_string(),
         );
     }
-    if matches!(fidelity.provenance, extraction::ExtractionProvenance::OcrText) {
+    if matches!(
+        fidelity.provenance,
+        extraction::ExtractionProvenance::OcrText
+    ) {
         lines.push(
             "warning: OCR participated in extraction, so spelling, casing, and layout fidelity may be imperfect.".to_string(),
         );
@@ -910,9 +914,18 @@ fn build_batch_summary(
         "non-text-omission files: {}",
         non_text_omission_files.len()
     ));
-    lines.push(format!("text-degraded files: {}", text_degraded_files.len()));
-    lines.push(format!("structural-loss files: {}", structural_loss_files.len()));
-    lines.push(format!("low-confidence files: {}", low_confidence_files.len()));
+    lines.push(format!(
+        "text-degraded files: {}",
+        text_degraded_files.len()
+    ));
+    lines.push(format!(
+        "structural-loss files: {}",
+        structural_loss_files.len()
+    ));
+    lines.push(format!(
+        "low-confidence files: {}",
+        low_confidence_files.len()
+    ));
     lines.push(format!("ocr-involved files: {}", ocr_involved_files.len()));
     lines.push(format!("renamed outputs: {}", renamed.len()));
 
@@ -2632,9 +2645,11 @@ mod tests {
         })
         .unwrap_err();
 
-        assert!(error.to_string().contains(
-            "PDF contains no extractable text; treat as non-extractable or low-confidence"
-        ));
+        assert!(
+            error
+                .to_string()
+                .contains("PDF contains no extractable text")
+        );
     }
 
     #[test]
