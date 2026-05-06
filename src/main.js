@@ -69,6 +69,9 @@ let workspace = createWorkspaceState(
   'Desktop shell loaded. Choose a file or folder to start local processing automatically.'
 )
 let pendingPreviewActions = null
+let previewActionHideTimer = null
+let previewScrollSyncFrame = null
+let suppressPreviewScrollSync = false
 
 renderWorkspace()
 
@@ -479,6 +482,8 @@ function renderPreview(preview) {
     previewNote.textContent = ''
     beforePreview.textContent = 'Original content preview will appear here.'
     afterPreview.textContent = 'Redacted output preview will appear here.'
+    beforePreview.scrollTop = 0
+    afterPreview.scrollTop = 0
     return
   }
 
@@ -494,6 +499,29 @@ function renderPreview(preview) {
   previewNote.textContent = note
   beforePreview.innerHTML = beforeHtml
   afterPreview.innerHTML = afterHtml
+}
+
+function schedulePreviewScrollSync(source, target) {
+  if (suppressPreviewScrollSync) {
+    return
+  }
+
+  if (previewScrollSyncFrame) {
+    cancelAnimationFrame(previewScrollSyncFrame)
+  }
+
+  previewScrollSyncFrame = requestAnimationFrame(() => {
+    const sourceMax = Math.max(source.scrollHeight - source.clientHeight, 0)
+    const targetMax = Math.max(target.scrollHeight - target.clientHeight, 0)
+    const ratio = sourceMax > 0 ? source.scrollTop / sourceMax : 0
+
+    suppressPreviewScrollSync = true
+    target.scrollTop = ratio * targetMax
+    requestAnimationFrame(() => {
+      suppressPreviewScrollSync = false
+    })
+    previewScrollSyncFrame = null
+  })
 }
 
 function selectPreview(item, preview) {
@@ -578,12 +606,49 @@ function targetElement(target) {
   return target instanceof Element ? target : target?.parentElement ?? null
 }
 
+function clearFocusedRedactions() {
+  for (const mark of document.querySelectorAll('.preview-text mark.focused-redaction')) {
+    mark.classList.remove('focused-redaction')
+  }
+}
+
+function focusMatchingRedactions({ start, end, replacement }) {
+  clearFocusedRedactions()
+
+  for (const mark of document.querySelectorAll('.preview-text mark[data-record-start]')) {
+    if (
+      mark.dataset.recordStart === String(start)
+      && mark.dataset.recordEnd === String(end)
+      && mark.dataset.recordReplacement === replacement
+    ) {
+      mark.classList.add('focused-redaction')
+    }
+  }
+}
+
 function hidePreviewActionTooltip() {
   pendingPreviewActions = null
-  previewActionTooltip.hidden = true
+  clearFocusedRedactions()
+  if (previewActionHideTimer) {
+    clearTimeout(previewActionHideTimer)
+    previewActionHideTimer = null
+  }
+
+  previewActionTooltip.dataset.state = 'closing'
+  previewActionTooltip.setAttribute('aria-hidden', 'true')
+  previewActionHideTimer = setTimeout(() => {
+    previewActionTooltip.hidden = true
+    delete previewActionTooltip.dataset.state
+    previewActionHideTimer = null
+  }, 180)
 }
 
 function showPreviewActionTooltip({ rect, label, primaryAction, secondaryAction = null }) {
+  if (previewActionHideTimer) {
+    clearTimeout(previewActionHideTimer)
+    previewActionHideTimer = null
+  }
+
   pendingPreviewActions = {
     primaryAction,
     secondaryAction
@@ -593,6 +658,8 @@ function showPreviewActionTooltip({ rect, label, primaryAction, secondaryAction 
   previewSecondaryActionButton.hidden = !secondaryAction
   previewSecondaryActionButton.textContent = secondaryAction?.buttonText ?? ''
   previewActionTooltip.hidden = false
+  previewActionTooltip.setAttribute('aria-hidden', 'false')
+  previewActionTooltip.dataset.state = 'opening'
 
   const tooltipGap = 10
   const viewportPadding = 12
@@ -615,6 +682,10 @@ function showPreviewActionTooltip({ rect, label, primaryAction, secondaryAction 
   previewActionTooltip.style.setProperty('--tooltip-arrow-left', `${arrowLeft}px`)
   previewActionTooltip.style.left = `${clampedLeft}px`
   previewActionTooltip.style.top = `${top}px`
+
+  requestAnimationFrame(() => {
+    previewActionTooltip.dataset.state = 'open'
+  })
 }
 
 function utf8ByteLength(value) {
@@ -687,10 +758,35 @@ async function handleRedactionRemoval(markElement) {
   const removalLabel = markElement.dataset.manualNumber
     ? `Remove ${recordLabel.toLowerCase()}?`
     : 'Remove this redaction?'
+  focusMatchingRedactions({
+    start: Number(markElement.dataset.recordStart ?? 0),
+    end: Number(markElement.dataset.recordEnd ?? 0),
+    replacement: markElement.dataset.recordReplacement ?? ''
+  })
   showPreviewActionTooltip({
     rect,
     label: removalLabel,
     primaryAction: {
+      buttonText: 'Remove all',
+      run: async () => {
+        try {
+          const result = await invoke('remove_redaction', {
+            request: {
+              ...toPreviewRequest(preview),
+              start: Number(markElement.dataset.recordStart ?? 0),
+              end: Number(markElement.dataset.recordEnd ?? 0),
+              replacement: markElement.dataset.recordReplacement ?? '',
+              redactionScope: 'file_exact_matches'
+            }
+          })
+          replacePreviewState(result.preview, result.replacements)
+          appendSummary('Removed all matching redactions and updated output files.')
+        } catch (error) {
+          appendSummary(`Remove redaction error: ${String(error)}`)
+        }
+      }
+    },
+    secondaryAction: {
       buttonText: 'Remove redaction',
       run: async () => {
         try {
@@ -699,7 +795,8 @@ async function handleRedactionRemoval(markElement) {
               ...toPreviewRequest(preview),
               start: Number(markElement.dataset.recordStart ?? 0),
               end: Number(markElement.dataset.recordEnd ?? 0),
-              replacement: markElement.dataset.recordReplacement ?? ''
+              replacement: markElement.dataset.recordReplacement ?? '',
+              redactionScope: 'single_occurrence'
             }
           })
           replacePreviewState(result.preview, result.replacements)
@@ -759,7 +856,7 @@ function maybeShowAddRedactionTooltip() {
       )
     },
     secondaryAction: {
-      buttonText: 'Just this occurrence',
+      buttonText: 'Redact this',
       run: createManualRedactionAction(
         preview,
         selection,
@@ -808,8 +905,14 @@ afterPreview.addEventListener('keyup', () => {
   setTimeout(maybeShowAddRedactionTooltip, 0)
 })
 
-beforePreview.addEventListener('scroll', hidePreviewActionTooltip)
-afterPreview.addEventListener('scroll', hidePreviewActionTooltip)
+beforePreview.addEventListener('scroll', () => {
+  hidePreviewActionTooltip()
+  schedulePreviewScrollSync(beforePreview, afterPreview)
+})
+afterPreview.addEventListener('scroll', () => {
+  hidePreviewActionTooltip()
+  schedulePreviewScrollSync(afterPreview, beforePreview)
+})
 editSettings.addEventListener('click', openSettingsDialog)
 closeSettings.addEventListener('click', closeSettingsDialog)
 cancelSettings.addEventListener('click', closeSettingsDialog)

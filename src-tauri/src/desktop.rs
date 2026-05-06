@@ -230,6 +230,7 @@ pub struct DesktopRemoveRedactionRequest {
     pub start: usize,
     pub end: usize,
     pub replacement: String,
+    pub redaction_scope: ManualRedactionScope,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -510,10 +511,33 @@ pub fn remove_redaction(
     let mut audit_report = read_editable_audit_report(&request.audit_output_path)?;
     let original_len = audit_report.replacements.len();
 
-    audit_report.replacements.retain(|record| {
-        !(record.start == request.start
-            && record.end == request.end
-            && record.replacement == request.replacement)
+    let target_record = audit_report
+        .replacements
+        .iter()
+        .find(|record| {
+            record.start == request.start
+                && record.end == request.end
+                && record.replacement == request.replacement
+        })
+        .cloned();
+
+    let Some(target_record) = target_record else {
+        return Err(crate::error::AppError::InvalidPreviewEdit(
+            "clicked redaction no longer exists in the current preview".to_string(),
+        ));
+    };
+
+    audit_report.replacements.retain(|record| match request.redaction_scope {
+        ManualRedactionScope::SingleOccurrence => {
+            !(record.start == request.start
+                && record.end == request.end
+                && record.replacement == request.replacement)
+        }
+        ManualRedactionScope::FileExactMatches => {
+            !(record.entity_type == target_record.entity_type
+                && record.matched_text == target_record.matched_text
+                && record.replacement == target_record.replacement)
+        }
     });
 
     if audit_report.replacements.len() == original_len {
@@ -1414,6 +1438,7 @@ mod tests {
             start: email_record.start,
             end: email_record.end,
             replacement: email_record.replacement.clone(),
+            redaction_scope: ManualRedactionScope::SingleOccurrence,
         })
         .unwrap();
 
@@ -1424,6 +1449,73 @@ mod tests {
                 .unwrap()
                 .contains("jane@example.com")
         );
+    }
+
+    #[test]
+    fn remove_redaction_can_remove_all_matching_manual_redactions() {
+        let temp = tempdir().unwrap();
+        let input_dir = temp.path().join("input");
+        let config = temp.path().join("deid.toml");
+
+        fs::create_dir_all(&input_dir).unwrap();
+        fs::write(
+            input_dir.join("note.md"),
+            "Jane Doe emailed jane@example.com. Later, Jane Doe emailed billing@example.com.",
+        )
+        .unwrap();
+        fs::write(
+            &config,
+            "[client]\nreplacement = \"CLIENT\"\nvariants = [\"Jane Doe\"]\n",
+        )
+        .unwrap();
+
+        let result = run_replace_job(DesktopReplaceRequest {
+            input: input_dir.clone(),
+            config: Some(config),
+            settings: None,
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+        })
+        .unwrap();
+        let preview = &result.file_previews[0];
+        let original_text = load_preview_input_as_markdown(&preview.input_path).unwrap();
+        let selection_start = original_text.find("emailed").unwrap();
+        let selection_end = selection_start + "emailed".len();
+
+        let updated = add_manual_redaction(DesktopAddRedactionRequest {
+            path: preview.path.clone(),
+            input_path: preview.input_path.clone(),
+            output_path: preview.output_path.clone(),
+            audit_output_path: preview.audit_output_path.clone(),
+            source_preview: PreviewSelectionSource::Original,
+            selection_start,
+            selection_end,
+            redaction_scope: ManualRedactionScope::FileExactMatches,
+        })
+        .unwrap();
+
+        let audit_report = read_editable_audit_report(&updated.preview.audit_output_path).unwrap();
+        let manual_record = audit_report
+            .replacements
+            .iter()
+            .find(|record| record.entity_type == "MANUAL_REDACTION")
+            .unwrap();
+
+        let removed = remove_redaction(DesktopRemoveRedactionRequest {
+            path: updated.preview.path.clone(),
+            input_path: updated.preview.input_path.clone(),
+            output_path: updated.preview.output_path.clone(),
+            audit_output_path: updated.preview.audit_output_path.clone(),
+            start: manual_record.start,
+            end: manual_record.end,
+            replacement: manual_record.replacement.clone(),
+            redaction_scope: ManualRedactionScope::FileExactMatches,
+        })
+        .unwrap();
+
+        assert_eq!(removed.replacements, 4);
+        assert!(!removed.preview.redacted_html.contains("data-manual-number=\"1\""));
+        assert!(!removed.preview.redacted_html.contains("data-manual-number=\"2\""));
     }
 
     fn write_test_pdf(path: &std::path::Path, text: &str) {
