@@ -6,3 +6,4 @@ ml/ner/model.onnx
 .gitnexus
 node_modules
 ralph
+.playwright-mcp/

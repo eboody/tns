@@ -10,8 +10,8 @@
       "Run cargo check --manifest-path src-tauri/Cargo.toml",
       "Verify representative clean and risky extraction cases produce canonical fidelity states without falsely reporting clean extraction"
     ],
-    "passes": false,
-    "notes": "Highest-value first because it shapes invariants for all downstream slices."
+    "passes": true,
+    "notes": "Completed by introducing a canonical extraction fidelity model with provenance, structural-loss suspicion, omission, degradation, and low-confidence posture, then routing existing extraction consumers through that model without broadening user-facing output yet."
   },
   {
     "id": "issue-39",
@@ -24,8 +24,8 @@
       "Run cargo check --manifest-path src-tauri/Cargo.toml",
       "Verify review and audit outputs match for representative clean and risky extraction cases"
     ],
-    "passes": false,
-    "notes": "Blocked on issue-38 because reporting should derive from the shared model."
+    "passes": true,
+    "notes": "Completed by surfacing canonical extraction fidelity through review summaries and audit JSON, including provenance and low-confidence/structural-loss signals while keeping the slice bounded away from broader triage UI work."
   },
   {
     "id": "issue-40",
@@ -38,8 +38,8 @@
       "Run cargo check --manifest-path src-tauri/Cargo.toml",
       "Verify representative DOCX fixtures surface omission and flattening signals end-to-end"
     ],
-    "passes": false,
-    "notes": "Can proceed after issue-38 defines the shared fidelity boundary."
+    "passes": true,
+    "notes": "Completed by teaching DOCX extraction to return fidelity evidence directly, including explicit non-text omissions and structural-loss suspicion for flattened constructs such as tables, then flowing that through the shared fidelity model."
   },
   {
     "id": "issue-41",
@@ -52,8 +52,8 @@
       "Run cargo check --manifest-path src-tauri/Cargo.toml",
       "Verify clean, degraded, and non-extractable PDF fixtures produce distinct observable outcomes"
     ],
-    "passes": false,
-    "notes": "Can proceed after issue-38; keep normalization and quality judgment separate."
+    "passes": true,
+    "notes": "Completed by separating hard PDF extraction failure from successful-but-risky extraction and making low-confidence review posture come from explicit hazard detection such as token fusion and repeated page furniture rather than mere normalization changes."
   },
   {
     "id": "issue-42",
@@ -66,8 +66,8 @@
       "Run cargo check --manifest-path src-tauri/Cargo.toml",
       "Verify at least one fallback or redundancy case changes observable provenance and review posture"
     ],
-    "passes": false,
-    "notes": "Bounded AFK slice now that product intent is explicit: OCR is wanted, including fallback and redundancy."
+    "passes": true,
+    "notes": "Completed as a bounded OCR fallback slice: PDFs without native extractable text can now fall back to local OCR tooling, provenance is marked as OCR-backed, and review/audit output explicitly warns when OCR participated."
   },
   {
     "id": "issue-43",
@@ -81,7 +81,7 @@
       "Run npm run build if frontend assets change",
       "Verify representative DOCX, PDF, and OCR-involved files are surfaced correctly in summaries and desktop views"
     ],
-    "passes": false,
-    "notes": "Last integration slice after the shared model and source-specific fidelity work are in place."
+    "passes": true,
+    "notes": "Completed by surfacing provenance, structural-loss suspicion, low-confidence review posture, and OCR involvement in run-level summaries, desktop file rows, and preview notes so risky files are triageable without opening each one blindly."
   }
 ]
