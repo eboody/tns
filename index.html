@@ -18,45 +18,34 @@
         </div>
       </header>
 
-      <section class="controls-panel">
-        <div class="input-panel-copy">
-          <h2>Choose input</h2>
-          <p>Pick a file or folder to start de-identification automatically. Review happens in the workspace below.</p>
-        </div>
-
-        <label class="field-group field-group-grow">
-          <span>Input file or folder</span>
-          <div class="picker-row">
-            <input id="inputPath" type="text" placeholder="No file or folder selected yet" readonly />
-            <button id="pickInput" type="button">Choose file</button>
-            <button id="pickFolder" type="button">Choose folder</button>
-          </div>
-        </label>
-
-        <label class="field-group">
-          <span>Optional config path</span>
-          <input id="configPath" type="text" placeholder="/path/to/deid.toml" />
-          <small class="field-help">Changing the config reruns processing for the selected input.</small>
-        </label>
-      </section>
-
       <section class="workspace">
         <aside class="sidebar">
-          <section class="selection-panel">
-            <h2>Selected input</h2>
-            <ul id="selectedFiles" class="file-list compact-list">
-              <li>No file or folder selected yet.</li>
-            </ul>
+          <section class="selection-panel input-panel">
+            <div class="input-panel-copy">
+              <h2>Choose input</h2>
+              <p>Pick a file or folder to start de-identification automatically. Review the selected file in the workspace.</p>
+            </div>
+
+            <label class="field-group field-group-grow">
+              <span>Input file or folder</span>
+              <input id="inputPath" type="text" placeholder="No file or folder selected yet" readonly />
+            </label>
+
+            <div class="actions-row">
+              <button id="pickInput" type="button">Choose file</button>
+              <button id="pickFolder" type="button">Choose folder</button>
+            </div>
+
+            <label class="field-group">
+              <span>Optional config path</span>
+              <input id="configPath" type="text" placeholder="/path/to/deid.toml" />
+              <small class="field-help">Changing the config reruns processing for the selected input.</small>
+            </label>
           </section>
 
-          <section id="resultsPanel" class="results-panel" hidden>
+          <section id="resultsPanel" class="results-panel">
             <h2>Files</h2>
             <ul id="resultFiles" class="file-list"></ul>
-          </section>
-
-          <section class="summary-panel">
-            <h2>Run details</h2>
-            <pre id="summary">No run yet.</pre>
           </section>
         </aside>
 
@@ -92,6 +81,11 @@
               <pre id="afterPreview" class="preview-text"></pre>
             </section>
           </div>
+
+          <details class="summary-details">
+            <summary>Run details</summary>
+            <pre id="summary">No run yet.</pre>
+          </details>
 
           <div id="previewActionTooltip" class="preview-action-tooltip" hidden>
             <p id="previewActionLabel" class="preview-action-label"></p>

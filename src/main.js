@@ -18,7 +18,6 @@ const inputPath = document.getElementById('inputPath')
 const pickInput = document.getElementById('pickInput')
 const pickFolder = document.getElementById('pickFolder')
 const configPath = document.getElementById('configPath')
-const selectedFiles = document.getElementById('selectedFiles')
 const resultsPanel = document.getElementById('resultsPanel')
 const resultFiles = document.getElementById('resultFiles')
 const previewPanel = document.getElementById('previewPanel')
@@ -103,15 +102,7 @@ function capitalize(value) {
 }
 
 function renderSelectedInput() {
-  const value = workspace.inputPath.trim()
-  inputPath.value = value
-  selectedFiles.replaceChildren()
-  if (!value) {
-    selectedFiles.appendChild(fileListItem('No file or folder selected yet.'))
-    return
-  }
-
-  selectedFiles.appendChild(fileListItem(value, 'ready'))
+  inputPath.value = workspace.inputPath.trim()
 }
 
 async function processSelectedInput({ sourceLabel }) {
@@ -239,7 +230,12 @@ function selectPreview(item, preview) {
 function renderResultFiles() {
   const statuses = workspace.fileStatuses
   resultFiles.replaceChildren()
-  resultsPanel.hidden = statuses.length === 0
+
+  if (statuses.length === 0) {
+    resultsPanel.hidden = false
+    resultFiles.appendChild(fileListItem('No processed files yet.'))
+    return
+  }
 
   for (const [index, status] of statuses.entries()) {
     const path = status.path ?? ''
