@@ -101,9 +101,9 @@ fn run_single(options: RunOptions) -> Result<RunSummary> {
     validate_supported_input(&options.input)?;
 
     let extracted_input = extract_input(&options.input)?;
-    let non_text_omissions_detected = extracted_input.non_text_omissions_detected;
-    let text_degraded_detected = extracted_input.text_degraded_detected;
-    let extraction_status = extracted_input.extraction_status;
+    let non_text_omissions_detected = extracted_input.non_text_omissions_detected();
+    let text_degraded_detected = extracted_input.text_degraded_detected();
+    let extraction_status = extracted_input.extraction_status();
 
     let structured = apply_deidentification_pipeline(&extracted_input.text, options.config.as_deref())?;
     let review_summary = build_review_summary(
