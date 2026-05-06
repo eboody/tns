@@ -103,30 +103,28 @@ fn parse_document_xml_to_markdown(xml: &str) -> Result<DocxExtraction> {
                     current_paragraph.push_str(&text);
                 }
             }
-            Ok(Event::End(e)) => {
-                match e.name().as_ref() {
-                    b"w:t" => {
-                        in_text = false;
-                    }
-                    b"w:p" => {
-                        let mut paragraph = normalize_paragraph_text(&current_paragraph);
-                        if saw_non_text {
-                            if !paragraph.is_empty() {
-                                paragraph.push(' ');
-                            }
-                            paragraph.push_str(OMITTED_NON_TEXT_CONTENT);
-                        }
-                        if !paragraph.is_empty() {
-                            paragraphs.push(paragraph);
-                        }
-                        in_paragraph = false;
-                        in_text = false;
-                        current_paragraph.clear();
-                        saw_non_text = false;
-                    }
-                    _ => {}
+            Ok(Event::End(e)) => match e.name().as_ref() {
+                b"w:t" => {
+                    in_text = false;
                 }
-            }
+                b"w:p" => {
+                    let mut paragraph = normalize_paragraph_text(&current_paragraph);
+                    if saw_non_text {
+                        if !paragraph.is_empty() {
+                            paragraph.push(' ');
+                        }
+                        paragraph.push_str(OMITTED_NON_TEXT_CONTENT);
+                    }
+                    if !paragraph.is_empty() {
+                        paragraphs.push(paragraph);
+                    }
+                    in_paragraph = false;
+                    in_text = false;
+                    current_paragraph.clear();
+                    saw_non_text = false;
+                }
+                _ => {}
+            },
             Ok(Event::Eof) => break,
             Err(error) => {
                 return Err(AppError::Analysis(format!(
@@ -199,7 +197,10 @@ mod tests {
         "#;
 
         let markdown = parse_document_xml_to_markdown(xml).unwrap();
-        assert_eq!(markdown.text, "Name: Jane Doe\n\nEvaluation Date(s): 12/17/2025 12/19/2025");
+        assert_eq!(
+            markdown.text,
+            "Name: Jane Doe\n\nEvaluation Date(s): 12/17/2025 12/19/2025"
+        );
         assert!(!markdown.structural_loss_suspected);
     }
 
@@ -220,7 +221,10 @@ mod tests {
         "#;
 
         let markdown = parse_document_xml_to_markdown(xml).unwrap();
-        assert_eq!(markdown.text, "Provider Shina Halavi, PhD\nPacific Ocean Pediatrics");
+        assert_eq!(
+            markdown.text,
+            "Provider Shina Halavi, PhD\nPacific Ocean Pediatrics"
+        );
         assert!(!markdown.structural_loss_suspected);
     }
 

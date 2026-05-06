@@ -63,12 +63,16 @@ fn run_replace_job(
 }
 
 #[tauri::command]
-fn add_manual_redaction(request: DesktopAddRedactionRequest) -> Result<crate::desktop::DesktopPreviewUpdateResult, String> {
+fn add_manual_redaction(
+    request: DesktopAddRedactionRequest,
+) -> Result<crate::desktop::DesktopPreviewUpdateResult, String> {
     add_manual_redaction_service(request).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-fn remove_redaction(request: DesktopRemoveRedactionRequest) -> Result<crate::desktop::DesktopPreviewUpdateResult, String> {
+fn remove_redaction(
+    request: DesktopRemoveRedactionRequest,
+) -> Result<crate::desktop::DesktopPreviewUpdateResult, String> {
     remove_redaction_service(request).map_err(|error| error.to_string())
 }
 
@@ -201,7 +205,10 @@ mod tests {
     fn artifact_open_target_returns_parent_directory_for_file_paths() {
         let path = Path::new("/tmp/output/note.deidentified.md");
 
-        assert_eq!(artifact_open_target(path).unwrap(), Path::new("/tmp/output"));
+        assert_eq!(
+            artifact_open_target(path).unwrap(),
+            Path::new("/tmp/output")
+        );
     }
 
     #[test]
