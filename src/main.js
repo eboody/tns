@@ -3,13 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import { buildReviewNotice } from './review-notice.js'
 import { buildRuntimeSettingsPayload } from './runtime-settings.js'
-import {
-  getActiveProfile,
-  getCurrentCaseContext,
-  loadAppSettings,
-  saveAppSettings,
-  updateActiveProfileAndCaseContext
-} from './settings-store.js'
+import { loadAppSettings, normalizeAppSettings, saveAppSettings } from './settings-store.js'
 import {
   createWorkspaceState,
   failProcessing,
@@ -136,19 +130,17 @@ function renderWorkspace() {
 }
 
 function renderSettingsSummary() {
-  const activeProfile = getActiveProfile(appSettings)
-  const currentCaseContext = getCurrentCaseContext(appSettings)
-  const configuredExactEntities = currentCaseContext.exactEntities.filter(hasMeaningfulExactEntity)
-  const configuredPatterns = [activeProfile.patterns.dates, activeProfile.patterns.emails, activeProfile.patterns.phones].filter((rule) => rule.enabled).length
-  const hasClientAliases = Boolean(currentCaseContext.clientReplacement || currentCaseContext.clientVariants)
-  const hasNerOverride = Boolean(activeProfile.ner.enabled)
+  const configuredExactEntities = appSettings.exactEntities.filter(hasMeaningfulExactEntity)
+  const configuredPatterns = [appSettings.patterns.dates, appSettings.patterns.emails, appSettings.patterns.phones].filter((rule) => rule.enabled).length
+  const hasClientAliases = Boolean(appSettings.clientReplacement || appSettings.clientVariants)
+  const hasNerOverride = Boolean(appSettings.ner.enabled)
 
   if (!hasClientAliases && configuredExactEntities.length === 0 && configuredPatterns === 0 && !hasNerOverride) {
-    settingsSummary.textContent = `Active profile: ${activeProfile.name}. No additional case-specific de-identification settings configured.`
+    settingsSummary.textContent = 'No persistent de-identification settings configured. The default app pipeline will be used.'
     return
   }
 
-  const parts = [`profile: ${activeProfile.name}`]
+  const parts = []
   if (hasClientAliases) {
     parts.push('client aliases')
   }
@@ -273,24 +265,21 @@ function renderSelectedInput() {
 }
 
 function populateSettingsForm(settings) {
-  const activeProfile = getActiveProfile(settings)
-  const currentCaseContext = getCurrentCaseContext(settings)
-
-  settingsClientReplacement.value = currentCaseContext.clientReplacement
-  settingsClientVariants.value = currentCaseContext.clientVariants
-  settingsDatesEnabled.checked = activeProfile.patterns.dates.enabled
-  settingsDatesReplacement.value = activeProfile.patterns.dates.replacement
-  settingsEmailsEnabled.checked = activeProfile.patterns.emails.enabled
-  settingsEmailsReplacement.value = activeProfile.patterns.emails.replacement
-  settingsPhonesEnabled.checked = activeProfile.patterns.phones.enabled
-  settingsPhonesReplacement.value = activeProfile.patterns.phones.replacement
-  settingsNerEnabled.checked = activeProfile.ner.enabled
-  settingsNerModelPath.value = activeProfile.ner.modelPath
-  settingsNerTokenizerPath.value = activeProfile.ner.tokenizerPath
-  settingsNerMinConfidence.value = activeProfile.ner.minConfidence
+  settingsClientReplacement.value = settings.clientReplacement
+  settingsClientVariants.value = settings.clientVariants
+  settingsDatesEnabled.checked = settings.patterns.dates.enabled
+  settingsDatesReplacement.value = settings.patterns.dates.replacement
+  settingsEmailsEnabled.checked = settings.patterns.emails.enabled
+  settingsEmailsReplacement.value = settings.patterns.emails.replacement
+  settingsPhonesEnabled.checked = settings.patterns.phones.enabled
+  settingsPhonesReplacement.value = settings.patterns.phones.replacement
+  settingsNerEnabled.checked = settings.ner.enabled
+  settingsNerModelPath.value = settings.ner.modelPath
+  settingsNerTokenizerPath.value = settings.ner.tokenizerPath
+  settingsNerMinConfidence.value = settings.ner.minConfidence
 
   exactEntitiesList.replaceChildren()
-  const entities = currentCaseContext.exactEntities.length > 0 ? currentCaseContext.exactEntities : []
+  const entities = settings.exactEntities.length > 0 ? settings.exactEntities : []
   for (const entity of entities) {
     exactEntitiesList.appendChild(createExactEntityRow(entity))
   }
@@ -324,28 +313,24 @@ function createExactEntityRow(entity = { entityType: '', replacement: '', varian
 }
 
 function readSettingsForm() {
-  return updateActiveProfileAndCaseContext(appSettings, {
-    profile: {
-      patterns: {
-        dates: { enabled: settingsDatesEnabled.checked, replacement: settingsDatesReplacement.value },
-        emails: { enabled: settingsEmailsEnabled.checked, replacement: settingsEmailsReplacement.value },
-        phones: { enabled: settingsPhonesEnabled.checked, replacement: settingsPhonesReplacement.value }
-      },
-      ner: {
-        enabled: settingsNerEnabled.checked,
-        modelPath: settingsNerModelPath.value,
-        tokenizerPath: settingsNerTokenizerPath.value,
-        minConfidence: settingsNerMinConfidence.value
-      }
+  return normalizeAppSettings({
+    clientReplacement: settingsClientReplacement.value,
+    clientVariants: settingsClientVariants.value,
+    exactEntities: Array.from(exactEntitiesList.querySelectorAll('.exact-entity-card')).map((row) => ({
+      entityType: row.querySelector('.exact-entity-type')?.value ?? '',
+      replacement: row.querySelector('.exact-entity-replacement')?.value ?? '',
+      variants: row.querySelector('.exact-entity-variants')?.value ?? ''
+    })),
+    patterns: {
+      dates: { enabled: settingsDatesEnabled.checked, replacement: settingsDatesReplacement.value },
+      emails: { enabled: settingsEmailsEnabled.checked, replacement: settingsEmailsReplacement.value },
+      phones: { enabled: settingsPhonesEnabled.checked, replacement: settingsPhonesReplacement.value }
     },
-    caseContext: {
-      clientReplacement: settingsClientReplacement.value,
-      clientVariants: settingsClientVariants.value,
-      exactEntities: Array.from(exactEntitiesList.querySelectorAll('.exact-entity-card')).map((row) => ({
-        entityType: row.querySelector('.exact-entity-type')?.value ?? '',
-        replacement: row.querySelector('.exact-entity-replacement')?.value ?? '',
-        variants: row.querySelector('.exact-entity-variants')?.value ?? ''
-      }))
+    ner: {
+      enabled: settingsNerEnabled.checked,
+      modelPath: settingsNerModelPath.value,
+      tokenizerPath: settingsNerTokenizerPath.value,
+      minConfidence: settingsNerMinConfidence.value
     }
   })
 }
@@ -411,10 +396,7 @@ async function processSelectedInput({ sourceLabel }) {
     const result = await invoke('run_replace_job', {
       input: value,
       config: null,
-      settings: buildRuntimeSettingsPayload({
-        profile: getActiveProfile(appSettings),
-        caseContext: getCurrentCaseContext(appSettings)
-      }),
+      settings: buildRuntimeSettingsPayload(appSettings),
       includePatterns: [],
       excludePatterns: []
     })

@@ -1,20 +1,20 @@
-export function buildRuntimeSettingsPayload({ profile, caseContext }) {
-  const minConfidence = Number(profile.ner.minConfidence || '0.7')
+export function buildRuntimeSettingsPayload(settings) {
+  const minConfidence = Number(settings.ner.minConfidence || '0.7')
 
   return {
     profile: {
-      patterns: profile.patterns,
+      patterns: settings.patterns,
       ner: {
-        enabled: profile.ner.enabled,
-        modelPath: profile.ner.modelPath,
-        tokenizerPath: profile.ner.tokenizerPath,
+        enabled: settings.ner.enabled,
+        modelPath: settings.ner.modelPath,
+        tokenizerPath: settings.ner.tokenizerPath,
         minConfidence: Number.isFinite(minConfidence) ? minConfidence : 0.7
       }
     },
     caseContext: {
-      clientReplacement: caseContext.clientReplacement,
-      clientVariants: splitLines(caseContext.clientVariants),
-      exactEntities: caseContext.exactEntities
+      clientReplacement: settings.clientReplacement,
+      clientVariants: splitLines(settings.clientVariants),
+      exactEntities: settings.exactEntities
         .filter(hasMeaningfulExactEntity)
         .map((entity) => ({
           entityType: entity.entityType,
