@@ -1,6 +1,7 @@
 import './styles.css'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
+import { buildReviewNotice } from './review-notice.js'
 import {
   createWorkspaceState,
   failProcessing,
@@ -217,7 +218,7 @@ function renderPreview(preview) {
 
   hidePreviewActionTooltip()
   previewTitle.textContent = preview.path ?? ''
-  const note = preview.previewNote ?? preview.preview_note ?? ''
+  const note = buildReviewNotice(preview.previewNote ?? preview.preview_note ?? '')
   const beforeHtml = preview.originalHtml ?? preview.original_html ?? 'Original preview unavailable.'
   const afterHtml = preview.redactedHtml ?? preview.redacted_html ?? ''
   const highlightCount = countHighlights(beforeHtml) + countHighlights(afterHtml)
