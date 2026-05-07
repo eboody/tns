@@ -23,7 +23,7 @@
       "Observe source registry with logical source-unit support",
       "Observe inclusion/exclusion log and quality notes"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "history-report-72",

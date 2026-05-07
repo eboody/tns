@@ -11,6 +11,7 @@
 
 - `npm test`
 - targeted `node --test src/history-report-bootstrap.test.js` while iterating on bootstrap behavior
+- targeted `node --test src/history-report-inventory.test.js` while iterating on inventory behavior
 - `git status --short` before staging a commit
 
 ## Current stop condition
