@@ -23,3 +23,15 @@ node .sandcastle/history-report/scripts/inventory-run.mjs \
 The inventory slice classifies markdown candidates, separates wrapper content
 from source-derived content, emits logical source-unit metadata, and writes
 source inventory plus inclusion/exclusion artifacts for the run.
+
+## Evidence entrypoint
+
+```bash
+node .sandcastle/history-report/scripts/evidence-run.mjs \
+  --source-dir "/absolute/path/to/deidentified-markdown-folder" \
+  --run-id "20260507T131415Z"
+```
+
+The evidence slice derives provenance-bearing segment annotations, attributed
+atomic claims, and per-source evidence sheets from the admitted markdown source
+set.

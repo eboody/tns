@@ -36,7 +36,7 @@
       "Derive attributed atomic claims",
       "Observe chronology/collateral/note-fragment metadata"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "history-report-73",
