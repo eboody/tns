@@ -1,0 +1,145 @@
+[
+  {
+    "id": "history-report-70",
+    "category": "bootstrap",
+    "priority": "high",
+    "risk": "medium",
+    "description": "Bootstrap repo-local Sandcastle history-report run",
+    "verify": [
+      "Run bootstrap entrypoint against a markdown fixture folder",
+      "Observe stable case/run workspace creation",
+      "Observe initial brief/privacy/run-summary artifacts"
+    ],
+    "passes": true
+  },
+  {
+    "id": "history-report-71",
+    "category": "inventory",
+    "priority": "high",
+    "risk": "medium",
+    "description": "Inventory markdown sources and split logical source units",
+    "verify": [
+      "Inventory a mixed markdown fixture folder",
+      "Observe source registry with logical source-unit support",
+      "Observe inclusion/exclusion log and quality notes"
+    ],
+    "passes": false
+  },
+  {
+    "id": "history-report-72",
+    "category": "evidence",
+    "priority": "high",
+    "risk": "high",
+    "description": "Derive segment annotations and attributed atomic claims",
+    "verify": [
+      "Generate segment annotations from admitted sources",
+      "Derive attributed atomic claims",
+      "Observe chronology/collateral/note-fragment metadata"
+    ],
+    "passes": false
+  },
+  {
+    "id": "history-report-73",
+    "category": "planning",
+    "priority": "high",
+    "risk": "high",
+    "description": "Classify case schema and plan section ownership",
+    "verify": [
+      "Classify adult vs transition-age vs child lifecycle",
+      "Emit section plan with salience and missingness",
+      "Observe primary section ownership per claim"
+    ],
+    "passes": false
+  },
+  {
+    "id": "history-report-74",
+    "category": "style",
+    "priority": "high",
+    "risk": "high",
+    "description": "Compile governing clinician profile from doctrine and exemplars",
+    "verify": [
+      "Compile clinician profile from doctrine and exemplars",
+      "Observe lexicon/quote/anti-style outputs",
+      "Stop for required human doctrine confirmation"
+    ],
+    "passes": false
+  },
+  {
+    "id": "history-report-75",
+    "category": "drafting",
+    "priority": "high",
+    "risk": "high",
+    "description": "Draft and review one subsection in clinician voice",
+    "verify": [
+      "Draft one subsection from approved claims",
+      "Run evidence review",
+      "Run style review"
+    ],
+    "passes": false
+  },
+  {
+    "id": "history-report-76",
+    "category": "integration",
+    "priority": "high",
+    "risk": "high",
+    "description": "Deliver full Presenting Information section end-to-end",
+    "verify": [
+      "Draft Presenting Information subsections",
+      "Integrate into one section",
+      "Verify traceability remains intact"
+    ],
+    "passes": false
+  },
+  {
+    "id": "history-report-77",
+    "category": "integration",
+    "priority": "high",
+    "risk": "high",
+    "description": "Deliver full Relevant History draft with global review",
+    "verify": [
+      "Draft all history subsections",
+      "Run global evidence/style review",
+      "Emit provenance map"
+    ],
+    "passes": false
+  },
+  {
+    "id": "history-report-78",
+    "category": "memo",
+    "priority": "medium",
+    "risk": "medium",
+    "description": "Generate clinician-native noteworthy questions memo",
+    "verify": [
+      "Generate memo from workflow artifacts",
+      "Verify clinician-native style",
+      "Verify memo remains non-interpretive"
+    ],
+    "passes": false
+  },
+  {
+    "id": "history-report-79",
+    "category": "branching",
+    "priority": "medium",
+    "risk": "high",
+    "description": "Handle prior-eval-heavy and conflict-heavy cases honestly",
+    "verify": [
+      "Run conflict-heavy fixture",
+      "Observe continuity/conflict artifacts",
+      "Observe correct hold/escalation behavior"
+    ],
+    "passes": false
+  },
+  {
+    "id": "history-report-80",
+    "category": "maintenance",
+    "priority": "medium",
+    "risk": "high",
+    "description": "Capture clinician edits as doctrine update proposals",
+    "verify": [
+      "Record clinician edits as case-specific corrections",
+      "Generate doctrine update proposals",
+      "Preserve human promotion step"
+    ],
+    "passes": false
+  }
+]
