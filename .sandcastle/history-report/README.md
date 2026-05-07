@@ -117,3 +117,16 @@ node .sandcastle/history-report/scripts/branching-review-run.mjs \
 
 The branching-review slice emits continuity/change and conflict artifacts and
 marks conflict-heavy or prior-eval-heavy runs for conservative escalation.
+
+## Doctrine-updates entrypoint
+
+```bash
+node .sandcastle/history-report/scripts/doctrine-updates-run.mjs \
+  --source-dir "/absolute/path/to/deidentified-markdown-folder" \
+  --run-id "20260507T131415Z" \
+  --edited-draft-path "/absolute/path/to/clinician-edited-draft.md"
+```
+
+The doctrine-updates slice compares a clinician-edited draft against the
+generated draft, records case-specific corrections, and emits candidate doctrine
+update proposals without mutating doctrine automatically.

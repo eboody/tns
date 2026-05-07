@@ -140,6 +140,6 @@
       "Generate doctrine update proposals",
       "Preserve human promotion step"
     ],
-    "passes": false
+    "passes": true
   }
 ]

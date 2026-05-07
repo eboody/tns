@@ -20,6 +20,7 @@
 - targeted `node --test src/history-report-relevant-history.test.js` while iterating on full Relevant History integration
 - targeted `node --test src/history-report-clinician-memo.test.js` while iterating on clinician memo behavior
 - targeted `node --test src/history-report-branching-review.test.js` while iterating on branching-review behavior
+- targeted `node --test src/history-report-doctrine-updates.test.js` while iterating on doctrine update proposal behavior
 - `npm run history:test` when the slice changes the user-facing test-run surface
 - `git status --short` before commit staging
 
