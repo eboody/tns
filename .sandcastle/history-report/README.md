@@ -106,3 +106,14 @@ node .sandcastle/history-report/scripts/clinician-memo-run.mjs \
 
 The clinician-memo slice generates a psychologist-voice memo of missing
 information, conflicts, style underfit, and interpretation-relevant questions.
+
+## Branching-review entrypoint
+
+```bash
+node .sandcastle/history-report/scripts/branching-review-run.mjs \
+  --source-dir "/absolute/path/to/deidentified-markdown-folder" \
+  --run-id "20260507T131415Z"
+```
+
+The branching-review slice emits continuity/change and conflict artifacts and
+marks conflict-heavy or prior-eval-heavy runs for conservative escalation.

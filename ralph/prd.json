@@ -127,7 +127,7 @@
       "Observe continuity/conflict artifacts",
       "Observe correct hold/escalation behavior"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "history-report-80",
