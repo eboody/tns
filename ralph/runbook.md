@@ -13,6 +13,7 @@
 - targeted `node --test src/history-report-bootstrap.test.js` while iterating on bootstrap behavior
 - targeted `node --test src/history-report-inventory.test.js` while iterating on inventory behavior
 - targeted `node --test src/history-report-evidence.test.js` while iterating on evidence behavior
+- targeted `node --test src/history-report-planning.test.js` while iterating on planning behavior
 - `git status --short` before staging a commit
 
 ## Current stop condition

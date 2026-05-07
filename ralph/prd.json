@@ -49,7 +49,7 @@
       "Emit section plan with salience and missingness",
       "Observe primary section ownership per claim"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "history-report-74",

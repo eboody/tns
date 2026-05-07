@@ -35,3 +35,15 @@ node .sandcastle/history-report/scripts/evidence-run.mjs \
 The evidence slice derives provenance-bearing segment annotations, attributed
 atomic claims, and per-source evidence sheets from the admitted markdown source
 set.
+
+## Planning entrypoint
+
+```bash
+node .sandcastle/history-report/scripts/planning-run.mjs \
+  --source-dir "/absolute/path/to/deidentified-markdown-folder" \
+  --run-id "20260507T131415Z"
+```
+
+The planning slice classifies the case into the correct lifecycle/report schema,
+assigns claims to primary section homes, and emits section-planning artifacts
+with salience and missingness decisions.
