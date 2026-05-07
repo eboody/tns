@@ -83,3 +83,15 @@ node .sandcastle/history-report/scripts/presenting-section-run.mjs \
 The presenting-section slice drafts both presenting-information subsections,
 integrates them in ontology order, and emits the first full section-level prose
 artifact.
+
+## Relevant-history entrypoint
+
+```bash
+node .sandcastle/history-report/scripts/relevant-history-run.mjs \
+  --source-dir "/absolute/path/to/deidentified-markdown-folder" \
+  --run-id "20260507T131415Z"
+```
+
+The relevant-history slice drafts each required Relevant History subsection,
+integrates them into one section, and emits a section-level provenance map plus
+global review artifact.

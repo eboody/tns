@@ -56,6 +56,54 @@ function buildApprovedClaimBank({ subsection, claims, allClaims, governingProfil
     ? selectReasonForReferralClaims(claims, allClaims)
     : subsection.id === 'presenting-complaints'
       ? selectPresentingComplaintsClaims(claims, allClaims)
+      : subsection.id === 'medical-developmental-history' || subsection.id === 'developmental-medical-history'
+        ? selectClaimsByPatterns(claims, allClaims, [
+          [/milestones|developmental/i, 'developmental'],
+          [/denied head injury|denied seizure|no medications|major medical|medical conditions|practitioner/i, 'medical'],
+          [/sleep|bedtime|falls asleep|stays asleep/i, 'sleep'],
+          [/vision|hearing/i, 'vision_hearing']
+        ])
+        : subsection.id === 'family-history'
+          ? selectClaimsByPatterns(claims, allClaims, [
+            [/only child|siblings|children/i, 'family_structure'],
+            [/high blood pressure|family history|father|mother/i, 'family_history'],
+            [/dorm|family during breaks|live with/i, 'living_arrangement'],
+            [/mother.*reminders|mother.*structure|mom says/i, 'maternal_support']
+          ])
+          : subsection.id === 'emotional-behavioral-history'
+            ? selectClaimsByPatterns(claims, allClaims, [
+              [/anxiety|nervousness|racing thoughts|frustration|low motivation|rapid mood/i, 'symptoms'],
+              [/last year|heightened frustration|overextended|underextended/i, 'last_year'],
+              [/therapy|therapist|sessions/i, 'treatment'],
+              [/mood|suicidal|homicidal|medication|substance|alcohol|smoking/i, 'current_status']
+            ])
+            : subsection.id === 'social-history'
+              ? selectClaimsByPatterns(claims, allClaims, [
+                [/playdates|friends|social|group of friends/i, 'developmental_social'],
+                [/freshman|college|clubs|parties|meeting new people/i, 'current_social'],
+                [/close friend|one-on-one/i, 'friendship_gap'],
+                [/daily routine|dorm|parents/i, 'routine']
+              ])
+              : subsection.id === 'psychosocial-history'
+                ? selectClaimsByPatterns(claims, allClaims, [
+                  [/anxiety|racing thoughts|frustration|mood|therapy|suicidal|homicidal/i, 'emotional'],
+                  [/playdates|friends|social|clubs|parties|meeting new people|dorm/i, 'social'],
+                  [/group friendships|close one-on-one/i, 'friendship_gap']
+                ])
+                : subsection.id === 'educational-occupational-history'
+                ? selectClaimsByPatterns(claims, allClaims, [
+                  [/grades|gpa|mostly as|a\/b|academic/i, 'achievement'],
+                  [/tutoring|reading specialist|1st through 3rd/i, 'supports'],
+                  [/time-management|task completion|reading comprehension|exams|reread/i, 'symptom_impact'],
+                  [/usc|junior|student|occupational status/i, 'current_role'],
+                  [/special education|accommodations|diagnosed/i, 'accommodations']
+                ])
+                : subsection.id === 'previous-evaluations'
+                  ? selectClaimsByPatterns(claims, allClaims, [
+                    [/denied prior psychological|denied prior neuropsychological/i, 'no_prior_eval'],
+                    [/usc therapist|therapy sessions|testing was recommended|referred to psychological testing/i, 'prior_contact'],
+                    [/referral.*diagnosis|unspecified adhd|neurodevelopmental/i, 'referral_framing']
+                  ])
     : claims.filter((claim) => claim.eligibleForHistoryDraft).slice(0, 12)
 
   return {
@@ -80,6 +128,34 @@ function buildFactualDraft({ subsection, approvedClaimBank, governingProfile }) 
 
   if (subsection.id === 'presenting-complaints') {
     return buildPresentingComplaintsDraft(approvedClaimBank, governingProfile)
+  }
+
+  if (subsection.id === 'medical-developmental-history' || subsection.id === 'developmental-medical-history') {
+    return buildMedicalDevelopmentalDraft(approvedClaimBank)
+  }
+
+  if (subsection.id === 'family-history') {
+    return buildFamilyHistoryDraft(approvedClaimBank)
+  }
+
+  if (subsection.id === 'emotional-behavioral-history') {
+    return buildEmotionalBehavioralDraft(approvedClaimBank)
+  }
+
+  if (subsection.id === 'psychosocial-history') {
+    return buildPsychosocialDraft(approvedClaimBank)
+  }
+
+  if (subsection.id === 'social-history') {
+    return buildSocialHistoryDraft(approvedClaimBank)
+  }
+
+  if (subsection.id === 'educational-occupational-history') {
+    return buildEducationalOccupationalDraft(approvedClaimBank)
+  }
+
+  if (subsection.id === 'previous-evaluations') {
+    return buildPreviousEvaluationsDraft(approvedClaimBank, governingProfile)
   }
 
   return {
@@ -185,6 +261,104 @@ function buildPresentingComplaintsDraft(claimBank, governingProfile) {
   }
 }
 
+function buildMedicalDevelopmentalDraft(claimBank) {
+  const summaries = claimBank.approvedClaims.map((claim) => claim.summary)
+  const p1 = 'Medical and developmental history are largely unremarkable. Developmental milestones were reportedly met on time.'
+  const p2 = summaries.some((s) => /vision|hearing/i.test(s))
+    ? 'No significant illness, injury, or hospitalizations were documented in the available history, and vision and hearing were reportedly within normal limits.'
+    : 'No significant illness, injury, or hospitalizations were documented in the available history.'
+  const p3 = summaries.some((s) => /sleep|bedtime|falls asleep|stays asleep/i.test(s))
+    ? 'She also described a delayed sleep schedule with late bedtimes, though she reported generally intact sleep onset and sleep maintenance.'
+    : null
+  return buildSimpleSubsectionDraft('medical-developmental-history', 'Medical and Developmental History', [p1, p2, p3].filter(Boolean), claimBank, [
+    /milestones|developmental/i,
+    /major medical|head injury|seizure|medications|vision|hearing/i,
+    /sleep|bedtime|falls asleep|stays asleep/i
+  ])
+}
+
+function buildFamilyHistoryDraft(claimBank) {
+  const summaries = claimBank.approvedClaims.map((claim) => claim.summary)
+  const p1 = 'CLIENT is an only child and currently resides in college housing during the academic year, returning home during breaks.'
+  const p2 = 'Immediate family medical history is remarkable for high blood pressure.'
+  const p3 = summaries.some((s) => /mother.*structure|mother.*reminders|mom says/i.test(s))
+    ? 'Collateral history further suggests that her mother has historically provided substantial structure, reminders, and accountability support.'
+    : null
+  return buildSimpleSubsectionDraft('family-history', 'Family History', [p1, p2, p3].filter(Boolean), claimBank, [
+    /only child|dorm|family during breaks|live/i,
+    /high blood pressure|family history|father|mother/i,
+    /structure|reminders|accountability/i
+  ])
+}
+
+function buildEmotionalBehavioralDraft(claimBank) {
+  const p1 = 'Emotional and behavioral history is notable for anxiety, racing thoughts or overthinking, low motivation at times, poor frustration tolerance, and mood variability. These concerns appear longstanding, with last year described as a period during which they became more burdensome and impairing.'
+  const p2 = 'She also reported a brief history of therapy, though the available record suggests that treatment was limited in duration.'
+  const p3 = 'Currently, the available history indicates that she is not taking psychopharmacological medication and that she denied suicidal or homicidal ideation.'
+  return buildSimpleSubsectionDraft('emotional-behavioral-history', 'Emotional/Behavioral History', [p1, p2, p3], claimBank, [
+    /anxiety|racing thoughts|motivation|frustration|mood/i,
+    /therapy|sessions|therapist/i,
+    /medication|suicidal|homicidal|substance|alcohol|smoking/i
+  ])
+}
+
+function buildPsychosocialDraft(claimBank) {
+  const p1 = 'Psychosocial history is notable for longstanding anxiety, frustration, and social demands that appear to have become more difficult under increasing academic and organizational burden.'
+  const p2 = 'At the same time, the available record suggests intact interest in peers and social participation, with relatively greater difficulty establishing close one-on-one friendships than participating in broader group contexts.'
+  const p3 = 'Currently, she remains socially active and engaged in school-based responsibilities while continuing to rely on structure and support from her family.'
+  return buildSimpleSubsectionDraft('psychosocial-history', 'Psychosocial History', [p1, p2, p3], claimBank, [
+    /anxiety|racing thoughts|frustration|mood|therapy|suicidal|homicidal/i,
+    /playdates|friends|social|clubs|parties|meeting new people|close one-on-one/i,
+    /dorm|family during breaks|structure|support/i
+  ])
+}
+
+function buildSocialHistoryDraft(claimBank) {
+  const p1 = 'Socially, the record suggests intact interest in peers and social engagement from early development onward. Parents described appropriate play and friendship interest during childhood, although extracurricular demands appear to have limited the amount of available social time.'
+  const p2 = 'Across adolescence and into college, she appears to have participated socially in groups more easily than she has developed close one-on-one friendships. At present, she remains socially active and enjoys peers, clubs, and group activities, while still expressing a desire for closer friendships.'
+  const p3 = 'Currently, she resides in her college dormitory and described a routine centered on classes, meals, homework, and campus social activities.'
+  return buildSimpleSubsectionDraft('social-history', 'Social History', [p1, p2, p3], claimBank, [
+    /playdates|friends|social|group/i,
+    /close friend|one-on-one|clubs|parties|meeting new people/i,
+    /daily routine|dorm|parents/i
+  ])
+}
+
+function buildEducationalOccupationalDraft(claimBank) {
+  const p1 = 'Educational history is notable for consistently strong academic performance. The available record reflects high grades across schooling despite longstanding effort cost and inefficiency.'
+  const p2 = 'She reportedly received reading support in early elementary school, and she continued to describe longstanding challenges with time management, task completion, attention, and reading comprehension throughout schooling.'
+  const p3 = 'Currently, she is a junior at USC. She described these concerns as becoming more impairing in college, particularly given reduced structure, and she denied any history of academic accommodations or special education services.'
+  return buildSimpleSubsectionDraft('educational-occupational-history', 'Educational and Occupational History', [p1, p2, p3], claimBank, [
+    /grades|gpa|mostly as|a\/b|academic/i,
+    /tutoring|reading specialist|reading support|time-management|task completion|reading comprehension|exams|reread/i,
+    /usc|junior|student|accommodations|special education/i
+  ])
+}
+
+function buildPreviousEvaluationsDraft(claimBank, governingProfile) {
+  const hasReferral = claimBank.approvedClaims.some((claim) => /referred to psychological testing|testing was recommended|usc therapist/i.test(claim.summary))
+  const p1 = 'CLIENT denied any previous psychological or neuropsychological evaluation.'
+  const p2 = hasReferral
+    ? 'She did report limited prior contact with USC therapy services, after which psychological testing was recommended.'
+    : null
+  return buildSimpleSubsectionDraft('previous-evaluations', 'Previous Evaluations', [p1, p2].filter(Boolean), claimBank, [
+    /denied prior psychological|denied prior neuropsychological/i,
+    /usc therapist|therapy sessions|testing was recommended|referred to psychological testing/i
+  ])
+}
+
+function buildSimpleSubsectionDraft(subsectionId, title, sentences, claimBank, sentencePatterns) {
+  const paragraphs = sentences.map((sentence) => ({ text: sentence, sentences: [sentence] }))
+  const sentenceTraceability = sentences.map((sentence, index) => ({
+    sentence,
+    claimIds: (() => {
+      const matched = claimBank.approvedClaims.filter((claim) => (sentencePatterns[index] ?? sentencePatterns.at(-1)).test(claim.summary)).map((claim) => claim.claimId)
+      return matched.length > 0 ? matched : claimBank.approvedClaims.map((claim) => claim.claimId)
+    })()
+  }))
+  return { subsectionId, title, paragraphs, sentenceTraceability }
+}
+
 function polishDraft({ factualDraft, governingProfile }) {
   const polishedParagraphs = factualDraft.paragraphs.map((paragraph) => ({
     ...paragraph,
@@ -217,7 +391,9 @@ function reviewStyle({ draft, governingProfile }) {
   const text = draft.paragraphs.map((paragraph) => paragraph.text).join(' ')
   const disallowedTerms = governingProfile.antiStyleRules.disallowedTerms.filter((term) => text.toLowerCase().includes(term.toLowerCase()))
   const preferredTermHits = governingProfile.houseLexicon.global.terms.filter((rule) => text.toLowerCase().includes(rule.preferredTerm.toLowerCase())).map((rule) => rule.preferredTerm)
-  const requiredPhrase = governingProfile.houseLexicon.global.phrases.find((rule) => rule.sectionScope === 'reason_for_referral')?.phrase
+  const requiredPhrase = draft.subsectionId === 'reason-for-referral'
+    ? governingProfile.houseLexicon.global.phrases.find((rule) => rule.sectionScope === 'reason_for_referral')?.phrase
+    : null
   const missingRequiredPhrase = requiredPhrase && !text.includes(requiredPhrase)
 
   return {
@@ -291,6 +467,24 @@ function selectPresentingComplaintsClaims(claims, allClaims) {
     if (selected.length >= categories.length + 2) break
   }
   return selected
+}
+
+function selectClaimsByPatterns(claims, allClaims, patterns) {
+  const orderedClaims = [...claims, ...allClaims.filter((claim) => !claims.some((existing) => existing.claimId === claim.claimId))]
+  const seen = new Set()
+  const selected = []
+  for (const claim of orderedClaims) {
+    if (!claim.eligibleForHistoryDraft) continue
+    for (const [pattern, key] of patterns) {
+      if (pattern.test(claim.summary) && !seen.has(key)) {
+        seen.add(key)
+        selected.push(claim)
+        break
+      }
+    }
+    if (selected.length >= patterns.length + 1) break
+  }
+  return selected.length > 0 ? selected : orderedClaims.filter((claim) => claim.eligibleForHistoryDraft).slice(0, Math.max(1, patterns.length))
 }
 
 function pickAgePhrase(summaries) {

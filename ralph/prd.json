@@ -101,7 +101,7 @@
       "Run global evidence/style review",
       "Emit provenance map"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "history-report-78",

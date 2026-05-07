@@ -17,6 +17,7 @@
 - targeted `node --test src/history-report-style-profile.test.js` while iterating on style-profile behavior
 - targeted `node --test src/history-report-draft-subsection.test.js` while iterating on drafting behavior
 - targeted `node --test src/history-report-presenting-section.test.js` while iterating on presenting-section integration
+- targeted `node --test src/history-report-relevant-history.test.js` while iterating on full Relevant History integration
 - `npm run history:test` when the slice changes the user-facing test-run surface
 - `git status --short` before commit staging
 
