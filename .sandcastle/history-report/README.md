@@ -95,3 +95,14 @@ node .sandcastle/history-report/scripts/relevant-history-run.mjs \
 The relevant-history slice drafts each required Relevant History subsection,
 integrates them into one section, and emits a section-level provenance map plus
 global review artifact.
+
+## Clinician-memo entrypoint
+
+```bash
+node .sandcastle/history-report/scripts/clinician-memo-run.mjs \
+  --source-dir "/absolute/path/to/deidentified-markdown-folder" \
+  --run-id "20260507T131415Z"
+```
+
+The clinician-memo slice generates a psychologist-voice memo of missing
+information, conflicts, style underfit, and interpretation-relevant questions.
