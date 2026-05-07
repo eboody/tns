@@ -69,6 +69,13 @@ async function main() {
       'reason-for-referral'
     ])
 
+    runNodeScript('.sandcastle/history-report/scripts/presenting-section-run.mjs', [
+      '--source-dir',
+      sourceDirectory,
+      '--run-id',
+      runId
+    ])
+
     printSummary({ sourceDirectory, caseRoot, runRoot, runId })
   } catch (error) {
     console.error(String(error))
@@ -121,6 +128,7 @@ function printSummary({ sourceDirectory, caseRoot, runRoot, runId }) {
   console.log(`- ${path.join(runRoot, '03-derived', 'section-plan.md')}`)
   console.log(`- ${path.join(runRoot, '03-derived', 'governing-profile.json')}`)
   console.log(`- ${path.join(runRoot, '04-draft', 'reason-for-referral.draft.md')}`)
+  console.log(`- ${path.join(runRoot, '04-draft', 'presenting-information.draft.md')}`)
   console.log('')
   console.log('Set KEEP_HISTORY_REPORT_FIXTURE=1 if you want to keep the copied input folder under /tmp.')
 }

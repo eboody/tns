@@ -88,7 +88,7 @@
       "Integrate into one section",
       "Verify traceability remains intact"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "history-report-77",

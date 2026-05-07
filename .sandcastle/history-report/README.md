@@ -71,3 +71,15 @@ node .sandcastle/history-report/scripts/draft-subsection-run.mjs \
 
 The draft-subsection slice generates one subsection from approved claims,
 emits factual and polished drafts, and records evidence/style review results.
+
+## Presenting-section entrypoint
+
+```bash
+node .sandcastle/history-report/scripts/presenting-section-run.mjs \
+  --source-dir "/absolute/path/to/deidentified-markdown-folder" \
+  --run-id "20260507T131415Z"
+```
+
+The presenting-section slice drafts both presenting-information subsections,
+integrates them in ontology order, and emits the first full section-level prose
+artifact.

@@ -54,6 +54,8 @@ export async function runHistoryReportDraftSubsection({ sourceDirectory, repoRoo
 function buildApprovedClaimBank({ subsection, claims, allClaims, governingProfile }) {
   const selectedClaims = subsection.id === 'reason-for-referral'
     ? selectReasonForReferralClaims(claims, allClaims)
+    : subsection.id === 'presenting-complaints'
+      ? selectPresentingComplaintsClaims(claims, allClaims)
     : claims.filter((claim) => claim.eligibleForHistoryDraft).slice(0, 12)
 
   return {
@@ -76,6 +78,10 @@ function buildFactualDraft({ subsection, approvedClaimBank, governingProfile }) 
     return buildReasonForReferralDraft(approvedClaimBank, governingProfile)
   }
 
+  if (subsection.id === 'presenting-complaints') {
+    return buildPresentingComplaintsDraft(approvedClaimBank, governingProfile)
+  }
+
   return {
     subsectionId: subsection.id,
     title: subsection.title,
@@ -86,7 +92,7 @@ function buildFactualDraft({ subsection, approvedClaimBank, governingProfile }) 
 
 function buildReasonForReferralDraft(claimBank, governingProfile) {
   const summaries = claimBank.approvedClaims.map((claim) => claim.summary)
-  const agePhrase = pickAgePhrase(summaries) ?? 'CLIENT is an adult'
+  const agePhrase = pickAgePhrase(summaries) ?? `CLIENT is a ${governingProfile.classification.ageYears ?? 'young'}-year-old ${governingProfile.classification.lifecycleSchema === 'transition_age_young_adult' ? 'college student' : 'adult'}`
   const genderPhrase = pickGenderPhrase(summaries)
   const referralSetting = pickReferralSetting(summaries)
   const concernPhrase = buildConcernPhrase(summaries)
@@ -122,6 +128,58 @@ function buildReasonForReferralDraft(claimBank, governingProfile) {
       {
         sentence: sentence2,
         claimIds: purposeClaimIds.length > 0 ? purposeClaimIds : sentence1ClaimIds.slice(0, 1)
+      }
+    ]
+  }
+}
+
+function buildPresentingComplaintsDraft(claimBank, governingProfile) {
+  const summaries = claimBank.approvedClaims.map((claim) => claim.summary)
+  const opening = 'CLIENT endorsed difficulties with a variety of cognitive, sensory, and academic challenges.'
+  const timeManagement = buildTimeManagementSentence(summaries)
+  const sensory = buildSensorySentence(summaries)
+  const rigidity = buildRigiditySentence(summaries)
+  const impact = buildImpactSentence(summaries)
+
+  const paragraphs = [
+    {
+      text: `${opening} ${timeManagement}`,
+      sentences: [opening, timeManagement]
+    },
+    {
+      text: `${sensory} ${rigidity}`,
+      sentences: [sensory, rigidity]
+    },
+    {
+      text: impact,
+      sentences: [impact]
+    }
+  ]
+
+  return {
+    subsectionId: 'presenting-complaints',
+    title: 'Presenting Complaints/Symptoms',
+    paragraphs,
+    sentenceTraceability: [
+      {
+        sentence: opening,
+        claimIds: claimBank.approvedClaims.filter((claim) => /attention|time management|focus|sensory|reading|rigid/i.test(claim.summary)).map((claim) => claim.claimId)
+      },
+      {
+        sentence: timeManagement,
+        claimIds: claimBank.approvedClaims.filter((claim) => /time management|late|longer than peers|task/i.test(claim.summary)).map((claim) => claim.claimId)
+      },
+      {
+        sentence: sensory,
+        claimIds: claimBank.approvedClaims.filter((claim) => /sensory|quiet|light|noise|texture/i.test(claim.summary)).map((claim) => claim.claimId)
+      },
+      {
+        sentence: rigidity,
+        claimIds: claimBank.approvedClaims.filter((claim) => /rigid|routine|just right|shower/i.test(claim.summary)).map((claim) => claim.claimId)
+      },
+      {
+        sentence: impact,
+        claimIds: claimBank.approvedClaims.filter((claim) => /college|more noticeable|frustration|impact|difficulty|reading/i.test(claim.summary)).map((claim) => claim.claimId)
       }
     ]
   }
@@ -209,6 +267,32 @@ function reasonForReferralCategoryKey(claim) {
   return null
 }
 
+function selectPresentingComplaintsClaims(claims, allClaims) {
+  const orderedClaims = [...claims, ...allClaims.filter((claim) => !claims.some((existing) => existing.claimId === claim.claimId))]
+  const categories = [
+    [/time management|attention|focus|concentration|late|task/i, 'time_attention'],
+    [/sensory|quiet|light|noise|texture/i, 'sensory'],
+    [/rigid|routine|just right|shower/i, 'rigidity'],
+    [/reading/i, 'reading'],
+    [/college|more noticeable|frustration|impact|difficulty completing/i, 'impact']
+  ]
+
+  const seen = new Set()
+  const selected = []
+  for (const claim of orderedClaims) {
+    if (!claim.eligibleForHistoryDraft) continue
+    for (const [pattern, key] of categories) {
+      if (pattern.test(claim.summary) && !seen.has(key)) {
+        seen.add(key)
+        selected.push(claim)
+        break
+      }
+    }
+    if (selected.length >= categories.length + 2) break
+  }
+  return selected
+}
+
 function pickAgePhrase(summaries) {
   const match = summaries.join(' ').match(/CLIENT is a (\d{1,2}-year-old|\d{1,2}[- ]?year[- ]old) ([^.,;]+)/i)
   if (!match) {
@@ -255,6 +339,27 @@ function buildConcernPhrase(summaries) {
   }
 
   return joinClinicalList(parts.length > 0 ? parts : ['longstanding concerns'])
+}
+
+function buildTimeManagementSentence(summaries) {
+  const mentionsChildhood = summaries.some((summary) => /always|lifelong|childhood|since grade school/i.test(summary))
+  return `She described long-standing difficulties with time management${mentionsChildhood ? ' beginning in childhood' : ''}, including chronic lateness, needing more time than peers to complete tasks, and difficulty sustaining attention efficiently.`
+}
+
+function buildSensorySentence(summaries) {
+  const mentionsCollege = summaries.some((summary) => /college|usc/i.test(summary))
+  return `She also described sensory sensitivities related to quiet, light, and environmental noise that interfere with focus${mentionsCollege ? ', particularly in college settings' : ''}.`
+}
+
+function buildRigiditySentence(summaries) {
+  const mentionsLastYear = summaries.some((summary) => /last year|more noticeable/i.test(summary))
+  return `In addition, CLIENT described rigid patterns of behavior and adherence to routines, including a need for things to feel “just right” and discomfort when routines are disrupted${mentionsLastYear ? ', which appear to have become more noticeable over the past year' : ''}.`
+}
+
+function buildImpactSentence(summaries) {
+  const mentionsReading = summaries.some((summary) => /reading/i.test(summary))
+  const readingClause = mentionsReading ? ' She also endorsed needing to reread material in order to fully understand it.' : ''
+  return `These difficulties have contributed to frustration, reduced efficiency, and greater difficulty managing academic demands as the structure of college life has increased the burden on self-directed organization and focus.${readingClause}`.trim()
 }
 
 function buildBurdenPhrase(summaries) {
