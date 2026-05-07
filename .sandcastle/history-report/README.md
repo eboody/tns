@@ -59,3 +59,15 @@ node .sandcastle/history-report/scripts/style-profile-run.mjs \
 The style-profile slice compiles a provisional governing clinician profile from
 exemplars and doctrine defaults, emits lexicon/quote/anti-style artifacts, and
 marks the result as requiring clinician confirmation before stable promotion.
+
+## Draft-subsection entrypoint
+
+```bash
+node .sandcastle/history-report/scripts/draft-subsection-run.mjs \
+  --source-dir "/absolute/path/to/deidentified-markdown-folder" \
+  --run-id "20260507T131415Z" \
+  --subsection-id "reason-for-referral"
+```
+
+The draft-subsection slice generates one subsection from approved claims,
+emits factual and polished drafts, and records evidence/style review results.

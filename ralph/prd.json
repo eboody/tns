@@ -62,7 +62,7 @@
       "Observe lexicon/quote/anti-style outputs",
       "Stop for required human doctrine confirmation"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "history-report-75",
@@ -75,7 +75,7 @@
       "Run evidence review",
       "Run style review"
     ],
-    "passes": false
+    "passes": true
   },
   {
     "id": "history-report-76",
