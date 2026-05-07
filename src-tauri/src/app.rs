@@ -2,9 +2,13 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use crate::desktop::{
-    DesktopAddRedactionRequest, DesktopRemoveRedactionRequest, DesktopRunSettings,
-    DesktopReplaceRequest, DesktopReviewRequest,
+    DesktopAddRedactionRequest, DesktopRedactionAcrossFilesRequest,
+    DesktopRemoveRedactionRequest, DesktopRunSettings, DesktopReplaceRequest,
+    DesktopReviewRequest,
     add_manual_redaction as add_manual_redaction_service,
+    apply_redaction_to_all_files as apply_redaction_to_all_files_service,
+    inspect_redaction_across_files as inspect_redaction_across_files_service,
+    remove_redaction_from_all_files as remove_redaction_from_all_files_service,
     remove_redaction as remove_redaction_service, run_replace_job as run_replace_service,
     run_review_job as run_review_service,
 };
@@ -79,6 +83,27 @@ fn remove_redaction(
     request: DesktopRemoveRedactionRequest,
 ) -> Result<crate::desktop::DesktopPreviewUpdateResult, String> {
     remove_redaction_service(request).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn apply_redaction_to_all_files(
+    request: DesktopRedactionAcrossFilesRequest,
+) -> Result<crate::desktop::DesktopAcrossFilesUpdateResult, String> {
+    apply_redaction_to_all_files_service(request).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn remove_redaction_from_all_files(
+    request: DesktopRedactionAcrossFilesRequest,
+) -> Result<crate::desktop::DesktopAcrossFilesUpdateResult, String> {
+    remove_redaction_from_all_files_service(request).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn inspect_redaction_across_files(
+    request: DesktopRedactionAcrossFilesRequest,
+) -> Result<crate::desktop::DesktopAcrossFilesAvailability, String> {
+    inspect_redaction_across_files_service(request).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -193,6 +218,9 @@ pub fn run() {
             run_replace_job,
             add_manual_redaction,
             remove_redaction,
+            apply_redaction_to_all_files,
+            remove_redaction_from_all_files,
+            inspect_redaction_across_files,
             open_last_output_path,
             open_last_audit_output_path
         ])

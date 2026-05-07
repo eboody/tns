@@ -54,8 +54,7 @@ const beforePreview = document.getElementById('beforePreview')
 const afterPreview = document.getElementById('afterPreview')
 const previewActionTooltip = document.getElementById('previewActionTooltip')
 const previewActionLabel = document.getElementById('previewActionLabel')
-const previewActionButton = document.getElementById('previewActionButton')
-const previewSecondaryActionButton = document.getElementById('previewSecondaryActionButton')
+const previewActionButtons = document.getElementById('previewActionButtons')
 const summary = document.getElementById('summary')
 const openOutput = document.getElementById('openOutput')
 const openAudit = document.getElementById('openAudit')
@@ -72,6 +71,7 @@ let pendingPreviewActions = null
 let previewActionHideTimer = null
 let previewScrollSyncFrame = null
 let suppressPreviewScrollSync = false
+let previewActionInFlight = false
 
 renderWorkspace()
 
@@ -464,6 +464,10 @@ function fileListItem(primary, badge, secondary) {
   return item
 }
 
+function getPreviewByPath(path) {
+  return workspace.filePreviews.find((preview) => (preview.path ?? '') === path) ?? null
+}
+
 function countHighlights(html) {
   return (html.match(/<mark\b/g) ?? []).length
 }
@@ -567,12 +571,16 @@ function renderResultFiles() {
       outputPath
     })
 
+    const preview = getPreviewByPath(path)
     const item = fileListItem(path, kind, details)
-    const previewIndex = workspace.filePreviews.findIndex((preview) => (preview.path ?? '') === path)
-    if (previewIndex >= 0) {
+
+    if (preview) {
       item.classList.add('preview-selectable')
-      item.addEventListener('click', () => selectPreview(item, workspace.filePreviews[previewIndex]))
-      if ((workspace.filePreviews[previewIndex].path ?? '') === workspace.selectedPreviewPath || (index === 0 && !workspace.selectedPreviewPath)) {
+      item.addEventListener('click', () => {
+        workspace = selectPreviewPath(workspace, preview.path ?? null)
+        renderWorkspace()
+      })
+      if ((preview.path ?? '') === workspace.selectedPreviewPath || (index === 0 && !workspace.selectedPreviewPath)) {
         item.classList.add('preview-selected')
       }
     }
@@ -596,6 +604,17 @@ function toPreviewRequest(preview) {
 function replacePreviewState(updatedPreview, replacements) {
   workspace = replacePreviewArtifacts(workspace, updatedPreview, replacements)
   renderWorkspace()
+}
+
+function replacePreviewStates(updates) {
+  for (const update of updates) {
+    workspace = replacePreviewArtifacts(workspace, update.preview, update.replacements)
+  }
+  renderWorkspace()
+}
+
+function allPreviewRequests() {
+  return workspace.filePreviews.map((preview) => toPreviewRequest(preview))
 }
 
 function appendSummary(message) {
@@ -659,20 +678,24 @@ function hidePreviewActionTooltip() {
   }, 180)
 }
 
-function showPreviewActionTooltip({ rect, label, primaryAction, secondaryAction = null }) {
+function showPreviewActionTooltip({ rect, label, actions }) {
   if (previewActionHideTimer) {
     clearTimeout(previewActionHideTimer)
     previewActionHideTimer = null
   }
 
-  pendingPreviewActions = {
-    primaryAction,
-    secondaryAction
-  }
+  pendingPreviewActions = Array.isArray(actions) ? actions : []
   previewActionLabel.textContent = label
-  previewActionButton.textContent = primaryAction.buttonText
-  previewSecondaryActionButton.hidden = !secondaryAction
-  previewSecondaryActionButton.textContent = secondaryAction?.buttonText ?? ''
+  previewActionButtons.replaceChildren(
+    ...pendingPreviewActions.map((action, index) => {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.className = `preview-action-button secondary-button ${action.variant ?? ''}`.trim()
+      button.dataset.actionIndex = String(index)
+      button.textContent = action.buttonText
+      return button
+    })
+  )
   previewActionTooltip.hidden = false
   previewActionTooltip.setAttribute('aria-hidden', 'false')
   previewActionTooltip.dataset.state = 'opening'
@@ -764,6 +787,10 @@ function selectionWithinPreview() {
 }
 
 async function handleRedactionRemoval(markElement) {
+  if (previewActionInFlight) {
+    return
+  }
+
   const preview = getCurrentPreview()
   if (!preview) {
     return
@@ -772,56 +799,93 @@ async function handleRedactionRemoval(markElement) {
   const rect = markElement.getBoundingClientRect()
   const recordLabel = markElement.dataset.recordLabel ?? 'this redaction'
   const removalLabel = markElement.dataset.manualNumber
-    ? `Remove ${recordLabel.toLowerCase()}?`
-    : 'Remove this redaction?'
-  focusMatchingRedactions({
+    ? `Manage ${recordLabel.toLowerCase()}?`
+    : 'Manage this redaction?'
+  const redactionIdentity = {
     start: Number(markElement.dataset.recordStart ?? 0),
     end: Number(markElement.dataset.recordEnd ?? 0),
     replacement: markElement.dataset.recordReplacement ?? ''
+  }
+  const request = {
+    source: {
+      preview: toPreviewRequest(preview),
+      ...redactionIdentity
+    },
+    targets: allPreviewRequests()
+  }
+  focusMatchingRedactions({
+    ...redactionIdentity
   })
+
+  let availability
+  try {
+    availability = await invoke('inspect_redaction_across_files', { request })
+  } catch (error) {
+    appendSummary(`Inspect redaction everywhere error: ${String(error)}`)
+    return
+  }
+
+  const actions = []
+  if ((availability?.applicableTargets ?? 0) > 0) {
+    actions.push({
+      buttonText: 'Apply everywhere',
+      variant: 'preview-action-button-accent',
+      run: async () => {
+        try {
+          const result = await invoke('apply_redaction_to_all_files', { request })
+          replacePreviewStates(result.updates ?? [])
+          appendSummary(
+            `Applied this redaction across ${result.updatedTargets ?? 0} file(s). `
+            + `${result.unchangedTargets ?? 0} file(s) already matched.`
+          )
+        } catch (error) {
+          appendSummary(`Apply redaction everywhere error: ${String(error)}`)
+        }
+      }
+    })
+  }
+
+  if ((availability?.removableTargets ?? 0) > 0) {
+    actions.push({
+      buttonText: 'Remove everywhere',
+      run: async () => {
+        try {
+          const result = await invoke('remove_redaction_from_all_files', { request })
+          replacePreviewStates(result.updates ?? [])
+          appendSummary(
+            `Removed this redaction across ${result.updatedTargets ?? 0} file(s). `
+            + `${result.unchangedTargets ?? 0} file(s) had nothing to remove.`
+          )
+        } catch (error) {
+          appendSummary(`Remove redaction everywhere error: ${String(error)}`)
+        }
+      }
+    })
+  }
+
+  actions.push({
+    buttonText: 'Remove here',
+    run: async () => {
+      try {
+        const result = await invoke('remove_redaction', {
+          request: {
+            ...toPreviewRequest(preview),
+            ...redactionIdentity,
+            redactionScope: 'single_occurrence'
+          }
+        })
+        replacePreviewState(result.preview, result.replacements)
+        appendSummary('Removed selected redaction from this file.')
+      } catch (error) {
+        appendSummary(`Remove redaction error: ${String(error)}`)
+      }
+    }
+  })
+
   showPreviewActionTooltip({
     rect,
     label: removalLabel,
-    primaryAction: {
-      buttonText: 'Remove all',
-      run: async () => {
-        try {
-          const result = await invoke('remove_redaction', {
-            request: {
-              ...toPreviewRequest(preview),
-              start: Number(markElement.dataset.recordStart ?? 0),
-              end: Number(markElement.dataset.recordEnd ?? 0),
-              replacement: markElement.dataset.recordReplacement ?? '',
-              redactionScope: 'file_exact_matches'
-            }
-          })
-          replacePreviewState(result.preview, result.replacements)
-          appendSummary('Removed all matching redactions and updated output files.')
-        } catch (error) {
-          appendSummary(`Remove redaction error: ${String(error)}`)
-        }
-      }
-    },
-    secondaryAction: {
-      buttonText: 'Remove redaction',
-      run: async () => {
-        try {
-          const result = await invoke('remove_redaction', {
-            request: {
-              ...toPreviewRequest(preview),
-              start: Number(markElement.dataset.recordStart ?? 0),
-              end: Number(markElement.dataset.recordEnd ?? 0),
-              replacement: markElement.dataset.recordReplacement ?? '',
-              redactionScope: 'single_occurrence'
-            }
-          })
-          replacePreviewState(result.preview, result.replacements)
-          appendSummary('Removed selected redaction and updated output files.')
-        } catch (error) {
-          appendSummary(`Remove redaction error: ${String(error)}`)
-        }
-      }
-    }
+    actions
   })
 }
 
@@ -862,16 +926,16 @@ function maybeShowAddRedactionTooltip() {
   showPreviewActionTooltip({
     rect: selection.rect,
     label: 'Choose whether to redact just this occurrence or all exact matches in this file.',
-    primaryAction: {
+    actions: [{
       buttonText: 'Redact all matches',
+      variant: 'preview-action-button-accent',
       run: createManualRedactionAction(
         preview,
         selection,
         'file_exact_matches',
         'Added manual redaction for all exact matches and updated output files.'
       )
-    },
-    secondaryAction: {
+    }, {
       buttonText: 'Redact this',
       run: createManualRedactionAction(
         preview,
@@ -879,7 +943,7 @@ function maybeShowAddRedactionTooltip() {
         'single_occurrence',
         'Added manual redaction for the selected occurrence and updated output files.'
       )
-    }
+    }]
   })
 }
 
@@ -975,24 +1039,25 @@ document.addEventListener('keydown', (event) => {
   }
 })
 
-previewActionButton.addEventListener('click', async () => {
-  if (!pendingPreviewActions?.primaryAction) {
+previewActionButtons.addEventListener('click', async (event) => {
+  const button = targetElement(event.target)?.closest('button[data-action-index]')
+  if (!button) {
     return
   }
 
-  const action = pendingPreviewActions.primaryAction.run
-  hidePreviewActionTooltip()
-  await action()
-})
-
-previewSecondaryActionButton.addEventListener('click', async () => {
-  if (!pendingPreviewActions?.secondaryAction) {
+  const action = pendingPreviewActions?.[Number(button.dataset.actionIndex)]?.run
+  if (!action) {
     return
   }
 
-  const action = pendingPreviewActions.secondaryAction.run
+  previewActionInFlight = true
   hidePreviewActionTooltip()
-  await action()
+  try {
+    await action()
+    await nextPaint()
+  } finally {
+    previewActionInFlight = false
+  }
 })
 
 document.addEventListener('click', (event) => {

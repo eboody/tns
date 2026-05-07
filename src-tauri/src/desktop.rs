@@ -1,4 +1,5 @@
 use std::{
+    collections::HashSet,
     fs,
     path::{Path, PathBuf},
 };
@@ -170,7 +171,7 @@ struct EditableAuditPreviewReport {
     replacements: Vec<EditableAuditPreviewRecord>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 struct EditableAuditPreviewRecord {
     source: Value,
     entity_type: String,
@@ -238,6 +239,57 @@ pub struct DesktopRemoveRedactionRequest {
 pub struct DesktopPreviewUpdateResult {
     pub preview: DesktopFilePreview,
     pub replacements: usize,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopPreviewArtifactRequest {
+    pub path: PathBuf,
+    pub input_path: PathBuf,
+    pub output_path: PathBuf,
+    pub audit_output_path: PathBuf,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopExistingRedactionRequest {
+    pub preview: DesktopPreviewArtifactRequest,
+    pub start: usize,
+    pub end: usize,
+    pub replacement: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopRedactionAcrossFilesRequest {
+    pub source: DesktopExistingRedactionRequest,
+    pub targets: Vec<DesktopPreviewArtifactRequest>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopAcrossFilesUpdateResult {
+    pub updates: Vec<DesktopPreviewUpdateResult>,
+    pub requested_targets: usize,
+    pub updated_targets: usize,
+    pub unchanged_targets: usize,
+    pub ignored_targets: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopAcrossFilesAvailability {
+    pub applicable_targets: usize,
+    pub removable_targets: usize,
+}
+
+#[derive(Debug, Clone)]
+struct ExactMatchPropagationRule {
+    entity_type: String,
+    matched_text: String,
+    replacement: String,
+    source: Value,
+    reason: String,
 }
 
 impl DesktopRunSettings {
@@ -477,34 +529,234 @@ pub fn add_manual_redaction(
     )
 }
 
+pub fn apply_redaction_to_all_files(
+    request: DesktopRedactionAcrossFilesRequest,
+) -> Result<DesktopAcrossFilesUpdateResult> {
+    let source_record = read_source_redaction_record(&request.source)?;
+    let propagation_reason = source_propagation_reason(&request.source.preview.path);
+    let propagation_rule = ExactMatchPropagationRule {
+        source: json!("desktop_propagated"),
+        entity_type: source_record.entity_type.clone(),
+        matched_text: source_record.matched_text.clone(),
+        replacement: source_record.replacement.clone(),
+        reason: propagation_reason.clone(),
+    };
+
+    update_redaction_across_files(request, false, |audit_report| {
+        audit_report.replacements.retain(|record| {
+            !(record.reason == propagation_reason
+                && record.entity_type == source_record.entity_type
+                && record.matched_text == source_record.matched_text)
+        });
+    }, move |original_text, existing_replacements| {
+        build_exact_match_replacements(original_text, &[propagation_rule.clone()], existing_replacements)
+    })
+}
+
+pub fn remove_redaction_from_all_files(
+    request: DesktopRedactionAcrossFilesRequest,
+) -> Result<DesktopAcrossFilesUpdateResult> {
+    let source_record = read_source_redaction_record(&request.source)?;
+
+    update_redaction_across_files(request, true, move |audit_report| {
+        audit_report.replacements.retain(|record| {
+            !(record.matched_text == source_record.matched_text
+                && record.replacement == source_record.replacement)
+        });
+    }, |_original_text, _existing_replacements| Vec::new())
+}
+
+pub fn inspect_redaction_across_files(
+    request: DesktopRedactionAcrossFilesRequest,
+) -> Result<DesktopAcrossFilesAvailability> {
+    let source_record = read_source_redaction_record(&request.source)?;
+    let propagation_rule = ExactMatchPropagationRule {
+        source: json!("desktop_propagated"),
+        entity_type: source_record.entity_type.clone(),
+        matched_text: source_record.matched_text.clone(),
+        replacement: source_record.replacement.clone(),
+        reason: source_propagation_reason(&request.source.preview.path),
+    };
+
+    let mut applicable_targets = 0usize;
+    let mut removable_targets = 0usize;
+    let mut seen_target_paths = HashSet::new();
+
+    for target in request.targets {
+        if !seen_target_paths.insert(target.path.clone()) || target.path == request.source.preview.path {
+            continue;
+        }
+
+        let original_text = load_preview_input_as_markdown(&target.input_path)?;
+        let audit_report = read_editable_audit_report(&target.audit_output_path)?;
+
+        if audit_report.replacements.iter().any(|record| {
+            record.matched_text == source_record.matched_text
+                && record.replacement == source_record.replacement
+        }) {
+            removable_targets += 1;
+        }
+
+        let new_replacements = build_exact_match_replacements(
+            &original_text,
+            &[propagation_rule.clone()],
+            &audit_report.replacements,
+        );
+        if !new_replacements.is_empty() {
+            applicable_targets += 1;
+        }
+    }
+
+    Ok(DesktopAcrossFilesAvailability {
+        applicable_targets,
+        removable_targets,
+    })
+}
+
+fn update_redaction_across_files(
+    request: DesktopRedactionAcrossFilesRequest,
+    include_source_target: bool,
+    mut normalize: impl FnMut(&mut EditableAuditPreviewReport),
+    mut build_new_replacements: impl FnMut(&str, &[EditableAuditPreviewRecord]) -> Vec<EditableAuditPreviewRecord>,
+) -> Result<DesktopAcrossFilesUpdateResult> {
+    let requested_targets = request.targets.len();
+    let mut updated_targets = 0usize;
+    let mut unchanged_targets = 0usize;
+    let mut ignored_targets = 0usize;
+    let mut seen_target_paths = HashSet::new();
+    let mut updates = Vec::new();
+
+    for target in request.targets {
+        if !seen_target_paths.insert(target.path.clone())
+            || (!include_source_target && target.path == request.source.preview.path)
+        {
+            ignored_targets += 1;
+            continue;
+        }
+
+        let original_text = load_preview_input_as_markdown(&target.input_path)?;
+        let mut audit_report = read_editable_audit_report(&target.audit_output_path)?;
+        let original_replacements = audit_report.replacements.clone();
+
+        normalize(&mut audit_report);
+        let new_replacements = build_new_replacements(&original_text, &audit_report.replacements);
+        audit_report.replacements.extend(new_replacements);
+        sort_and_validate_replacements(&mut audit_report.replacements)?;
+
+        if audit_report.replacements == original_replacements {
+            unchanged_targets += 1;
+            continue;
+        }
+
+        updates.push(persist_preview_edit(
+            target.path,
+            target.output_path,
+            target.audit_output_path,
+            original_text,
+            audit_report,
+        )?);
+        updated_targets += 1;
+    }
+
+    Ok(DesktopAcrossFilesUpdateResult {
+        updates,
+        requested_targets,
+        updated_targets,
+        unchanged_targets,
+        ignored_targets,
+    })
+}
+
+fn read_source_redaction_record(
+    request: &DesktopExistingRedactionRequest,
+) -> Result<EditableAuditPreviewRecord> {
+    let audit_report = read_editable_audit_report(&request.preview.audit_output_path)?;
+    audit_report
+        .replacements
+        .into_iter()
+        .find(|record| {
+            record.start == request.start
+                && record.end == request.end
+                && record.replacement == request.replacement
+        })
+        .ok_or_else(|| {
+            crate::error::AppError::InvalidPreviewEdit(
+                "clicked redaction no longer exists in the current preview".to_string(),
+            )
+        })
+}
+
 fn build_manual_replacements_for_exact_matches(
     original_text: &str,
     matched_text: &str,
     existing_replacements: &[EditableAuditPreviewRecord],
 ) -> Vec<EditableAuditPreviewRecord> {
-    original_text
-        .match_indices(matched_text)
-        .filter_map(|(start, _)| {
-            let end = start + matched_text.len();
-            if !has_exact_match_boundaries(original_text, start, end, matched_text) {
-                return None;
+    build_exact_match_replacements(
+        original_text,
+        &[ExactMatchPropagationRule {
+            source: json!("custom"),
+            entity_type: "MANUAL_REDACTION".to_string(),
+            matched_text: matched_text.to_string(),
+            replacement: "[MANUAL_REDACTION]".to_string(),
+            reason: "desktop manual exact-match propagation".to_string(),
+        }],
+        existing_replacements,
+    )
+}
+
+fn source_propagation_reason(source_path: &Path) -> String {
+    format!(
+        "desktop propagated exact-match redaction from {}",
+        source_path.display()
+    )
+}
+
+fn build_exact_match_replacements(
+    original_text: &str,
+    rules: &[ExactMatchPropagationRule],
+    existing_replacements: &[EditableAuditPreviewRecord],
+) -> Vec<EditableAuditPreviewRecord> {
+    let mut sorted_rules = rules.to_vec();
+    sorted_rules.sort_by(|left, right| {
+        right
+            .matched_text
+            .len()
+            .cmp(&left.matched_text.len())
+            .then_with(|| left.entity_type.cmp(&right.entity_type))
+            .then_with(|| left.replacement.cmp(&right.replacement))
+            .then_with(|| left.matched_text.cmp(&right.matched_text))
+    });
+
+    let mut occupied = existing_replacements.to_vec();
+    let mut replacements = Vec::new();
+
+    for rule in sorted_rules {
+        for (start, _) in original_text.match_indices(&rule.matched_text) {
+            let end = start + rule.matched_text.len();
+            if !has_exact_match_boundaries(original_text, start, end, &rule.matched_text) {
+                continue;
             }
-            if overlaps_existing_replacement(existing_replacements, start, end) {
-                return None;
+            if overlaps_existing_replacement(&occupied, start, end) {
+                continue;
             }
 
-            Some(EditableAuditPreviewRecord {
-                source: json!("custom"),
-                entity_type: "MANUAL_REDACTION".to_string(),
-                matched_text: matched_text.to_string(),
-                replacement: "[MANUAL_REDACTION]".to_string(),
-                reason: "desktop manual exact-match propagation".to_string(),
+            let record = EditableAuditPreviewRecord {
+                source: rule.source.clone(),
+                entity_type: rule.entity_type.clone(),
+                matched_text: rule.matched_text.clone(),
+                replacement: rule.replacement.clone(),
+                reason: rule.reason.clone(),
                 score: None,
                 start,
                 end,
-            })
-        })
-        .collect()
+            };
+            occupied.push(record.clone());
+            replacements.push(record);
+        }
+    }
+
+    replacements.sort_by_key(|record| (record.start, record.end));
+    replacements
 }
 
 fn has_exact_match_boundaries(text: &str, start: usize, end: usize, matched_text: &str) -> bool {
@@ -1013,12 +1265,15 @@ mod tests {
     use lopdf::{Document, Object, Stream, dictionary};
 
     use super::{
-        DesktopAddRedactionRequest, DesktopCaseContextSettings, DesktopExactEntitySettings,
-        DesktopNerSettings, DesktopPatternRuleSettings, DesktopPatternSettings,
+        DesktopAddRedactionRequest, DesktopExistingRedactionRequest,
+        DesktopRedactionAcrossFilesRequest,
+        DesktopCaseContextSettings, DesktopExactEntitySettings, DesktopNerSettings,
+        DesktopPatternRuleSettings, DesktopPatternSettings, DesktopPreviewArtifactRequest,
         DesktopProfileSettings, DesktopRemoveRedactionRequest, DesktopReplaceRequest,
         DesktopReviewReason, DesktopReviewRequest, DesktopRunSettings,
         EditableAuditPreviewRecord, ManualRedactionScope, PreviewSelectionSource,
-        add_manual_redaction,
+        add_manual_redaction, apply_redaction_to_all_files, inspect_redaction_across_files,
+        remove_redaction_from_all_files,
         build_manual_replacements_for_exact_matches, load_preview_input_as_markdown,
         map_original_highlights, read_editable_audit_report, remove_redaction, run_replace_job,
         run_review_job,
@@ -1566,6 +1821,567 @@ mod tests {
         assert_eq!(removed.replacements, 4);
         assert!(!removed.preview.redacted_html.contains("data-manual-number=\"1\""));
         assert!(!removed.preview.redacted_html.contains("data-manual-number=\"2\""));
+    }
+
+    #[test]
+    fn apply_redaction_to_all_files_updates_matching_targets_and_ignores_source() {
+        let temp = tempdir().unwrap();
+        let input_dir = temp.path().join("input");
+
+        fs::create_dir_all(&input_dir).unwrap();
+        fs::write(
+            input_dir.join("source.md"),
+            "Jane Doe emailed jane@example.com. Later Jane Doe emailed billing@example.com.",
+        )
+        .unwrap();
+        fs::write(
+            input_dir.join("target.md"),
+            "The coordinator emailed support@example.com and then emailed billing@example.com.",
+        )
+        .unwrap();
+
+        let result = run_replace_job(DesktopReplaceRequest {
+            input: input_dir.clone(),
+            config: None,
+            settings: None,
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+        })
+        .unwrap();
+
+        let source_preview = result
+            .file_previews
+            .iter()
+            .find(|preview| preview.path == PathBuf::from("source.md"))
+            .unwrap();
+        let target_preview = result
+            .file_previews
+            .iter()
+            .find(|preview| preview.path == PathBuf::from("target.md"))
+            .unwrap();
+        let source_text = load_preview_input_as_markdown(&source_preview.input_path).unwrap();
+        let selection_start = source_text.find("emailed").unwrap();
+        let selection_end = selection_start + "emailed".len();
+
+        let updated_source = add_manual_redaction(DesktopAddRedactionRequest {
+            path: source_preview.path.clone(),
+            input_path: source_preview.input_path.clone(),
+            output_path: source_preview.output_path.clone(),
+            audit_output_path: source_preview.audit_output_path.clone(),
+            source_preview: PreviewSelectionSource::Original,
+            selection_start,
+            selection_end,
+            redaction_scope: ManualRedactionScope::FileExactMatches,
+        })
+        .unwrap();
+
+        let applied = apply_redaction_to_all_files(DesktopRedactionAcrossFilesRequest {
+            source: DesktopExistingRedactionRequest {
+                preview: DesktopPreviewArtifactRequest {
+                    path: updated_source.preview.path.clone(),
+                    input_path: updated_source.preview.input_path.clone(),
+                    output_path: updated_source.preview.output_path.clone(),
+                    audit_output_path: updated_source.preview.audit_output_path.clone(),
+                },
+                start: selection_start,
+                end: selection_end,
+                replacement: "[MANUAL_REDACTION]".to_string(),
+            },
+            targets: vec![
+                DesktopPreviewArtifactRequest {
+                    path: updated_source.preview.path.clone(),
+                    input_path: updated_source.preview.input_path.clone(),
+                    output_path: updated_source.preview.output_path.clone(),
+                    audit_output_path: updated_source.preview.audit_output_path.clone(),
+                },
+                DesktopPreviewArtifactRequest {
+                    path: target_preview.path.clone(),
+                    input_path: target_preview.input_path.clone(),
+                    output_path: target_preview.output_path.clone(),
+                    audit_output_path: target_preview.audit_output_path.clone(),
+                },
+            ],
+        })
+        .unwrap();
+
+        assert_eq!(applied.requested_targets, 2);
+        assert_eq!(applied.updated_targets, 1);
+        assert_eq!(applied.ignored_targets, 1);
+        assert_eq!(applied.unchanged_targets, 0);
+        assert_eq!(applied.updates.len(), 1);
+        assert!(applied.updates[0].preview.redacted_html.contains("[MANUAL_REDACTION]"));
+        assert!(
+            fs::read_to_string(&target_preview.output_path)
+                .unwrap()
+                .contains("[MANUAL_REDACTION]")
+        );
+    }
+
+    #[test]
+    fn inspect_redaction_across_files_reports_available_actions() {
+        let temp = tempdir().unwrap();
+        let input_dir = temp.path().join("input");
+
+        fs::create_dir_all(&input_dir).unwrap();
+        fs::write(
+            input_dir.join("source.md"),
+            "Jane Doe emailed jane@example.com. Later Jane Doe emailed billing@example.com.",
+        )
+        .unwrap();
+        fs::write(
+            input_dir.join("target-a.md"),
+            "The coordinator emailed support@example.com and then emailed billing@example.com.",
+        )
+        .unwrap();
+        fs::write(
+            input_dir.join("target-b.md"),
+            "The office emailed billing@example.com once already.",
+        )
+        .unwrap();
+
+        let result = run_replace_job(DesktopReplaceRequest {
+            input: input_dir.clone(),
+            config: None,
+            settings: None,
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+        })
+        .unwrap();
+
+        let source_preview = result
+            .file_previews
+            .iter()
+            .find(|preview| preview.path == PathBuf::from("source.md"))
+            .unwrap();
+        let target_a = result
+            .file_previews
+            .iter()
+            .find(|preview| preview.path == PathBuf::from("target-a.md"))
+            .unwrap();
+        let target_b = result
+            .file_previews
+            .iter()
+            .find(|preview| preview.path == PathBuf::from("target-b.md"))
+            .unwrap();
+        let source_text = load_preview_input_as_markdown(&source_preview.input_path).unwrap();
+        let selection_start = source_text.find("emailed").unwrap();
+        let selection_end = selection_start + "emailed".len();
+
+        let updated_source = add_manual_redaction(DesktopAddRedactionRequest {
+            path: source_preview.path.clone(),
+            input_path: source_preview.input_path.clone(),
+            output_path: source_preview.output_path.clone(),
+            audit_output_path: source_preview.audit_output_path.clone(),
+            source_preview: PreviewSelectionSource::Original,
+            selection_start,
+            selection_end,
+            redaction_scope: ManualRedactionScope::FileExactMatches,
+        })
+        .unwrap();
+
+        let _applied = apply_redaction_to_all_files(DesktopRedactionAcrossFilesRequest {
+            source: DesktopExistingRedactionRequest {
+                preview: DesktopPreviewArtifactRequest {
+                    path: updated_source.preview.path.clone(),
+                    input_path: updated_source.preview.input_path.clone(),
+                    output_path: updated_source.preview.output_path.clone(),
+                    audit_output_path: updated_source.preview.audit_output_path.clone(),
+                },
+                start: selection_start,
+                end: selection_end,
+                replacement: "[MANUAL_REDACTION]".to_string(),
+            },
+            targets: result
+                .file_previews
+                .iter()
+                .map(|preview| DesktopPreviewArtifactRequest {
+                    path: preview.path.clone(),
+                    input_path: preview.input_path.clone(),
+                    output_path: preview.output_path.clone(),
+                    audit_output_path: preview.audit_output_path.clone(),
+                })
+                .collect(),
+        })
+        .unwrap();
+
+        let availability = inspect_redaction_across_files(DesktopRedactionAcrossFilesRequest {
+            source: DesktopExistingRedactionRequest {
+                preview: DesktopPreviewArtifactRequest {
+                    path: updated_source.preview.path.clone(),
+                    input_path: updated_source.preview.input_path.clone(),
+                    output_path: updated_source.preview.output_path.clone(),
+                    audit_output_path: updated_source.preview.audit_output_path.clone(),
+                },
+                start: selection_start,
+                end: selection_end,
+                replacement: "[MANUAL_REDACTION]".to_string(),
+            },
+            targets: vec![
+                DesktopPreviewArtifactRequest {
+                    path: updated_source.preview.path.clone(),
+                    input_path: updated_source.preview.input_path.clone(),
+                    output_path: updated_source.preview.output_path.clone(),
+                    audit_output_path: updated_source.preview.audit_output_path.clone(),
+                },
+                DesktopPreviewArtifactRequest {
+                    path: target_a.path.clone(),
+                    input_path: target_a.input_path.clone(),
+                    output_path: target_a.output_path.clone(),
+                    audit_output_path: target_a.audit_output_path.clone(),
+                },
+                DesktopPreviewArtifactRequest {
+                    path: target_b.path.clone(),
+                    input_path: target_b.input_path.clone(),
+                    output_path: target_b.output_path.clone(),
+                    audit_output_path: target_b.audit_output_path.clone(),
+                },
+            ],
+        })
+        .unwrap();
+
+        assert_eq!(availability.applicable_targets, 0);
+        assert_eq!(availability.removable_targets, 2);
+    }
+
+    #[test]
+    fn inspect_redaction_across_files_shows_apply_only_before_sync() {
+        let temp = tempdir().unwrap();
+        let input_dir = temp.path().join("input");
+
+        fs::create_dir_all(&input_dir).unwrap();
+        fs::write(
+            input_dir.join("source.md"),
+            "Jane Doe emailed jane@example.com. Later Jane Doe emailed billing@example.com.",
+        )
+        .unwrap();
+        fs::write(
+            input_dir.join("target.md"),
+            "The coordinator emailed support@example.com and then emailed billing@example.com.",
+        )
+        .unwrap();
+
+        let result = run_replace_job(DesktopReplaceRequest {
+            input: input_dir.clone(),
+            config: None,
+            settings: None,
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+        })
+        .unwrap();
+
+        let source_preview = result
+            .file_previews
+            .iter()
+            .find(|preview| preview.path == PathBuf::from("source.md"))
+            .unwrap();
+        let target_preview = result
+            .file_previews
+            .iter()
+            .find(|preview| preview.path == PathBuf::from("target.md"))
+            .unwrap();
+        let source_text = load_preview_input_as_markdown(&source_preview.input_path).unwrap();
+        let selection_start = source_text.find("emailed").unwrap();
+        let selection_end = selection_start + "emailed".len();
+
+        let updated_source = add_manual_redaction(DesktopAddRedactionRequest {
+            path: source_preview.path.clone(),
+            input_path: source_preview.input_path.clone(),
+            output_path: source_preview.output_path.clone(),
+            audit_output_path: source_preview.audit_output_path.clone(),
+            source_preview: PreviewSelectionSource::Original,
+            selection_start,
+            selection_end,
+            redaction_scope: ManualRedactionScope::FileExactMatches,
+        })
+        .unwrap();
+
+        let before_apply = inspect_redaction_across_files(DesktopRedactionAcrossFilesRequest {
+            source: DesktopExistingRedactionRequest {
+                preview: DesktopPreviewArtifactRequest {
+                    path: updated_source.preview.path.clone(),
+                    input_path: updated_source.preview.input_path.clone(),
+                    output_path: updated_source.preview.output_path.clone(),
+                    audit_output_path: updated_source.preview.audit_output_path.clone(),
+                },
+                start: selection_start,
+                end: selection_end,
+                replacement: "[MANUAL_REDACTION]".to_string(),
+            },
+            targets: vec![DesktopPreviewArtifactRequest {
+                path: target_preview.path.clone(),
+                input_path: target_preview.input_path.clone(),
+                output_path: target_preview.output_path.clone(),
+                audit_output_path: target_preview.audit_output_path.clone(),
+            }],
+        })
+        .unwrap();
+
+        assert_eq!(before_apply.applicable_targets, 1);
+        assert_eq!(before_apply.removable_targets, 0);
+
+        let _applied = apply_redaction_to_all_files(DesktopRedactionAcrossFilesRequest {
+            source: DesktopExistingRedactionRequest {
+                preview: DesktopPreviewArtifactRequest {
+                    path: updated_source.preview.path.clone(),
+                    input_path: updated_source.preview.input_path.clone(),
+                    output_path: updated_source.preview.output_path.clone(),
+                    audit_output_path: updated_source.preview.audit_output_path.clone(),
+                },
+                start: selection_start,
+                end: selection_end,
+                replacement: "[MANUAL_REDACTION]".to_string(),
+            },
+            targets: vec![DesktopPreviewArtifactRequest {
+                path: target_preview.path.clone(),
+                input_path: target_preview.input_path.clone(),
+                output_path: target_preview.output_path.clone(),
+                audit_output_path: target_preview.audit_output_path.clone(),
+            }],
+        })
+        .unwrap();
+
+        let after_apply = inspect_redaction_across_files(DesktopRedactionAcrossFilesRequest {
+            source: DesktopExistingRedactionRequest {
+                preview: DesktopPreviewArtifactRequest {
+                    path: updated_source.preview.path.clone(),
+                    input_path: updated_source.preview.input_path.clone(),
+                    output_path: updated_source.preview.output_path.clone(),
+                    audit_output_path: updated_source.preview.audit_output_path.clone(),
+                },
+                start: selection_start,
+                end: selection_end,
+                replacement: "[MANUAL_REDACTION]".to_string(),
+            },
+            targets: vec![DesktopPreviewArtifactRequest {
+                path: target_preview.path.clone(),
+                input_path: target_preview.input_path.clone(),
+                output_path: target_preview.output_path.clone(),
+                audit_output_path: target_preview.audit_output_path.clone(),
+            }],
+        })
+        .unwrap();
+
+        assert_eq!(after_apply.applicable_targets, 0);
+        assert_eq!(after_apply.removable_targets, 1);
+    }
+
+    #[test]
+    fn remove_redaction_from_all_files_removes_propagated_matches_from_source_and_targets() {
+        let temp = tempdir().unwrap();
+        let input_dir = temp.path().join("input");
+
+        fs::create_dir_all(&input_dir).unwrap();
+        fs::write(
+            input_dir.join("source.md"),
+            "Jane Doe emailed jane@example.com. Later Jane Doe emailed billing@example.com.",
+        )
+        .unwrap();
+        fs::write(
+            input_dir.join("target.md"),
+            "The coordinator emailed support@example.com and then emailed billing@example.com.",
+        )
+        .unwrap();
+
+        let result = run_replace_job(DesktopReplaceRequest {
+            input: input_dir.clone(),
+            config: None,
+            settings: None,
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+        })
+        .unwrap();
+
+        let source_preview = result
+            .file_previews
+            .iter()
+            .find(|preview| preview.path == PathBuf::from("source.md"))
+            .unwrap();
+        let target_preview = result
+            .file_previews
+            .iter()
+            .find(|preview| preview.path == PathBuf::from("target.md"))
+            .unwrap();
+        let source_text = load_preview_input_as_markdown(&source_preview.input_path).unwrap();
+        let selection_start = source_text.find("emailed").unwrap();
+        let selection_end = selection_start + "emailed".len();
+
+        let updated_source = add_manual_redaction(DesktopAddRedactionRequest {
+            path: source_preview.path.clone(),
+            input_path: source_preview.input_path.clone(),
+            output_path: source_preview.output_path.clone(),
+            audit_output_path: source_preview.audit_output_path.clone(),
+            source_preview: PreviewSelectionSource::Original,
+            selection_start,
+            selection_end,
+            redaction_scope: ManualRedactionScope::FileExactMatches,
+        })
+        .unwrap();
+
+        let _initial_apply = apply_redaction_to_all_files(DesktopRedactionAcrossFilesRequest {
+            source: DesktopExistingRedactionRequest {
+                preview: DesktopPreviewArtifactRequest {
+                    path: updated_source.preview.path.clone(),
+                    input_path: updated_source.preview.input_path.clone(),
+                    output_path: updated_source.preview.output_path.clone(),
+                    audit_output_path: updated_source.preview.audit_output_path.clone(),
+                },
+                start: selection_start,
+                end: selection_end,
+                replacement: "[MANUAL_REDACTION]".to_string(),
+            },
+            targets: vec![DesktopPreviewArtifactRequest {
+                path: target_preview.path.clone(),
+                input_path: target_preview.input_path.clone(),
+                output_path: target_preview.output_path.clone(),
+                audit_output_path: target_preview.audit_output_path.clone(),
+            }],
+        })
+        .unwrap();
+
+        let reconciled = remove_redaction_from_all_files(DesktopRedactionAcrossFilesRequest {
+            source: DesktopExistingRedactionRequest {
+                preview: DesktopPreviewArtifactRequest {
+                    path: updated_source.preview.path.clone(),
+                    input_path: updated_source.preview.input_path.clone(),
+                    output_path: updated_source.preview.output_path.clone(),
+                    audit_output_path: updated_source.preview.audit_output_path.clone(),
+                },
+                start: selection_start,
+                end: selection_end,
+                replacement: "[MANUAL_REDACTION]".to_string(),
+            },
+            targets: vec![
+                DesktopPreviewArtifactRequest {
+                    path: updated_source.preview.path.clone(),
+                    input_path: updated_source.preview.input_path.clone(),
+                    output_path: updated_source.preview.output_path.clone(),
+                    audit_output_path: updated_source.preview.audit_output_path.clone(),
+                },
+                DesktopPreviewArtifactRequest {
+                    path: target_preview.path.clone(),
+                    input_path: target_preview.input_path.clone(),
+                    output_path: target_preview.output_path.clone(),
+                    audit_output_path: target_preview.audit_output_path.clone(),
+                },
+            ],
+        })
+        .unwrap();
+
+        assert_eq!(reconciled.updated_targets, 2);
+        assert_eq!(reconciled.unchanged_targets, 0);
+        assert_eq!(reconciled.updates.len(), 2);
+        assert!(reconciled
+            .updates
+            .iter()
+            .all(|update| !update.preview.redacted_html.contains("[MANUAL_REDACTION]")));
+        assert!(!fs::read_to_string(&target_preview.output_path)
+            .unwrap()
+            .contains("[MANUAL_REDACTION]"));
+    }
+
+    #[test]
+    fn remove_redaction_from_all_files_removes_matching_existing_target_redactions() {
+        let temp = tempdir().unwrap();
+        let input_dir = temp.path().join("input");
+
+        fs::create_dir_all(&input_dir).unwrap();
+        fs::write(
+            input_dir.join("source.md"),
+            "School note: Elm Hall appears in the source file.",
+        )
+        .unwrap();
+        fs::write(
+            input_dir.join("target.md"),
+            "Mailing note: Elm Hall appears in the target file.",
+        )
+        .unwrap();
+
+        let result = run_replace_job(DesktopReplaceRequest {
+            input: input_dir.clone(),
+            config: None,
+            settings: None,
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+        })
+        .unwrap();
+
+        let source_preview = result
+            .file_previews
+            .iter()
+            .find(|preview| preview.path == PathBuf::from("source.md"))
+            .unwrap();
+        let target_preview = result
+            .file_previews
+            .iter()
+            .find(|preview| preview.path == PathBuf::from("target.md"))
+            .unwrap();
+        let source_text = load_preview_input_as_markdown(&source_preview.input_path).unwrap();
+        let source_start = source_text.find("Elm Hall").unwrap();
+        let source_end = source_start + "Elm Hall".len();
+        let target_text = load_preview_input_as_markdown(&target_preview.input_path).unwrap();
+        let target_start = target_text.find("Elm Hall").unwrap();
+        let target_end = target_start + "Elm Hall".len();
+
+        let updated_source = add_manual_redaction(DesktopAddRedactionRequest {
+            path: source_preview.path.clone(),
+            input_path: source_preview.input_path.clone(),
+            output_path: source_preview.output_path.clone(),
+            audit_output_path: source_preview.audit_output_path.clone(),
+            source_preview: PreviewSelectionSource::Original,
+            selection_start: source_start,
+            selection_end: source_end,
+            redaction_scope: ManualRedactionScope::SingleOccurrence,
+        })
+        .unwrap();
+        let updated_target = add_manual_redaction(DesktopAddRedactionRequest {
+            path: target_preview.path.clone(),
+            input_path: target_preview.input_path.clone(),
+            output_path: target_preview.output_path.clone(),
+            audit_output_path: target_preview.audit_output_path.clone(),
+            source_preview: PreviewSelectionSource::Original,
+            selection_start: target_start,
+            selection_end: target_end,
+            redaction_scope: ManualRedactionScope::SingleOccurrence,
+        })
+        .unwrap();
+
+        let reconciled = remove_redaction_from_all_files(DesktopRedactionAcrossFilesRequest {
+            source: DesktopExistingRedactionRequest {
+                preview: DesktopPreviewArtifactRequest {
+                    path: updated_source.preview.path.clone(),
+                    input_path: updated_source.preview.input_path.clone(),
+                    output_path: updated_source.preview.output_path.clone(),
+                    audit_output_path: updated_source.preview.audit_output_path.clone(),
+                },
+                start: source_start,
+                end: source_end,
+                replacement: "[MANUAL_REDACTION]".to_string(),
+            },
+            targets: vec![
+                DesktopPreviewArtifactRequest {
+                    path: updated_source.preview.path.clone(),
+                    input_path: updated_source.preview.input_path.clone(),
+                    output_path: updated_source.preview.output_path.clone(),
+                    audit_output_path: updated_source.preview.audit_output_path.clone(),
+                },
+                DesktopPreviewArtifactRequest {
+                    path: updated_target.preview.path.clone(),
+                    input_path: updated_target.preview.input_path.clone(),
+                    output_path: updated_target.preview.output_path.clone(),
+                    audit_output_path: updated_target.preview.audit_output_path.clone(),
+                },
+            ],
+        })
+        .unwrap();
+
+        assert_eq!(reconciled.updated_targets, 2);
+        assert!(reconciled
+            .updates
+            .iter()
+            .all(|update| !update.preview.redacted_html.contains("[MANUAL_REDACTION]")));
+        assert!(fs::read_to_string(&updated_target.preview.output_path)
+            .unwrap()
+            .contains("Elm Hall"));
     }
 
     fn write_test_pdf(path: &std::path::Path, text: &str) {

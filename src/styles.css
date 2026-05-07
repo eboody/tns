@@ -64,7 +64,8 @@ body {
 }
 
 main {
-  max-width: 1500px;
+  width: 100%;
+  max-width: none;
   margin: 0 auto;
   padding: 34px 24px 40px;
   background: transparent;
@@ -144,7 +145,7 @@ main {
 
 .workspace {
   display: grid;
-  grid-template-columns: 300px minmax(0, 1fr);
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
   gap: 0;
   align-items: start;
   background: var(--surface);
@@ -504,6 +505,12 @@ button {
   font-size: 0.96rem;
   font-weight: 600;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  transition:
+    transform 160ms ease,
+    box-shadow 180ms ease,
+    background-color 180ms ease,
+    border-color 180ms ease,
+    color 180ms ease;
 }
 
 .actions-row {
@@ -515,6 +522,35 @@ button {
   color: #fff;
   border-color: transparent;
   box-shadow: none;
+}
+
+button:not(:disabled):hover {
+  transform: translateY(-1px);
+  border-color: rgba(31, 77, 122, 0.22);
+  background: color-mix(in srgb, var(--surface-strong) 82%, var(--blue-soft) 18%);
+  box-shadow:
+    0 10px 20px rgba(31, 24, 19, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.34);
+}
+
+.actions-row button:first-child:not(:disabled):hover {
+  background: color-mix(in srgb, var(--blue) 92%, white 8%);
+  border-color: transparent;
+  box-shadow:
+    0 12px 22px rgba(31, 77, 122, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+button:not(:disabled):active {
+  transform: translateY(0);
+  box-shadow:
+    0 5px 12px rgba(31, 24, 19, 0.08),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+
+button:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--blue) 72%, white 28%);
+  outline-offset: 2px;
 }
 
 .result-actions button,
@@ -955,11 +991,6 @@ button:disabled {
   min-height: 38px;
   padding: 0 14px;
   font-size: 0.9rem;
-  transition:
-    transform 140ms ease,
-    box-shadow 140ms ease,
-    background-color 140ms ease,
-    border-color 140ms ease;
 }
 
 .preview-action-button:hover {
@@ -974,6 +1005,24 @@ button:disabled {
   box-shadow:
     0 4px 10px rgba(31, 24, 19, 0.1),
     inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+.preview-action-button-accent {
+  background: color-mix(in srgb, var(--surface-strong) 68%, var(--blue-soft) 32%);
+  border-color: rgba(31, 77, 122, 0.18);
+  color: var(--blue);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button,
+  .preview-action-button {
+    transition: none;
+  }
+
+  button:not(:disabled):hover,
+  .preview-action-button:hover {
+    transform: none;
+  }
 }
 
 @keyframes spin {
