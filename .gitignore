@@ -7,3 +7,4 @@ ml/ner/model.onnx
 node_modules
 ralph
 .playwright-mcp/
+.sandcastle/history-report/cases/

@@ -1,4 +1,4 @@
-import { mkdir, readdir, stat, writeFile } from 'node:fs/promises'
+import { access, mkdir, readdir, stat, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 
 export function deriveCaseId(sourceDirectory) {
@@ -105,9 +105,9 @@ export async function bootstrapHistoryReportRun({
     writeJson(path.join(runRoot, '01-inventory', 'source-registry.json'), sourceRegistry),
     writeJson(path.join(runRoot, '05-audit', 'run-summary.json'), runSummary),
     writeFile(path.join(caseRoot, 'approved', 'latest.md'), '<!-- no approved report yet -->\n', 'utf8'),
-    writeFile(path.join(repoRoot, 'ralph', 'prd.json'), JSON.stringify(ralphPrd, null, 2) + '\n', 'utf8'),
-    writeFile(path.join(repoRoot, 'ralph', 'progress.md'), progressMarkdown, 'utf8'),
-    writeFile(path.join(repoRoot, 'ralph', 'runbook.md'), runbookMarkdown, 'utf8')
+    writeIfMissing(path.join(repoRoot, 'ralph', 'prd.json'), JSON.stringify(ralphPrd, null, 2) + '\n'),
+    writeIfMissing(path.join(repoRoot, 'ralph', 'progress.md'), progressMarkdown),
+    writeIfMissing(path.join(repoRoot, 'ralph', 'runbook.md'), runbookMarkdown)
   ])
 
   return {
@@ -193,4 +193,12 @@ function createRunbookMarkdown() {
 
 async function writeJson(filePath, value) {
   await writeFile(filePath, JSON.stringify(value, null, 2) + '\n', 'utf8')
+}
+
+async function writeIfMissing(filePath, contents) {
+  try {
+    await access(filePath)
+  } catch {
+    await writeFile(filePath, contents, 'utf8')
+  }
 }

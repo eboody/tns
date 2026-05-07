@@ -47,3 +47,15 @@ node .sandcastle/history-report/scripts/planning-run.mjs \
 The planning slice classifies the case into the correct lifecycle/report schema,
 assigns claims to primary section homes, and emits section-planning artifacts
 with salience and missingness decisions.
+
+## Style-profile entrypoint
+
+```bash
+node .sandcastle/history-report/scripts/style-profile-run.mjs \
+  --source-dir "/absolute/path/to/deidentified-markdown-folder" \
+  --run-id "20260507T131415Z"
+```
+
+The style-profile slice compiles a provisional governing clinician profile from
+exemplars and doctrine defaults, emits lexicon/quote/anti-style artifacts, and
+marks the result as requiring clinician confirmation before stable promotion.

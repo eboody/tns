@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "history:test": "node ./scripts/test-history-report.mjs",
     "test": "node --test src/*.test.js",
     "tauri": "tauri",
     "stage:runtime": "node ./scripts/stage-ort-runtime.mjs",
