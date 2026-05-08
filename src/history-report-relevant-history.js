@@ -27,22 +27,25 @@ export async function runHistoryReportRelevantHistory({ sourceDirectory, repoRoo
     title: 'RELEVANT HISTORY',
     introduction: 'All relevant history and background information were obtained through a neuropsychological history questionnaire completed by the patient, clinical interview with the patient, communications with collateral informants, and a review of available medical and academic records.',
     subsections: subsectionDrafts,
+    coverageNotes: subsectionResults.map((result) => `${result.subsectionId}: required coverage pass=${result.coverageReview?.pass !== false ? 'yes' : 'no'}`),
     integrationChangeLog: [
       'Relevant History was integrated from reviewed subsection drafts in ontology order.',
       'No subsection was rewritten from raw source text during integration.',
-      'Integration was limited to ordering and section-level packaging.'
+      'Integration was limited to ordering and section-level packaging.',
+      'Coverage obligations were preserved from subsection drafting artifacts before section packaging.'
     ]
   }
 
   const provenanceMap = buildProvenanceMap(subsectionDrafts)
   const globalReview = {
-    pass: subsectionResults.every((result) => result.evidenceReview.pass && result.styleReview.pass),
+    pass: subsectionResults.every((result) => result.evidenceReview.pass && result.styleReview.pass && result.coverageReview?.pass !== false),
     checks: {
       subsectionReviewsPass: subsectionResults.every((result) => result.evidenceReview.pass && result.styleReview.pass),
+      subsectionCoveragePass: subsectionResults.every((result) => result.coverageReview?.pass !== false),
       integratedWithoutNewFacts: true,
       provenanceMapGenerated: provenanceMap.entries.length > 0
     },
-    reviewSummary: 'Relevant History integrated from reviewed subsection drafts with provenance map generated for section-level traceability.'
+    reviewSummary: 'Relevant History integrated from reviewed subsection drafts with provenance map generated for section-level traceability and subsection coverage obligations preserved.'
   }
 
   await Promise.all([

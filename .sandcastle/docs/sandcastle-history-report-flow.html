@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sandcastle History Report Flow</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --font-body: 'IBM Plex Sans', system-ui, sans-serif;
+      --font-mono: 'IBM Plex Mono', 'SF Mono', Consolas, monospace;
+      --bg: #faf7f5;
+      --surface: #ffffff;
+      --surface-elevated: #fff9f5;
+      --surface-recessed: #f3ede8;
+      --border: rgba(33, 24, 18, 0.1);
+      --border-strong: rgba(33, 24, 18, 0.18);
+      --text: #2c241d;
+      --text-dim: #7a6e62;
+      --terracotta: #c2410c;
+      --terracotta-dim: rgba(194, 65, 12, 0.08);
+      --sage: #4d7c0f;
+      --sage-dim: rgba(77, 124, 15, 0.08);
+      --teal: #0f766e;
+      --teal-dim: rgba(15, 118, 110, 0.08);
+      --amber: #b45309;
+      --amber-dim: rgba(180, 83, 9, 0.08);
+      --plum: #9f1239;
+      --plum-dim: rgba(159, 18, 57, 0.08);
+      --shadow: 0 14px 40px rgba(44, 36, 29, 0.08);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #181310;
+        --surface: #231c18;
+        --surface-elevated: #2b221d;
+        --surface-recessed: #1f1916;
+        --border: rgba(255, 255, 255, 0.08);
+        --border-strong: rgba(255, 255, 255, 0.16);
+        --text: #f0e7df;
+        --text-dim: #ac9e90;
+        --terracotta: #fb923c;
+        --terracotta-dim: rgba(251, 146, 60, 0.12);
+        --sage: #bef264;
+        --sage-dim: rgba(190, 242, 100, 0.12);
+        --teal: #5eead4;
+        --teal-dim: rgba(94, 234, 212, 0.12);
+        --amber: #fbbf24;
+        --amber-dim: rgba(251, 191, 36, 0.12);
+        --plum: #fda4af;
+        --plum-dim: rgba(253, 164, 175, 0.12);
+        --shadow: 0 20px 48px rgba(0, 0, 0, 0.28);
+      }
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: var(--font-body);
+      color: var(--text);
+      background:
+        radial-gradient(circle at 0% 0%, var(--terracotta-dim), transparent 34%),
+        radial-gradient(circle at 100% 100%, var(--sage-dim), transparent 28%),
+        var(--bg);
+      min-height: 100vh;
+      padding: 40px 24px 80px;
+    }
+
+    .page {
+      max-width: 1220px;
+      margin: 0 auto;
+      display: grid;
+      gap: 22px;
+    }
+
+    .hero,
+    .panel,
+    .step,
+    .artifact,
+    .source,
+    .governor {
+      min-width: 0;
+    }
+
+    .hero {
+      background: var(--surface-elevated);
+      border: 1px solid var(--border-strong);
+      border-radius: 22px;
+      box-shadow: var(--shadow);
+      padding: 30px 32px;
+      display: grid;
+      gap: 18px;
+    }
+
+    .eyebrow {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--terracotta);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(2rem, 4vw, 3.3rem);
+      line-height: 0.98;
+      letter-spacing: -0.04em;
+      max-width: 11ch;
+    }
+
+    .hero-grid {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 20px;
+      align-items: start;
+    }
+
+    .lede {
+      color: var(--text-dim);
+      font-size: 1.02rem;
+      line-height: 1.7;
+      max-width: 65ch;
+    }
+
+    .callout {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 18px 18px 16px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .callout strong {
+      color: var(--text);
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    .chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .chip {
+      border-radius: 999px;
+      padding: 7px 11px;
+      font-size: 0.82rem;
+      background: var(--surface-recessed);
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 1.55fr 0.95fr;
+      gap: 22px;
+    }
+
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 22px;
+      box-shadow: var(--shadow);
+      display: grid;
+      gap: 18px;
+    }
+
+    .panel-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: baseline;
+      flex-wrap: wrap;
+    }
+
+    .panel-title h2 {
+      margin: 0;
+      font-size: 1.25rem;
+      letter-spacing: -0.02em;
+    }
+
+    .panel-title span {
+      font-family: var(--font-mono);
+      font-size: 0.78rem;
+      color: var(--text-dim);
+    }
+
+    .sources {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .source {
+      background: var(--surface-recessed);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px 14px 12px;
+      display: grid;
+      gap: 7px;
+    }
+
+    .source .kind {
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      color: var(--teal);
+    }
+
+    .source h3,
+    .step h3,
+    .artifact h3,
+    .governor h3 {
+      margin: 0;
+      font-size: 1rem;
+    }
+
+    .source p,
+    .step p,
+    .artifact p,
+    .governor p,
+    li {
+      margin: 0;
+      color: var(--text-dim);
+      line-height: 1.55;
+      overflow-wrap: break-word;
+    }
+
+    .pipeline {
+      display: grid;
+      gap: 12px;
+    }
+
+    .flow-arrow {
+      justify-self: center;
+      font-family: var(--font-mono);
+      color: var(--text-dim);
+      font-size: 0.84rem;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .step {
+      background: var(--surface-elevated);
+      border: 1px solid var(--border);
+      border-left-width: 4px;
+      border-radius: 16px;
+      padding: 16px 16px 14px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .step--terracotta { border-left-color: var(--terracotta); }
+    .step--sage { border-left-color: var(--sage); }
+    .step--teal { border-left-color: var(--teal); }
+    .step--amber { border-left-color: var(--amber); }
+    .step--plum { border-left-color: var(--plum); }
+
+    .step-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .step-tag,
+    .status {
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      border-radius: 999px;
+      padding: 5px 8px;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--text-dim);
+    }
+
+    .status--done {
+      color: var(--sage);
+      background: var(--sage-dim);
+      border-color: transparent;
+    }
+
+    .status--next {
+      color: var(--amber);
+      background: var(--amber-dim);
+      border-color: transparent;
+    }
+
+    ul {
+      margin: 0;
+      padding-left: 1.1rem;
+      display: grid;
+      gap: 6px;
+    }
+
+    .governance {
+      display: grid;
+      gap: 14px;
+      align-content: start;
+    }
+
+    .governor {
+      background: var(--surface-recessed);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .governor .label {
+      font-family: var(--font-mono);
+      font-size: 0.72rem;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--plum);
+    }
+
+    .legend {
+      display: grid;
+      gap: 10px;
+    }
+
+    .legend-item {
+      display: grid;
+      grid-template-columns: 14px 1fr;
+      gap: 10px;
+      align-items: start;
+      color: var(--text-dim);
+      font-size: 0.95rem;
+    }
+
+    .dot {
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      margin-top: 0.18rem;
+    }
+
+    .artifacts {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .artifact {
+      background: var(--surface-recessed);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 15px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .artifact .file {
+      font-family: var(--font-mono);
+      font-size: 0.76rem;
+      color: var(--text-dim);
+    }
+
+    .footer-note {
+      background: var(--terracotta-dim);
+      border: 1px solid color-mix(in srgb, var(--terracotta) 35%, transparent);
+      border-radius: 16px;
+      padding: 18px 20px;
+      color: var(--text);
+    }
+
+    @media (max-width: 1024px) {
+      .layout,
+      .hero-grid,
+      .sources,
+      .artifacts {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 720px) {
+      body { padding: 18px 14px 42px; }
+      .hero, .panel { padding: 18px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="hero">
+      <div class="eyebrow">Sandcastle workflow / history-report generation</div>
+      <div class="hero-grid">
+        <div>
+          <h1>What the flow is actually doing</h1>
+          <p class="lede">
+            This is not one giant prompt over a folder of records. The flow first classifies document kinds,
+            applies special handling rules per kind, launches bounded containerized agent work for each stage,
+            and only allows downstream drafting when governed artifacts are complete enough to trust.
+          </p>
+        </div>
+        <aside class="callout">
+          <div>
+            <strong>Core split</strong>
+            agents do reasoning; artifacts carry state; governors decide whether the workflow may continue.
+          </div>
+          <div class="chip-row">
+            <span class="chip">artifact-first</span>
+            <span class="chip">document-class aware</span>
+            <span class="chip">stage-bounded</span>
+            <span class="chip">human-gated where doctrine matters</span>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <div class="layout">
+      <section class="panel">
+        <div class="panel-title">
+          <h2>1. Inputs and source policy</h2>
+          <span>inventory decides what kind of thing each file is</span>
+        </div>
+        <div class="sources">
+          <article class="source">
+            <div class="kind">Hierarchy 1</div>
+            <h3>Clinician intake notes</h3>
+            <p>High-trust narrative source. Split into logical source units and preserve provenance line ranges.</p>
+          </article>
+          <article class="source">
+            <div class="kind">Hierarchy 1</div>
+            <h3>Questionnaires</h3>
+            <p>Admitted as contemporaneous self-report; later tagged differently from clinician-note content.</p>
+          </article>
+          <article class="source">
+            <div class="kind">Hierarchy 2</div>
+            <h3>Referral materials / prior evaluations</h3>
+            <p>Useful for rationale and prior findings, but not allowed to silently dominate the final narrative.</p>
+          </article>
+          <article class="source">
+            <div class="kind">Hierarchy 3</div>
+            <h3>Academic records</h3>
+            <p>Admitted with OCR caution and later compressed into chronology/performance evidence rather than raw lists.</p>
+          </article>
+          <article class="source">
+            <div class="kind">Excluded</div>
+            <h3>Generated reports</h3>
+            <p>Explicitly excluded from the working source set so past polished prose cannot masquerade as fresh evidence.</p>
+          </article>
+          <article class="source">
+            <div class="kind">Special handling</div>
+            <h3>Wrapper noise / empty markdown</h3>
+            <p>Conversion notes, headings, scratch files, and empty artifacts are filtered before downstream work begins.</p>
+          </article>
+        </div>
+      </section>
+
+      <aside class="panel governance">
+        <div class="panel-title">
+          <h2>Governors</h2>
+          <span>deterministic workflow checks</span>
+        </div>
+        <article class="governor">
+          <div class="label">Admission governor</div>
+          <h3>Include / exclude by document kind</h3>
+          <p>Prevents generated reports and administrative noise from entering the evidence path.</p>
+        </article>
+        <article class="governor">
+          <div class="label">Artifact completeness governor</div>
+          <h3>Only advance when the stage wrote the expected structured outputs</h3>
+          <p>Inventory, evidence, planning, and style stages all produce named artifacts under the run root.</p>
+        </article>
+        <article class="governor">
+          <div class="label">Doctrine / HITL governor</div>
+          <h3>Stop when clinician confirmation is required</h3>
+          <p>Style profile and quote rules are intentionally provisional until confirmed by a human clinician.</p>
+        </article>
+        <article class="governor">
+          <div class="label">Promotion governor</div>
+          <h3>Generation and approval stay separate</h3>
+          <p>Stable approved outputs should update only after explicit human promotion, not automatically after drafting.</p>
+        </article>
+      </aside>
+    </div>
+
+    <section class="panel">
+      <div class="panel-title">
+        <h2>2. Stage-bounded Sandcastle pipeline</h2>
+        <span>current implemented slices are solid; downstream report assembly is planned next</span>
+      </div>
+      <div class="pipeline">
+        <article class="step step--terracotta">
+          <div class="step-head">
+            <div>
+              <span class="step-tag">bootstrap</span>
+              <h3>Initialize stable case + run workspace</h3>
+            </div>
+            <span class="status status--done">implemented</span>
+          </div>
+          <p>Creates the deterministic case/run roots, brief, privacy assumption, source registry seed, and Ralph scaffolding.</p>
+        </article>
+
+        <div class="flow-arrow">↓ classify candidate files and split source units</div>
+
+        <article class="step step--sage">
+          <div class="step-head">
+            <div>
+              <span class="step-tag">inventory</span>
+              <h3>Apply document-class policy</h3>
+            </div>
+            <span class="status status--done">implemented</span>
+          </div>
+          <ul>
+            <li>infer document kind from path, content, and frontmatter</li>
+            <li>detect wrapper segments and logical source units</li>
+            <li>admit or exclude sources with an explicit hierarchy role</li>
+          </ul>
+        </article>
+
+        <div class="flow-arrow">↓ launch bounded evidence extraction over admitted sources</div>
+
+        <article class="step step--teal">
+          <div class="step-head">
+            <div>
+              <span class="step-tag">evidence</span>
+              <h3>Normalize segments and attributed atomic claims</h3>
+            </div>
+            <span class="status status--done">implemented</span>
+          </div>
+          <ul>
+            <li>tag each segment with source unit, lines, heading context, chronology cues, and conflict cues</li>
+            <li>distinguish self-report, collateral report, clinician note, prior-eval finding, and record fact</li>
+            <li>classify note fragments so follow-up prompts and diagnostic hypotheses do not flow downstream as ordinary facts</li>
+          </ul>
+        </article>
+
+        <div class="flow-arrow">↓ classify the case and assign claim homes</div>
+
+        <article class="step step--amber">
+          <div class="step-head">
+            <div>
+              <span class="step-tag">planning</span>
+              <h3>Resolve report schema and section ownership</h3>
+            </div>
+            <span class="status status--done">implemented</span>
+          </div>
+          <ul>
+            <li>infer child vs adult vs transition-age framing</li>
+            <li>select the honest section template for that lifecycle</li>
+            <li>assign each claim a primary section, salience, chronology bucket, and missingness mode</li>
+          </ul>
+        </article>
+
+        <div class="flow-arrow">↓ separate truth-generation from voice-generation</div>
+
+        <article class="step step--plum">
+          <div class="step-head">
+            <div>
+              <span class="step-tag">style profile</span>
+              <h3>Compile provisional clinician doctrine</h3>
+            </div>
+            <span class="status status--done">implemented</span>
+          </div>
+          <ul>
+            <li>derive voice rules, lexicon preferences, quote rules, and anti-style rules from exemplars</li>
+            <li>mark the result as requiring clinician confirmation before stable promotion</li>
+            <li>keep style guidance separate from factual evidence artifacts</li>
+          </ul>
+        </article>
+
+        <div class="flow-arrow">↓ next governed slices</div>
+
+        <article class="step step--terracotta">
+          <div class="step-head">
+            <div>
+              <span class="step-tag">drafting</span>
+              <h3>Render sections from approved artifacts, not raw source files</h3>
+            </div>
+            <span class="status status--next">planned</span>
+          </div>
+          <p>Use claim-bank-like planning artifacts plus confirmed style doctrine to write clinician-native subsections without importing unsupported claims.</p>
+        </article>
+
+        <article class="step step--sage">
+          <div class="step-head">
+            <div>
+              <span class="step-tag">audit + provenance</span>
+              <h3>Verify traceability and integration honesty</h3>
+            </div>
+            <span class="status status--next">planned</span>
+          </div>
+          <p>Map final prose back to approved evidence and confirm that integration did not smuggle in extra interpretation.</p>
+        </article>
+
+        <article class="step step--teal">
+          <div class="step-head">
+            <div>
+              <span class="step-tag">promotion</span>
+              <h3>Publish only on explicit human approval</h3>
+            </div>
+            <span class="status status--next">planned</span>
+          </div>
+          <p>Stable approved outputs should move to the canonical latest artifacts only after a clinician says yes.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title">
+        <h2>3. Durable artifacts each stage leaves behind</h2>
+        <span>containers can stop and resume because continuity is in artifacts, not chat memory</span>
+      </div>
+      <div class="artifacts">
+        <article class="artifact">
+          <div class="file">00-brief/</div>
+          <h3>Run identity + privacy assumptions</h3>
+          <p>Anchors the case id, run id, deliverable type, and initial workflow constraints.</p>
+        </article>
+        <article class="artifact">
+          <div class="file">01-inventory/</div>
+          <h3>Source registry + inclusion log</h3>
+          <p>Preserves why each source was admitted, excluded, or marked with caution.</p>
+        </article>
+        <article class="artifact">
+          <div class="file">02-evidence/</div>
+          <h3>Segment annotations + atomic claims</h3>
+          <p>Turns heterogeneous notes into normalized evidence with provenance and attribution.</p>
+        </article>
+        <article class="artifact">
+          <div class="file">03-derived/</div>
+          <h3>Case classification + section plan + style doctrine</h3>
+          <p>Defines the downstream report shape before any polished prose is allowed to exist.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title">
+        <h2>4. Why this design exists</h2>
+        <span>the class of problem it patches</span>
+      </div>
+      <div class="legend">
+        <div class="legend-item"><span class="dot" style="background: var(--terracotta);"></span><span><strong>Not:</strong> one omniscient model run that flattens intake notes, questionnaires, transcripts, referrals, and old reports into opaque prose.</span></div>
+        <div class="legend-item"><span class="dot" style="background: var(--sage);"></span><span><strong>Instead:</strong> explicit document taxonomy, explicit transformation rules, explicit stage outputs, and explicit human gates where doctrine or approval matters.</span></div>
+        <div class="legend-item"><span class="dot" style="background: var(--teal);"></span><span><strong>Effect:</strong> future report drafting becomes more inspectable, resumable, and auditable because each containerized task is bounded and governed.</span></div>
+      </div>
+    </section>
+
+    <section class="footer-note">
+      The honest mental model: <strong>specialized agents work locally on typed artifacts; governors decide whether those artifacts are good enough to become the substrate for the next slice.</strong>
+    </section>
+  </main>
+</body>
+</html>

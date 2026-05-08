@@ -18,9 +18,14 @@ export async function runHistoryReportPresentingSection({ sourceDirectory, repoR
     sectionId: 'presenting-information',
     title: 'PRESENTING INFORMATION/REASON FOR REFERRAL',
     subsections: [reasonDraft, complaintsDraft],
+    coverageNotes: [
+      `Reason for Referral required coverage pass: ${reason.coverageReview?.pass !== false ? 'yes' : 'no'}`,
+      `Presenting Complaints required coverage pass: ${complaints.coverageReview?.pass !== false ? 'yes' : 'no'}`
+    ],
     integrationChangeLog: [
       'Subsection drafts were concatenated in ontology order without introducing new facts.',
-      'No cross-subsection deduplication was required in this first integration slice.'
+      'No cross-subsection deduplication was required in this first integration slice.',
+      'Coverage obligations were preserved from subsection drafting artifacts before section packaging.'
     ]
   }
 
@@ -29,9 +34,11 @@ export async function runHistoryReportPresentingSection({ sourceDirectory, repoR
     checks: {
       reasonForReferralReviewPass: reason.evidenceReview.pass && reason.styleReview.pass,
       presentingComplaintsReviewPass: complaints.evidenceReview.pass && complaints.styleReview.pass,
+      reasonForReferralCoveragePass: reason.coverageReview?.pass !== false,
+      presentingComplaintsCoveragePass: complaints.coverageReview?.pass !== false,
       integratedWithoutNewFacts: true
     },
-    reviewSummary: 'Presenting Information section integrated from reviewed subsection drafts without new factual synthesis.'
+    reviewSummary: 'Presenting Information section integrated from reviewed subsection drafts without new factual synthesis and with subsection coverage obligations preserved.'
   }
 
   await Promise.all([

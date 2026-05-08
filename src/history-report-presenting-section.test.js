@@ -54,7 +54,8 @@ test('runHistoryReportPresentingSection drafts and integrates presenting informa
   assert.match(draftMarkdown, /## PRESENTING INFORMATION\/REASON FOR REFERRAL/)
   assert.match(draftMarkdown, /### Reason for Referral/)
   assert.match(draftMarkdown, /### Presenting Complaints\/Symptoms/)
-  assert.match(draftMarkdown, /These difficulties have contributed to frustration/)
+  assert.match(draftMarkdown, /heightened stress and frustration|heightened frustration/)
+  assert.doesNotMatch(draftMarkdown, /Additional factors contributing to referral included/)
 
   const integrationReview = JSON.parse(await readFile(path.join(bootstrap.runRoot, '05-audit', 'presenting-information.integration-review.json'), 'utf8'))
   assert.equal(integrationReview.pass, true)

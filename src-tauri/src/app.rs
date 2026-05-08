@@ -2,12 +2,17 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use crate::desktop::{
-    DesktopAddRedactionRequest, DesktopRedactionAcrossFilesRequest,
+    DesktopAddRedactionRequest, DesktopFindAndRedactRequest, DesktopRedactionAcrossFilesRequest,
+    DesktopRemoveRedactionTermRequest,
     DesktopRemoveRedactionRequest, DesktopRunSettings, DesktopReplaceRequest,
     DesktopReviewRequest,
     add_manual_redaction as add_manual_redaction_service,
     apply_redaction_to_all_files as apply_redaction_to_all_files_service,
+    find_and_redact_term as find_and_redact_term_service,
+    inspect_manual_redaction as inspect_manual_redaction_service,
     inspect_redaction_across_files as inspect_redaction_across_files_service,
+    merge_manual_redaction as merge_manual_redaction_service,
+    remove_redaction_term as remove_redaction_term_service,
     remove_redaction_from_all_files as remove_redaction_from_all_files_service,
     remove_redaction as remove_redaction_service, run_replace_job as run_replace_service,
     run_review_job as run_review_service,
@@ -79,6 +84,20 @@ fn add_manual_redaction(
 }
 
 #[tauri::command]
+fn inspect_manual_redaction(
+    request: DesktopAddRedactionRequest,
+) -> Result<crate::desktop::DesktopManualRedactionAvailability, String> {
+    inspect_manual_redaction_service(request).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn merge_manual_redaction(
+    request: DesktopAddRedactionRequest,
+) -> Result<crate::desktop::DesktopPreviewUpdateResult, String> {
+    merge_manual_redaction_service(request).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn remove_redaction(
     request: DesktopRemoveRedactionRequest,
 ) -> Result<crate::desktop::DesktopPreviewUpdateResult, String> {
@@ -104,6 +123,20 @@ fn inspect_redaction_across_files(
     request: DesktopRedactionAcrossFilesRequest,
 ) -> Result<crate::desktop::DesktopAcrossFilesAvailability, String> {
     inspect_redaction_across_files_service(request).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn find_and_redact_term(
+    request: DesktopFindAndRedactRequest,
+) -> Result<crate::desktop::DesktopAcrossFilesUpdateResult, String> {
+    find_and_redact_term_service(request).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn remove_redaction_term(
+    request: DesktopRemoveRedactionTermRequest,
+) -> Result<crate::desktop::DesktopAcrossFilesUpdateResult, String> {
+    remove_redaction_term_service(request).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -217,10 +250,14 @@ pub fn run() {
             run_review_job,
             run_replace_job,
             add_manual_redaction,
+            inspect_manual_redaction,
+            merge_manual_redaction,
             remove_redaction,
             apply_redaction_to_all_files,
             remove_redaction_from_all_files,
             inspect_redaction_across_files,
+            find_and_redact_term,
+            remove_redaction_term,
             open_last_output_path,
             open_last_audit_output_path
         ])

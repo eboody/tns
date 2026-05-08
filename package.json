@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "history:run": "node ./scripts/run-history-report.mjs",
     "history:test": "node ./scripts/test-history-report.mjs",
     "test": "node --test src/*.test.js",
     "tauri": "tauri",
@@ -28,6 +29,7 @@
     "vite": "^5.4.8"
   },
   "dependencies": {
+    "@preact/signals-core": "^1.8.0",
     "@tauri-apps/api": "^2.0.0",
     "@tauri-apps/plugin-dialog": "^2.0.0"
   }

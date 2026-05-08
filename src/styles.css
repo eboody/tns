@@ -450,6 +450,105 @@ main {
   min-width: 0;
 }
 
+.term-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.redaction-term-section {
+  display: grid;
+  gap: 0.6rem;
+}
+
+.redaction-term-section h3 {
+  margin: 0;
+  font-size: 0.96rem;
+}
+
+.term-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.term-list-item,
+.term-chip {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface-strong);
+  color: var(--text);
+  font-size: 0.88rem;
+}
+
+.term-list-item {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.2rem;
+  padding: 0.45rem 0.8rem;
+}
+
+.term-list-item-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  border-radius: 18px;
+  padding: 0.35rem;
+}
+
+.term-list-input {
+  min-width: 0;
+  flex: 1 1 auto;
+  border: 0;
+  background: transparent;
+  padding: 0.45rem 0.65rem;
+  box-shadow: none;
+  font-size: 0.88rem;
+}
+
+.term-list-input:focus {
+  outline: 1px solid color-mix(in srgb, var(--blue) 45%, transparent);
+  background: color-mix(in srgb, var(--surface-strong) 88%, var(--blue-soft) 12%);
+}
+
+.term-list-input::placeholder {
+  color: var(--text-dim);
+}
+
+.term-list-label,
+.term-list-input {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.term-list-actions {
+  display: inline-flex;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.term-list-action {
+  min-height: 2rem;
+  min-width: 2rem;
+  padding: 0.3rem;
+  font-size: 0.82rem;
+  border-radius: 999px;
+}
+
+.term-chip-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.term-chip {
+  min-height: 2.2rem;
+  padding: 0.45rem 0.8rem;
+}
+
 .field-help {
   display: block;
   margin-top: 0.45rem;

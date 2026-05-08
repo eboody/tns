@@ -1,9 +1,11 @@
 import './styles.css'
+import { effect } from '@preact/signals-core'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
+import {
+  createRedactionSidebarState
+} from './redaction-sidebar-state.js'
 import { buildReviewNotice } from './review-notice.js'
-import { buildRuntimeSettingsPayload } from './runtime-settings.js'
-import { loadAppSettings, normalizeAppSettings, saveAppSettings } from './settings-store.js'
 import {
   createWorkspaceState,
   failProcessing,
@@ -21,26 +23,10 @@ import {
 const inputPath = document.getElementById('inputPath')
 const pickInput = document.getElementById('pickInput')
 const pickFolder = document.getElementById('pickFolder')
-const editSettings = document.getElementById('editSettings')
-const settingsSummary = document.getElementById('settingsSummary')
-const settingsOverlay = document.getElementById('settingsOverlay')
-const closeSettings = document.getElementById('closeSettings')
-const cancelSettings = document.getElementById('cancelSettings')
-const saveSettingsButton = document.getElementById('saveSettings')
-const addExactEntity = document.getElementById('addExactEntity')
-const exactEntitiesList = document.getElementById('exactEntitiesList')
-const settingsClientReplacement = document.getElementById('settingsClientReplacement')
-const settingsClientVariants = document.getElementById('settingsClientVariants')
-const settingsDatesEnabled = document.getElementById('settingsDatesEnabled')
-const settingsDatesReplacement = document.getElementById('settingsDatesReplacement')
-const settingsEmailsEnabled = document.getElementById('settingsEmailsEnabled')
-const settingsEmailsReplacement = document.getElementById('settingsEmailsReplacement')
-const settingsPhonesEnabled = document.getElementById('settingsPhonesEnabled')
-const settingsPhonesReplacement = document.getElementById('settingsPhonesReplacement')
-const settingsNerEnabled = document.getElementById('settingsNerEnabled')
-const settingsNerModelPath = document.getElementById('settingsNerModelPath')
-const settingsNerTokenizerPath = document.getElementById('settingsNerTokenizerPath')
-const settingsNerMinConfidence = document.getElementById('settingsNerMinConfidence')
+const redactionTermInput = document.getElementById('redactionTermInput')
+const findAndRedactButton = document.getElementById('findAndRedact')
+const redactionTermsList = document.getElementById('redactionTermsList')
+const relatedRedactionTerms = document.getElementById('relatedRedactionTerms')
 const resultsPanel = document.getElementById('resultsPanel')
 const resultFiles = document.getElementById('resultFiles')
 const previewPanel = document.getElementById('previewPanel')
@@ -62,18 +48,26 @@ const loadingOverlay = document.getElementById('loadingOverlay')
 const loadingTitle = document.getElementById('loadingTitle')
 const loadingMessage = document.getElementById('loadingMessage')
 
-let appSettings = loadAppSettings()
-let settingsOpen = false
 let workspace = createWorkspaceState(
   'Desktop shell loaded. Choose a file or folder to start local processing automatically.'
 )
+const redactionSidebar = createRedactionSidebarState()
 let pendingPreviewActions = null
 let previewActionHideTimer = null
 let previewScrollSyncFrame = null
 let suppressPreviewScrollSync = false
 let previewActionInFlight = false
+let recentSelectionIntentUntil = 0
+let lastSidebarPreviewSet = null
+let activeRedactionTermId = null
+const liveRedactionTimers = new Map()
+const LIVE_REDACTION_DEBOUNCE_MS = 200
 
 renderWorkspace()
+
+effect(() => {
+  renderRelatedRedactionSuggestions(redactionSidebar.relatedSuggestions.value)
+})
 
 if (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost') {
   window.__tnsDesktopDebug = {
@@ -116,49 +110,34 @@ function setResultActionsEnabled(enabled) {
 function setInputControlsEnabled(enabled) {
   pickInput.disabled = !enabled
   pickFolder.disabled = !enabled
-  editSettings.disabled = !enabled
+  const hasPreviews = workspace.filePreviews.length > 0
+  findAndRedactButton.disabled = !enabled || !hasPreviews
+  redactionTermInput.disabled = !enabled || !hasPreviews
 }
 
 function renderWorkspace() {
+  syncRedactionSidebar()
   renderSelectedInput()
-  renderSettingsSummary()
+  if (activeRedactionTermId === null) {
+    renderRedactionTermsPanel(redactionSidebar.sourceTerms.peek())
+  }
   renderResultFiles()
   renderSelectedFileStrip()
   renderPreview(getSelectedPreview(workspace))
   renderLoadingOverlay()
-  renderSettingsOverlay()
   summary.textContent = workspace.summary
   setResultActionsEnabled(workspace.artifactsAvailable)
   setInputControlsEnabled(!workspace.processingInFlight)
   applyHighlightVisibility()
 }
 
-function renderSettingsSummary() {
-  const configuredExactEntities = appSettings.exactEntities.filter(hasMeaningfulExactEntity)
-  const configuredPatterns = [appSettings.patterns.dates, appSettings.patterns.emails, appSettings.patterns.phones].filter((rule) => rule.enabled).length
-  const hasClientAliases = Boolean(appSettings.clientReplacement || appSettings.clientVariants)
-  const hasNerOverride = Boolean(appSettings.ner.enabled)
-
-  if (!hasClientAliases && configuredExactEntities.length === 0 && configuredPatterns === 0 && !hasNerOverride) {
-    settingsSummary.textContent = 'No persistent de-identification settings configured. The default app pipeline will be used.'
+function syncRedactionSidebar(force = false) {
+  if (!force && (activeRedactionTermId !== null || workspace.filePreviews === lastSidebarPreviewSet)) {
     return
   }
 
-  const parts = []
-  if (hasClientAliases) {
-    parts.push('client aliases')
-  }
-  if (configuredExactEntities.length > 0) {
-    parts.push(`${configuredExactEntities.length} exact rule${configuredExactEntities.length === 1 ? '' : 's'}`)
-  }
-  if (configuredPatterns > 0) {
-    parts.push(`${configuredPatterns} pattern replacement${configuredPatterns === 1 ? '' : 's'}`)
-  }
-  if (hasNerOverride) {
-    parts.push('custom NER override')
-  }
-
-  settingsSummary.textContent = `Persistent settings active: ${parts.join(', ')}.`
+  redactionSidebar.syncFromPreviews(workspace.filePreviews)
+  lastSidebarPreviewSet = workspace.filePreviews
 }
 
 function renderLoadingOverlay() {
@@ -174,8 +153,35 @@ function renderLoadingOverlay() {
   loadingOverlay.hidden = false
 }
 
-function renderSettingsOverlay() {
-  settingsOverlay.hidden = !settingsOpen
+function renderRedactionTermsPanel(terms) {
+  redactionTermsList.replaceChildren()
+  if (terms.length === 0) {
+    redactionTermsList.appendChild(createTagListItem('No redaction terms yet. Select text or use find and redact.'))
+  } else {
+    for (const term of terms) {
+      redactionTermsList.appendChild(createEditableTermListItem(term))
+    }
+  }
+}
+
+function renderRelatedRedactionSuggestions(suggestions) {
+  relatedRedactionTerms.replaceChildren()
+  if (suggestions.length === 0) {
+    relatedRedactionTerms.appendChild(createTermChipPlaceholder('No related suggestions yet.'))
+    return
+  }
+
+  for (const suggestion of suggestions) {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'term-chip secondary-button'
+    button.textContent = suggestion
+    button.addEventListener('click', async () => {
+      redactionTermInput.value = suggestion
+      await handleFindAndRedact()
+    })
+    relatedRedactionTerms.appendChild(button)
+  }
 }
 
 function renderSelectedFileStrip() {
@@ -268,121 +274,197 @@ function renderSelectedInput() {
   inputPath.value = workspace.inputPath.trim()
 }
 
-function populateSettingsForm(settings) {
-  settingsClientReplacement.value = settings.clientReplacement
-  settingsClientVariants.value = settings.clientVariants
-  settingsDatesEnabled.checked = settings.patterns.dates.enabled
-  settingsDatesReplacement.value = settings.patterns.dates.replacement
-  settingsEmailsEnabled.checked = settings.patterns.emails.enabled
-  settingsEmailsReplacement.value = settings.patterns.emails.replacement
-  settingsPhonesEnabled.checked = settings.patterns.phones.enabled
-  settingsPhonesReplacement.value = settings.patterns.phones.replacement
-  settingsNerEnabled.checked = settings.ner.enabled
-  settingsNerModelPath.value = settings.ner.modelPath
-  settingsNerTokenizerPath.value = settings.ner.tokenizerPath
-  settingsNerMinConfidence.value = settings.ner.minConfidence
+function createTagListItem(text) {
+  const item = document.createElement('li')
+  item.className = 'term-list-item'
+  item.textContent = text
+  return item
+}
 
-  exactEntitiesList.replaceChildren()
-  const entities = settings.exactEntities.length > 0 ? settings.exactEntities : []
-  for (const entity of entities) {
-    exactEntitiesList.appendChild(createExactEntityRow(entity))
+function createEditableTermListItem(term) {
+  const item = document.createElement('li')
+  item.className = 'term-list-item term-list-item-row'
+
+  const input = document.createElement('input')
+  input.type = 'text'
+  input.className = 'term-list-input'
+  input.value = term.matchedText
+  input.setAttribute('aria-label', `Redaction term ${term.matchedText}`)
+  input.title = `${term.occurrences} occurrence${term.occurrences === 1 ? '' : 's'}`
+  item.appendChild(input)
+
+  const actions = document.createElement('div')
+  actions.className = 'term-list-actions'
+
+  const flushEdit = async () => {
+    clearLiveRedactionTimer(term.id)
+    await applyLiveRedactionEdit(term.id)
+    activeRedactionTermId = null
+    syncRedactionSidebar(true)
+    renderRedactionTermsPanel(redactionSidebar.sourceTerms.peek())
+  }
+
+  input.addEventListener('focus', () => {
+    activeRedactionTermId = term.id
+  })
+
+  input.addEventListener('input', () => {
+    redactionSidebar.setDraft(term.id, input.value)
+    scheduleLiveRedactionEdit(term.id)
+  })
+  input.addEventListener('blur', () => {
+    void flushEdit()
+  })
+  input.addEventListener('keydown', async (event) => {
+    if (event.key === 'Enter') {
+      event.preventDefault()
+      input.blur()
+      return
+    }
+
+    if (event.key === 'Escape') {
+      const committedTerm = redactionSidebar.committedValueFor(term.id)
+      redactionSidebar.resetDraft(term.id)
+      input.value = committedTerm
+      clearLiveRedactionTimer(term.id)
+      input.blur()
+    }
+  })
+
+  const deleteButton = document.createElement('button')
+  deleteButton.type = 'button'
+  deleteButton.className = 'secondary-button term-list-action'
+  deleteButton.textContent = '×'
+  deleteButton.setAttribute('aria-label', `Delete redaction term ${term.matchedText}`)
+  deleteButton.title = `Delete ${term.matchedText}`
+  deleteButton.addEventListener('click', async () => {
+    if (!window.confirm(`Remove redaction term "${term.matchedText}" everywhere in this workspace?`)) {
+      return
+    }
+
+    activeRedactionTermId = null
+    clearLiveRedactionTimer(term.id)
+    await deleteRedactionTerm(term.matchedText)
+  })
+
+  actions.append(deleteButton)
+  item.appendChild(actions)
+  return item
+}
+
+function clearLiveRedactionTimer(termId) {
+  const timer = liveRedactionTimers.get(termId)
+  if (timer) {
+    clearTimeout(timer)
+    liveRedactionTimers.delete(termId)
   }
 }
 
-function createExactEntityRow(entity = { entityType: '', replacement: '', variants: '' }) {
-  const row = document.createElement('section')
-  row.className = 'exact-entity-card'
-  row.innerHTML = `
-    <div class="exact-entity-card-header">
-      <p class="exact-entity-card-title">Exact rule</p>
-      <button type="button" class="secondary-button exact-entity-remove">Remove</button>
-    </div>
-    <label class="field-group">
-      <span>Entity type</span>
-      <input class="exact-entity-type" type="text" placeholder="provider" value="${escapeAttribute(entity.entityType)}" />
-    </label>
-    <label class="field-group">
-      <span>Replacement label</span>
-      <input class="exact-entity-replacement" type="text" placeholder="[PROVIDER]" value="${escapeAttribute(entity.replacement)}" />
-    </label>
-    <label class="field-group">
-      <span>Variants</span>
-      <textarea class="exact-entity-variants" rows="4" placeholder="One alias per line">${escapeHtml(entity.variants)}</textarea>
-    </label>
-  `
-  row.querySelector('.exact-entity-remove')?.addEventListener('click', () => {
-    row.remove()
-  })
-  return row
+function scheduleLiveRedactionEdit(termId) {
+  clearLiveRedactionTimer(termId)
+  liveRedactionTimers.set(termId, setTimeout(() => {
+    liveRedactionTimers.delete(termId)
+    void applyLiveRedactionEdit(termId)
+  }, LIVE_REDACTION_DEBOUNCE_MS))
 }
 
-function readSettingsForm() {
-  return normalizeAppSettings({
-    clientReplacement: settingsClientReplacement.value,
-    clientVariants: settingsClientVariants.value,
-    exactEntities: Array.from(exactEntitiesList.querySelectorAll('.exact-entity-card')).map((row) => ({
-      entityType: row.querySelector('.exact-entity-type')?.value ?? '',
-      replacement: row.querySelector('.exact-entity-replacement')?.value ?? '',
-      variants: row.querySelector('.exact-entity-variants')?.value ?? ''
-    })),
-    patterns: {
-      dates: { enabled: settingsDatesEnabled.checked, replacement: settingsDatesReplacement.value },
-      emails: { enabled: settingsEmailsEnabled.checked, replacement: settingsEmailsReplacement.value },
-      phones: { enabled: settingsPhonesEnabled.checked, replacement: settingsPhonesReplacement.value }
-    },
-    ner: {
-      enabled: settingsNerEnabled.checked,
-      modelPath: settingsNerModelPath.value,
-      tokenizerPath: settingsNerTokenizerPath.value,
-      minConfidence: settingsNerMinConfidence.value
-    }
-  })
-}
+async function applyLiveRedactionEdit(termId) {
+  const nextTerm = redactionSidebar.draftValueFor(termId).trim()
+  const committedTerm = redactionSidebar.committedValueFor(termId)
 
-function hasMeaningfulExactEntity(entity) {
-  return Boolean(entity.entityType || entity.replacement || entity.variants)
-}
-
-function escapeHtml(value) {
-  return String(value)
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-}
-
-function escapeAttribute(value) {
-  return escapeHtml(value)
-}
-
-function openSettingsDialog() {
-  if (workspace.processingInFlight) {
+  if (!nextTerm || nextTerm === committedTerm || workspace.processingInFlight || workspace.filePreviews.length === 0) {
     return
   }
 
-  populateSettingsForm(appSettings)
-  settingsOpen = true
-  renderWorkspace()
-}
-
-function closeSettingsDialog() {
-  settingsOpen = false
-  renderWorkspace()
-}
-
-async function saveSettingsAndMaybeRerun() {
-  appSettings = saveAppSettings(readSettingsForm())
-  settingsOpen = false
-  if (!workspace.inputPath.trim()) {
-    workspace = {
-      ...workspace,
-      summary: 'Saved persistent de-identification settings for future runs.'
-    }
+  const applied = await replaceRedactionTerm(committedTerm, nextTerm, { quiet: true })
+  if (!applied) {
+    return
   }
-  renderWorkspace()
 
-  if (workspace.inputPath.trim()) {
-    await processSelectedInput({ sourceLabel: 'settings' })
+  redactionSidebar.applyCommittedValue(termId, nextTerm)
+
+  if (redactionSidebar.draftValueFor(termId).trim() !== nextTerm) {
+    scheduleLiveRedactionEdit(termId)
+  }
+}
+
+function createTermChipPlaceholder(text) {
+  const placeholder = document.createElement('span')
+  placeholder.className = 'term-list-item'
+  placeholder.textContent = text
+  return placeholder
+}
+
+async function handleFindAndRedact() {
+  const term = redactionTermInput.value.trim()
+  if (!term || workspace.processingInFlight || workspace.filePreviews.length === 0) {
+    return
+  }
+
+  try {
+    const result = await invoke('find_and_redact_term', {
+      request: {
+        term,
+        targets: allPreviewRequests()
+      }
+    })
+    replacePreviewStates(result.updates ?? [])
+    redactionTermInput.value = ''
+    appendSummary(
+      `Find and redact applied \"${term}\" across ${result.updatedTargets ?? 0} file(s). `
+      + `${result.unchangedTargets ?? 0} file(s) already matched.`
+    )
+  } catch (error) {
+    appendSummary(`Find and redact error: ${String(error)}`)
+  }
+}
+
+async function deleteRedactionTerm(term) {
+  try {
+    const result = await invoke('remove_redaction_term', {
+      request: {
+        term,
+        targets: allPreviewRequests()
+      }
+    })
+    replacePreviewStates(result.updates ?? [])
+    appendSummary(
+      `Deleted redaction term "${term}" from ${result.updatedTargets ?? 0} file(s). `
+      + `${result.unchangedTargets ?? 0} file(s) had nothing to remove.`
+    )
+  } catch (error) {
+    appendSummary(`Delete redaction term error: ${String(error)}`)
+  }
+}
+
+async function replaceRedactionTerm(previousTerm, nextTerm, { quiet = false } = {}) {
+  try {
+    const removed = await invoke('remove_redaction_term', {
+      request: {
+        term: previousTerm,
+        targets: allPreviewRequests()
+      }
+    })
+    replacePreviewStates(removed.updates ?? [])
+
+    const added = await invoke('find_and_redact_term', {
+      request: {
+        term: nextTerm,
+        targets: allPreviewRequests()
+      }
+    })
+    replacePreviewStates(added.updates ?? [])
+
+    if (!quiet) {
+      appendSummary(
+        `Replaced redaction term "${previousTerm}" with "${nextTerm}". `
+        + `Removed from ${removed.updatedTargets ?? 0} file(s), added to ${added.updatedTargets ?? 0} file(s).`
+      )
+    }
+    return true
+  } catch (error) {
+    appendSummary(`${quiet ? 'Live edit' : 'Edit'} redaction term error: ${String(error)}`)
+    return false
   }
 }
 
@@ -400,7 +482,7 @@ async function processSelectedInput({ sourceLabel }) {
     const result = await invoke('run_replace_job', {
       input: value,
       config: null,
-      settings: buildRuntimeSettingsPayload(appSettings),
+      settings: null,
       includePatterns: [],
       excludePatterns: []
     })
@@ -786,6 +868,14 @@ function selectionWithinPreview() {
   return null
 }
 
+function rememberSelectionIntent() {
+  recentSelectionIntentUntil = performance.now() + 250
+}
+
+function hasRecentSelectionIntent() {
+  return performance.now() < recentSelectionIntentUntil
+}
+
 async function handleRedactionRemoval(markElement) {
   if (previewActionInFlight) {
     return
@@ -910,7 +1000,32 @@ function createManualRedactionAction(preview, selection, scope, successMessage) 
   }
 }
 
+function createMergeManualRedactionAction(preview, selection) {
+  return async () => {
+    try {
+      const result = await invoke('merge_manual_redaction', {
+        request: {
+          ...toPreviewRequest(preview),
+          sourcePreview: selection.sourcePreview,
+          selectionStart: selection.selectionStart,
+          selectionEnd: selection.selectionEnd,
+          redactionScope: 'single_occurrence'
+        }
+      })
+      window.getSelection()?.removeAllRanges()
+      replacePreviewState(result.preview, result.replacements)
+      appendSummary('Merged selection into one manual redaction and updated output files.')
+    } catch (error) {
+      appendSummary(`Merge redaction error: ${String(error)}`)
+    }
+  }
+}
+
 function maybeShowAddRedactionTooltip() {
+  void maybeShowAddRedactionTooltipAsync()
+}
+
+async function maybeShowAddRedactionTooltipAsync() {
   const preview = getCurrentPreview()
   if (!preview) {
     hidePreviewActionTooltip()
@@ -923,10 +1038,31 @@ function maybeShowAddRedactionTooltip() {
     return
   }
 
-  showPreviewActionTooltip({
-    rect: selection.rect,
-    label: 'Choose whether to redact just this occurrence or all exact matches in this file.',
-    actions: [{
+  let availability
+  try {
+    availability = await invoke('inspect_manual_redaction', {
+      request: {
+        ...toPreviewRequest(preview),
+        sourcePreview: selection.sourcePreview,
+        selectionStart: selection.selectionStart,
+        selectionEnd: selection.selectionEnd,
+        redactionScope: 'file_exact_matches'
+      }
+    })
+  } catch (_error) {
+    hidePreviewActionTooltip()
+    return
+  }
+
+  const actions = []
+  if (availability?.mergeable) {
+    actions.push({
+      buttonText: 'Merge into redaction',
+      variant: 'preview-action-button-accent',
+      run: createMergeManualRedactionAction(preview, selection)
+    })
+  } else if ((availability?.exactMatchCount ?? 0) > 1) {
+    actions.push({
       buttonText: 'Redact all matches',
       variant: 'preview-action-button-accent',
       run: createManualRedactionAction(
@@ -935,7 +1071,11 @@ function maybeShowAddRedactionTooltip() {
         'file_exact_matches',
         'Added manual redaction for all exact matches and updated output files.'
       )
-    }, {
+    })
+  }
+
+  if (!availability?.mergeable) {
+    actions.push({
       buttonText: 'Redact this',
       run: createManualRedactionAction(
         preview,
@@ -943,11 +1083,28 @@ function maybeShowAddRedactionTooltip() {
         'single_occurrence',
         'Added manual redaction for the selected occurrence and updated output files.'
       )
-    }]
+    })
+  }
+
+  showPreviewActionTooltip({
+    rect: selection.rect,
+    label: availability?.mergeable
+      ? 'Merge this selection into one redaction?'
+      : actions.length > 1
+      ? 'Choose whether to redact just this occurrence or all exact matches in this file.'
+      : 'Redact this selected text?'
+    ,
+    actions
   })
 }
 
 beforePreview.addEventListener('click', async (event) => {
+  if (selectionWithinPreview() || hasRecentSelectionIntent()) {
+    event.preventDefault()
+    setTimeout(maybeShowAddRedactionTooltip, 0)
+    return
+  }
+
   const mark = targetElement(event.target)?.closest('mark[data-record-start]')
   if (mark) {
     event.preventDefault()
@@ -956,6 +1113,12 @@ beforePreview.addEventListener('click', async (event) => {
 })
 
 afterPreview.addEventListener('click', async (event) => {
+  if (selectionWithinPreview() || hasRecentSelectionIntent()) {
+    event.preventDefault()
+    setTimeout(maybeShowAddRedactionTooltip, 0)
+    return
+  }
+
   const mark = targetElement(event.target)?.closest('mark[data-record-start]')
   if (mark) {
     event.preventDefault()
@@ -992,15 +1155,15 @@ beforePreview.addEventListener('mouseout', handleRedactionHoverLeave)
 afterPreview.addEventListener('mouseout', handleRedactionHoverLeave)
 
 beforePreview.addEventListener('mouseup', (event) => {
-  if (targetElement(event.target)?.closest('mark[data-record-start]')) {
-    return
+  if (selectionWithinPreview()) {
+    rememberSelectionIntent()
   }
   setTimeout(maybeShowAddRedactionTooltip, 0)
 })
 
 afterPreview.addEventListener('mouseup', (event) => {
-  if (targetElement(event.target)?.closest('mark[data-record-start]')) {
-    return
+  if (selectionWithinPreview()) {
+    rememberSelectionIntent()
   }
   setTimeout(maybeShowAddRedactionTooltip, 0)
 })
@@ -1021,21 +1184,11 @@ afterPreview.addEventListener('scroll', () => {
   hidePreviewActionTooltip()
   schedulePreviewScrollSync(afterPreview, beforePreview)
 })
-editSettings.addEventListener('click', openSettingsDialog)
-closeSettings.addEventListener('click', closeSettingsDialog)
-cancelSettings.addEventListener('click', closeSettingsDialog)
-addExactEntity.addEventListener('click', () => {
-  exactEntitiesList.appendChild(createExactEntityRow())
-})
-saveSettingsButton.addEventListener('click', saveSettingsAndMaybeRerun)
-settingsOverlay.addEventListener('click', (event) => {
-  if (event.target === settingsOverlay) {
-    closeSettingsDialog()
-  }
-})
-document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && settingsOpen) {
-    closeSettingsDialog()
+findAndRedactButton.addEventListener('click', handleFindAndRedact)
+redactionTermInput.addEventListener('keydown', async (event) => {
+  if (event.key === 'Enter') {
+    event.preventDefault()
+    await handleFindAndRedact()
   }
 })
 
