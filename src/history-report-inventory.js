@@ -47,12 +47,30 @@ export async function runHistoryReportInventory({ sourceDirectory, repoRoot, run
     sourceDirectory: resolvedSourceDirectory,
     candidates
   }
+  const sourceReliabilityMap = {
+    caseId,
+    runId,
+    sources: candidates.map((candidate) => ({
+      sourceId: candidate.sourceId,
+      path: candidate.path,
+      relativePath: candidate.relativePath,
+      documentKind: candidate.documentKind,
+      include: candidate.include,
+      sourceRole: candidate.sourceRole,
+      sourceReliabilityTier: candidate.sourceReliabilityTier,
+      sourceReliabilityRank: candidate.sourceReliabilityRank,
+      hierarchyRole: candidate.hierarchyRole,
+      qualityLevel: candidate.qualityLevel,
+      qualityIssues: candidate.qualityIssues
+    }))
+  }
 
   const sourceInventoryMarkdown = createSourceInventoryMarkdown(candidates)
   const inclusionLogMarkdown = createInclusionLogMarkdown({ included, excluded })
 
   await Promise.all([
     writeJson(path.join(runRoot, '01-inventory', 'source-registry.json'), sourceRegistry),
+    writeJson(path.join(runRoot, '01-inventory', 'source-reliability-map.json'), sourceReliabilityMap),
     writeFile(path.join(runRoot, '01-inventory', 'source-inventory.md'), sourceInventoryMarkdown, 'utf8'),
     writeFile(path.join(runRoot, '01-inventory', 'inclusion-log.md'), inclusionLogMarkdown, 'utf8')
   ])
@@ -77,14 +95,19 @@ export function classifyMarkdownCandidate({ filePath, sourceDirectory, content }
   const wrapperSegments = detectWrapperSegments(contentWithoutFrontmatter)
   const sourceUnits = splitLogicalSourceUnits({ relativePath, content: contentWithoutFrontmatter, wrapperSegments })
   const includeDecision = decideInclusion({ kind, relativePath, sourceUnits })
+  const reliability = inferSourceReliability(kind)
 
   return {
+    sourceId: slugify(relativePath),
     path: filePath,
     relativePath,
     documentKind: kind,
     include: includeDecision.include,
     includeReason: includeDecision.reason,
     hierarchyRole: includeDecision.hierarchyRole,
+    sourceRole: reliability.sourceRole,
+    sourceReliabilityTier: reliability.tier,
+    sourceReliabilityRank: reliability.rank,
     qualityLevel: qualityIssues.length === 0 ? 'high' : qualityIssues.includes('ocr_derived_markdown') ? 'medium' : 'medium',
     qualityIssues,
     wrapperSegments,
@@ -157,7 +180,15 @@ function inferDocumentKind(relativePath, content, metadata) {
     return 'clinician_intake_notes'
   }
 
+  if (lowerContent.includes('intake notes')) {
+    return 'clinician_intake_notes'
+  }
+
   if (lowerPath.includes('questionnaire')) {
+    return 'patient_questionnaire'
+  }
+
+  if (lowerContent.includes('neuropsychological intake questionnaire')) {
     return 'patient_questionnaire'
   }
 
@@ -173,6 +204,10 @@ function inferDocumentKind(relativePath, content, metadata) {
     return 'academic_record'
   }
 
+  if (lowerContent.includes('student health referral') || lowerContent.includes('referred to:')) {
+    return 'referral_material'
+  }
+
   if (lowerPath.includes('report') || lowerContent.includes('neuropsychological assessment report')) {
     return 'generated_report'
   }
@@ -181,7 +216,7 @@ function inferDocumentKind(relativePath, content, metadata) {
     return 'prior_evaluation'
   }
 
-  return 'other_markdown_source'
+  return 'unclassified_markdown'
 }
 
 function inferQualityIssues(relativePath, content) {
@@ -283,6 +318,13 @@ function inferDefaultUnitTitle(relativePath, firstContentLine) {
 
 function decideInclusion({ kind, relativePath, sourceUnits }) {
   const lowerPath = relativePath.toLowerCase()
+  const includableKinds = new Set([
+    'clinician_intake_notes',
+    'patient_questionnaire',
+    'referral_material',
+    'academic_record',
+    'prior_evaluation'
+  ])
 
   if (kind === 'generated_report') {
     return {
@@ -296,6 +338,14 @@ function decideInclusion({ kind, relativePath, sourceUnits }) {
     return {
       include: false,
       reason: 'administrative or empty markdown source',
+      hierarchyRole: 'excluded'
+    }
+  }
+
+  if (!includableKinds.has(kind)) {
+    return {
+      include: false,
+      reason: 'unclassified or non-clinical markdown source excluded from working source set',
       hierarchyRole: 'excluded'
     }
   }
@@ -318,6 +368,34 @@ function decideInclusion({ kind, relativePath, sourceUnits }) {
     reason: `admitted markdown source for ${kind.replaceAll('_', ' ')}`,
     hierarchyRole
   }
+}
+
+function inferSourceReliability(kind) {
+  if (kind === 'clinician_intake_notes') {
+    return { sourceRole: 'clinician_history_source', tier: 'tier_1_primary', rank: 1 }
+  }
+
+  if (kind === 'patient_questionnaire') {
+    return { sourceRole: 'patient_history_source', tier: 'tier_1_primary', rank: 1 }
+  }
+
+  if (kind === 'referral_material') {
+    return { sourceRole: 'referral_context_source', tier: 'tier_2_contextual', rank: 2 }
+  }
+
+  if (kind === 'prior_evaluation') {
+    return { sourceRole: 'prior_evaluation_source', tier: 'tier_2_contextual', rank: 2 }
+  }
+
+  if (kind === 'academic_record') {
+    return { sourceRole: 'academic_context_source', tier: 'tier_3_contextual', rank: 3 }
+  }
+
+  if (kind === 'generated_report') {
+    return { sourceRole: 'generated_output_source', tier: 'excluded', rank: 99 }
+  }
+
+  return { sourceRole: 'unclassified_source', tier: 'excluded', rank: 99 }
 }
 
 function createSourceInventoryMarkdown(candidates) {

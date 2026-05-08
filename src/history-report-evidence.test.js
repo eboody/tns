@@ -6,7 +6,7 @@ import path from 'node:path'
 
 import { bootstrapHistoryReportRun } from './history-report-bootstrap.js'
 import { runHistoryReportInventory } from './history-report-inventory.js'
-import { annotateCandidateContent, deriveAtomicClaims, runHistoryReportEvidence } from './history-report-evidence.js'
+import { annotateCandidateContent, deriveAtomicClaims, deriveEvidenceAtoms, runHistoryReportEvidence } from './history-report-evidence.js'
 
 test('annotateCandidateContent marks clinician note differentials and recommendations as non-history fragments', () => {
   const candidate = {
@@ -24,12 +24,21 @@ test('annotateCandidateContent marks clinician note differentials and recommenda
 
   const annotation = annotateCandidateContent(candidate, content)
   const claims = deriveAtomicClaims(annotation.segments, candidate)
+  const evidenceAtoms = deriveEvidenceAtoms(annotation.segments, {
+    ...candidate,
+    sourceId: 'deidentified-intake-notes-sh-adult-md',
+    sourceRole: 'clinician_history_source',
+    sourceReliabilityTier: 'tier_1_primary',
+    sourceReliabilityRank: 1
+  })
 
   assert.equal(annotation.segments[0].noteFragmentClass, 'recommendation_idea')
   assert.equal(annotation.segments[2].noteFragmentClass, 'diagnostic_hypothesis')
   assert.equal(annotation.segments[4].noteFragmentClass, 'collateral_summary')
   assert.equal(claims[0].eligibleForHistoryDraft, false)
   assert.equal(claims[4].attributionMode, 'collateral_report')
+  assert.equal(evidenceAtoms[4].factRole, 'corroboration')
+  assert.ok(evidenceAtoms[4].domainCandidates.includes('rigidity'))
 })
 
 test('runHistoryReportEvidence writes segment annotations, atomic claims, and evidence sheets', async () => {
@@ -66,8 +75,10 @@ test('runHistoryReportEvidence writes segment annotations, atomic claims, and ev
 
   assert.ok(result.segmentCount > 0)
   assert.ok(result.claimCount > 0)
+  assert.ok(result.evidenceAtomCount > 0)
 
   const claims = JSON.parse(await readFile(path.join(bootstrap.runRoot, '02-evidence', 'atomic-claims.json'), 'utf8'))
+  const evidenceAtoms = JSON.parse(await readFile(path.join(bootstrap.runRoot, '02-evidence', 'evidence-atoms.json'), 'utf8'))
   const segments = JSON.parse(await readFile(path.join(bootstrap.runRoot, '02-evidence', 'segment-annotations.json'), 'utf8'))
 
   const differentialClaim = claims.claims.find((claim) => claim.claimText === 'ADHD')
@@ -80,6 +91,15 @@ test('runHistoryReportEvidence writes segment annotations, atomic claims, and ev
 
   const quoteClaim = claims.claims.find((claim) => claim.quoteCandidate)
   assert.ok(quoteClaim)
+
+  const corroborationFact = evidenceAtoms.evidenceAtoms.find((fact) => fact.rawText.includes('Mom says since grade school'))
+  assert.equal(corroborationFact.factRole, 'corroboration')
+  assert.equal(corroborationFact.sourceReliabilityTier, 'tier_1_primary')
+  assert.ok(corroborationFact.domainCandidates.includes('rigidity'))
+  assert.ok(corroborationFact.salienceHints.includes('developmental_continuity'))
+
+  const referralFact = evidenceAtoms.evidenceAtoms.find((fact) => fact.rawText.includes('Referred to psychological testing'))
+  assert.ok(referralFact.reportPlacementCandidates.includes('reason-for-referral'))
 
   assert.ok(segments.segments.some((segment) => segment.conflictCues.length === 0 || Array.isArray(segment.conflictCues)))
 

@@ -17,15 +17,18 @@ export async function runHistoryReportEvidence({ sourceDirectory, repoRoot, runI
 
   const segmentAnnotations = []
   const atomicClaims = []
+  const evidenceAtoms = []
 
   for (const candidate of admittedCandidates) {
     const content = await readFile(candidate.path, 'utf8')
     const annotation = annotateCandidateContent(candidate, content)
+    const candidateEvidenceAtoms = deriveEvidenceAtoms(annotation.segments, candidate)
     segmentAnnotations.push(...annotation.segments)
     atomicClaims.push(...deriveAtomicClaims(annotation.segments, candidate))
+    evidenceAtoms.push(...candidateEvidenceAtoms)
     await writeFile(
       path.join(runRoot, '02-evidence', `${slugify(candidate.relativePath)}.md`),
-      createEvidenceSheetMarkdown({ candidate, segments: annotation.segments, claims: atomicClaims.filter((claim) => claim.sourcePath === candidate.path), runId }),
+      createEvidenceSheetMarkdown({ candidate, segments: annotation.segments, claims: candidateEvidenceAtoms, runId }),
       'utf8'
     )
   }
@@ -42,6 +45,12 @@ export async function runHistoryReportEvidence({ sourceDirectory, repoRoot, runI
       runId,
       count: atomicClaims.length,
       claims: atomicClaims
+    }),
+    writeJson(path.join(runRoot, '02-evidence', 'evidence-atoms.json'), {
+      caseId,
+      runId,
+      count: evidenceAtoms.length,
+      evidenceAtoms
     })
   ])
 
@@ -50,7 +59,8 @@ export async function runHistoryReportEvidence({ sourceDirectory, repoRoot, runI
     runId,
     runRoot,
     segmentCount: segmentAnnotations.length,
-    claimCount: atomicClaims.length
+    claimCount: atomicClaims.length,
+    evidenceAtomCount: evidenceAtoms.length
   }
 }
 
@@ -152,7 +162,39 @@ export function deriveAtomicClaims(segments, candidate) {
       sourceLayer: segment.sourceLayer,
       headingContext: segment.headingContext,
       collateralSourceType: segment.collateralSourceType,
-      conflictCues: segment.conflictCues
+      conflictCues: segment.conflictCues,
+      specificityScore: inferSpecificityScore(segment.text)
+    }
+  })
+}
+
+export function deriveEvidenceAtoms(segments, candidate) {
+  return segments.map((segment, index) => {
+    const claimCategory = inferClaimCategory(segment)
+    return {
+      factId: `${slugify(candidate.relativePath)}-fact-${index + 1}`,
+      sourceId: candidate.sourceId,
+      sourcePath: candidate.path,
+      sourceUnitId: segment.sourceUnitId,
+      segmentId: segment.segmentId,
+      rawText: segment.text,
+      normalizedMeaning: normalizeMeaning(segment.text),
+      claimCategory,
+      factRole: inferFactRole(segment, claimCategory),
+      domainCandidates: inferDomainCandidates(segment.text, claimCategory),
+      reportPlacementCandidates: inferReportPlacementCandidates(claimCategory, segment.text),
+      sourceReliabilityTier: candidate.sourceReliabilityTier,
+      sourceReliabilityRank: candidate.sourceReliabilityRank,
+      sourceRole: candidate.sourceRole,
+      attributionMode: segment.attributionMode,
+      collateralSourceType: segment.collateralSourceType,
+      chronology: segment.chronologyCues,
+      noteFragmentClass: segment.noteFragmentClass,
+      quoteCandidate: segment.quoteCandidate,
+      conflictCues: segment.conflictCues,
+      specificityScore: inferSpecificityScore(segment.text),
+      salienceHints: inferSalienceHints(segment.text, claimCategory, segment.chronologyCues),
+      eligibleForHistoryDraft: isEligibleForHistoryDraft(segment.noteFragmentClass)
     }
   })
 }
@@ -302,11 +344,112 @@ function inferClaimCategory(segment) {
     return 'referral_context'
   }
 
+  if (/mother|father|parents|only child|siblings|children|family history|high blood pressure|live with/i.test(segment.text)) {
+    return 'family_history'
+  }
+
+  if (/playdates|friends|friend group|close friend|one-on-one|clubs|parties|meeting new people|social/i.test(segment.text)) {
+    return 'social_history'
+  }
+
+  if (/grades|gpa|tutoring|reading specialist|reading support|accommodations|special education|exam|student|usc|college|high school|middle school|reading comprehension/i.test(segment.text)) {
+    return 'educational_history'
+  }
+
+  if (/milestones|head injury|concussion|seizure|medical|medications|sleep|vision|hearing|hospitalizations/i.test(segment.text)) {
+    return 'developmental_medical_history'
+  }
+
+  if (/anxiety|racing thoughts|frustration|mood|therapy|therapist|suicidal|homicidal|alcohol|smoking|unmotivated|fatigue/i.test(segment.text)) {
+    return 'emotional_behavioral_history'
+  }
+
+  if (/time management|late|focus|attention|concentration|sensory|quiet|light|noise|texture|just right|rigid|routine/i.test(segment.text)) {
+    return 'presenting_concerns'
+  }
+
   return 'general_history'
 }
 
 function isEligibleForHistoryDraft(noteFragmentClass) {
   return !['diagnostic_hypothesis', 'recommendation_idea', 'clinician_observation_prompt', 'follow_up_question'].includes(noteFragmentClass)
+}
+
+function normalizeMeaning(text) {
+  return text
+    .replace(/\\/g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/[•*]\s*/g, '')
+    .trim()
+}
+
+function inferFactRole(segment, claimCategory) {
+  const lower = segment.text.toLowerCase()
+
+  if (segment.attributionMode === 'collateral_report') return 'corroboration'
+  if (/school bus|dance class|air conditioning|jeans|sunshine|shower|mantel|chair|playdates|parties|clubs|reread|writing\/thinking/i.test(segment.text)) return 'concrete_example'
+  if (/childhood|grade school|1st grade|3rd grade|middle school|high school|freshman|junior|last year|college/i.test(segment.text)) return 'developmental_anchor'
+  if (/prepare for classes|assignments on time|deadline|impact|burdensome|impair/i.test(lower)) return 'current_impact'
+  if (segment.conflictCues.length > 0) return 'conflict_or_uncertainty'
+  if (claimCategory === 'family_history' || claimCategory === 'developmental_medical_history') return 'contextual_background'
+  return 'core_concern'
+}
+
+function inferDomainCandidates(text, claimCategory) {
+  const candidates = new Set([claimCategory])
+  const lower = text.toLowerCase()
+
+  if (/time management|late|task|executive/i.test(lower)) candidates.add('time_management_executive')
+  if (/sensory|quiet|light|noise|sound|texture|air conditioning|jeans|sunshine/i.test(lower)) candidates.add('sensory')
+  if (/rigid|routine|just right|feel right|shower|getting dressed|mantel|chair/i.test(lower)) candidates.add('rigidity')
+  if (/attention|focus|concentration|absorbing content|adhd/i.test(lower)) candidates.add('attention_concentration')
+  if (/reading|reread|reading comprehension/i.test(lower)) candidates.add('reading_academic_efficiency')
+  if (/anxiety|mood|frustration|therapy|racing thoughts/i.test(lower)) candidates.add('emotional_behavioral')
+  if (/playdates|friends|social|clubs|parties/i.test(lower)) candidates.add('social')
+  if (/grades|gpa|exam|student|school|usc/i.test(lower)) candidates.add('educational')
+
+  return Array.from(candidates)
+}
+
+function inferReportPlacementCandidates(claimCategory, text) {
+  const placements = new Set()
+  const lower = text.toLowerCase()
+
+  if (/time management|sensory|rigid|attention|reading|frustration|late/i.test(lower)) placements.add('presenting-complaints')
+  if (/evaluation|testing|guidance|helpful|referred/i.test(lower)) placements.add('reason-for-referral')
+  if (claimCategory === 'developmental_medical_history') placements.add('medical-developmental-history')
+  if (claimCategory === 'family_history') placements.add('family-history')
+  if (claimCategory === 'emotional_behavioral_history') placements.add('emotional-behavioral-history')
+  if (claimCategory === 'social_history') placements.add('social-history')
+  if (claimCategory === 'educational_history') placements.add('educational-occupational-history')
+  if (claimCategory === 'previous_evaluations') placements.add('previous-evaluations')
+
+  return Array.from(placements)
+}
+
+function inferSalienceHints(text, claimCategory, chronology) {
+  const hints = []
+  const lower = text.toLowerCase()
+
+  if (/time management|sensory|rigid|attention|reading|frustration|late/i.test(lower)) hints.push('likely_report_surface')
+  if (/school bus|dance class|air conditioning|jeans|sunshine|shower|mantel|chair|reread/i.test(lower)) hints.push('concrete_example')
+  if (chronology.includes('lifelong') || chronology.includes('early_childhood') || chronology.includes('elementary_school') || chronology.includes('secondary_school')) {
+    hints.push('developmental_continuity')
+  }
+  if (chronology.includes('college') || /current|currently|last year|frustration/i.test(lower)) hints.push('current_burden')
+  if (claimCategory === 'academic_record') hints.push('contextual_record')
+
+  return hints
+}
+
+function inferSpecificityScore(text) {
+  const patterns = [
+    /school bus|dance class|air conditioning|jeans|sunshine|shower every day|mantel|specific side|chair|first week of school|1st grade|3rd grade|writing\/thinking/i,
+    /time management|quiet|light|noise|texture|just right|reread|therapy|playdates|dorm|deadline/i,
+    /childhood|college|middle school|high school|last year|mother|parents/i
+  ]
+
+  return patterns.reduce((score, pattern, index) => score + (pattern.test(text) ? patterns.length - index : 0), 0)
 }
 
 function createEvidenceSheetMarkdown({ candidate, segments, claims, runId }) {

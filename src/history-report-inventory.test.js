@@ -42,6 +42,11 @@ test('runHistoryReportInventory emits source registry and inclusion log for mixe
       path.join(sourceDirectory, '2026-report.md'),
       `## PRESENTING INFORMATION/REASON FOR REFERRAL\n\nCLIENT is a 20-year-old...\n`,
       'utf8'
+    ),
+    writeFile(
+      path.join(sourceDirectory, 'AGENTS.md'),
+      `# Repo Instructions\n\n## Always Do\n- Run impact analysis before editing code.\n`,
+      'utf8'
     )
   ])
 
@@ -58,11 +63,13 @@ test('runHistoryReportInventory emits source registry and inclusion log for mixe
   })
 
   assert.equal(result.includedCount, 2)
-  assert.equal(result.excludedCount, 1)
+  assert.equal(result.excludedCount, 2)
 
   const registry = JSON.parse(await readFile(path.join(bootstrap.runRoot, '01-inventory', 'source-registry.json'), 'utf8'))
+  const reliabilityMap = JSON.parse(await readFile(path.join(bootstrap.runRoot, '01-inventory', 'source-reliability-map.json'), 'utf8'))
   assert.equal(registry.status, 'inventory_complete')
-  assert.equal(registry.candidates.length, 3)
+  assert.equal(registry.candidates.length, 4)
+  assert.equal(reliabilityMap.sources.length, 4)
 
   const reportCandidate = registry.candidates.find((candidate) => candidate.relativePath === '2026-report.md')
   assert.equal(reportCandidate.include, false)
@@ -72,9 +79,21 @@ test('runHistoryReportInventory emits source registry and inclusion log for mixe
   assert.equal(bundleCandidate.sourceUnits.length, 2)
   assert.ok(bundleCandidate.qualityIssues.includes('ocr_derived_markdown'))
 
+  const agentsCandidate = registry.candidates.find((candidate) => candidate.relativePath === 'AGENTS.md')
+  assert.equal(agentsCandidate.include, false)
+  assert.equal(agentsCandidate.documentKind, 'unclassified_markdown')
+
+  const intakeCandidate = registry.candidates.find((candidate) => candidate.relativePath === 'Deidentified - Intake Notes (SH) Adult.md')
+  assert.equal(intakeCandidate.sourceRole, 'clinician_history_source')
+  assert.equal(intakeCandidate.sourceReliabilityTier, 'tier_1_primary')
+
+  const reliabilitySource = reliabilityMap.sources.find((source) => source.relativePath === 'Deidentified - Intake Notes (SH) Adult.md')
+  assert.equal(reliabilitySource.sourceReliabilityRank, 1)
+
   const inclusionLog = await readFile(path.join(bootstrap.runRoot, '01-inventory', 'inclusion-log.md'), 'utf8')
   assert.match(inclusionLog, /generated\/final report excluded from working source set/)
   assert.match(inclusionLog, /clinician-authored intake note/)
+  assert.match(inclusionLog, /unclassified or non-clinical markdown source excluded from working source set/)
 
   const inventoryMarkdown = await readFile(path.join(bootstrap.runRoot, '01-inventory', 'source-inventory.md'), 'utf8')
   assert.match(inventoryMarkdown, /logical source units: USC Transcript/)
