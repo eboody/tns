@@ -7,6 +7,7 @@ import path from 'node:path'
 import { bootstrapHistoryReportRun } from './history-report-bootstrap.js'
 import { runHistoryReportInventory } from './history-report-inventory.js'
 import { runHistoryReportEvidence } from './history-report-evidence.js'
+import { runHistoryReportDomainTimeManagement } from './history-report-domain-time-management.js'
 import { runHistoryReportPlanning } from './history-report-planning.js'
 import { runHistoryReportStyleProfile } from './history-report-style-profile.js'
 import { runHistoryReportPresentingSection } from './history-report-presenting-section.js'
@@ -45,6 +46,7 @@ test('runHistoryReportPresentingSection drafts and integrates presenting informa
   await runHistoryReportInventory({ sourceDirectory, repoRoot, runId: bootstrap.runId })
   await runHistoryReportEvidence({ sourceDirectory, repoRoot, runId: bootstrap.runId })
   await runHistoryReportPlanning({ sourceDirectory, repoRoot, runId: bootstrap.runId })
+  await runHistoryReportDomainTimeManagement({ sourceDirectory, repoRoot, runId: bootstrap.runId })
   await runHistoryReportStyleProfile({ sourceDirectory, repoRoot, runId: bootstrap.runId, exemplarPath: path.join(docsDirectory, '2026-report.md') })
 
   const result = await runHistoryReportPresentingSection({ sourceDirectory, repoRoot, runId: bootstrap.runId })

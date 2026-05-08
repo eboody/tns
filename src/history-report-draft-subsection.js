@@ -14,6 +14,7 @@ export async function runHistoryReportDraftSubsection({ sourceDirectory, repoRoo
   const sectionPlan = JSON.parse(await readFile(path.join(runRoot, '03-derived', 'section-plan.json'), 'utf8'))
   const claimsPayload = JSON.parse(await readFile(path.join(runRoot, '02-evidence', 'atomic-claims.json'), 'utf8'))
   const governingProfile = JSON.parse(await readFile(path.join(runRoot, '03-derived', 'governing-profile.json'), 'utf8'))
+  const timeManagementMemo = await readOptionalJson(path.join(runRoot, '03-derived', 'domain-memo.time-management-executive.json'))
 
   const subsection = sectionPlan.sections.find((section) => section.id === subsectionId)
   if (!subsection) {
@@ -27,7 +28,7 @@ export async function runHistoryReportDraftSubsection({ sourceDirectory, repoRoo
 
   const approvedClaimBank = buildApprovedClaimBank({ subsection, claims: subsectionClaims, allClaims, governingProfile })
   const coveragePack = buildCoveragePack({ subsection, approvedClaimBank })
-  const factualDraft = buildFactualDraft({ subsection, approvedClaimBank, governingProfile, coveragePack })
+  const factualDraft = buildFactualDraft({ subsection, approvedClaimBank, governingProfile, coveragePack, domainMemos: { timeManagementMemo } })
   const coverageEnrichedDraft = enforceCoverage({ draft: factualDraft, coveragePack, subsection })
   const polishedDraft = polishDraft({ factualDraft: coverageEnrichedDraft, governingProfile })
   const evidenceReview = reviewEvidence({ draft: polishedDraft, approvedClaimBank, subsection })
@@ -128,13 +129,13 @@ function buildApprovedClaimBank({ subsection, claims, allClaims, governingProfil
   }
 }
 
-function buildFactualDraft({ subsection, approvedClaimBank, governingProfile, coveragePack }) {
+function buildFactualDraft({ subsection, approvedClaimBank, governingProfile, coveragePack, domainMemos }) {
   if (subsection.id === 'reason-for-referral') {
-    return buildReasonForReferralDraft(approvedClaimBank, governingProfile, coveragePack)
+    return buildReasonForReferralDraft(approvedClaimBank, governingProfile, coveragePack, domainMemos)
   }
 
   if (subsection.id === 'presenting-complaints') {
-    return buildPresentingComplaintsDraft(approvedClaimBank, governingProfile, coveragePack)
+    return buildPresentingComplaintsDraft(approvedClaimBank, governingProfile, coveragePack, domainMemos)
   }
 
   if (subsection.id === 'medical-developmental-history' || subsection.id === 'developmental-medical-history') {
@@ -308,13 +309,13 @@ function coverageFactPhrase(text, subsectionId) {
   return cleaned.charAt(0).toLowerCase() + cleaned.slice(1)
 }
 
-function buildReasonForReferralDraft(claimBank, governingProfile, coveragePack) {
+function buildReasonForReferralDraft(claimBank, governingProfile, coveragePack, domainMemos) {
   const items = sortCoverageItemsForComposition(coveragePack.items)
   const factTexts = items.map((item) => item.factText)
   const agePhrase = pickAgePhrase(factTexts) ?? `CLIENT is a ${governingProfile.classification.ageYears ?? 'young'}-year-old ${governingProfile.classification.lifecycleSchema === 'transition_age_young_adult' ? 'college student' : 'adult'}`
   const genderPhrase = pickGenderPhrase(factTexts)
   const referralSetting = pickReferralSetting(factTexts)
-  const concernSentence = buildCoverageNativeReasonForReferralSentence({ agePhrase, genderPhrase, referralSetting, items })
+  const concernSentence = buildCoverageNativeReasonForReferralSentence({ agePhrase, genderPhrase, referralSetting, items, timeManagementMemo: domainMemos.timeManagementMemo })
   const purposeSentence = governingProfile.houseLexicon.global.phrases.find((rule) => rule.sectionScope === 'reason_for_referral')?.phrase
     ?? 'The purpose of this evaluation is to determine strengths and weaknesses and to assist with diagnostic clarification, treatment planning, and care.'
 
@@ -343,15 +344,15 @@ function buildReasonForReferralDraft(claimBank, governingProfile, coveragePack) 
   }
 }
 
-function buildPresentingComplaintsDraft(claimBank, governingProfile, coveragePack) {
+function buildPresentingComplaintsDraft(claimBank, governingProfile, coveragePack, domainMemos) {
   const items = sortCoverageItemsForComposition(coveragePack.items)
-  const timeItems = items.filter((item) => /time management|late|school bus|dance class|longer to do things|task/i.test(item.factText))
+  const timeItems = items.filter((item) => /time management|late|school bus|\bbus\b|dance class|longer to do things|task/i.test(item.factText))
   const sensoryItems = items.filter((item) => /quiet|light|noise|sound|texture|air conditioning|jeans|sunshine|clothing|sensory/i.test(item.factText))
   const rigidityItems = items.filter((item) => /rigid|routine|just right|shower|getting dressed|mantel|specific side|chair/i.test(item.factText))
   const impactItems = items.filter((item) => /college|frustration|prepare for classes|assignments on time|absorbing content|reread|reading|attentional difficulties|adhd/i.test(item.factText))
 
   const p1s1 = 'CLIENT endorsed difficulties with a variety of cognitive, sensory, mood, and academic challenges.'
-  const p1s2 = buildCoverageNativeTimeManagementSentence(timeItems)
+  const p1s2 = buildCoverageNativeTimeManagementSentence(timeItems, domainMemos.timeManagementMemo)
   const p2s1 = buildCoverageNativeSensoryOverviewSentence(sensoryItems)
   const p2s2 = buildCoverageNativeSensoryDetailsSentence(sensoryItems)
   const p3s1 = buildCoverageNativeRigiditySentence(rigidityItems)
@@ -606,7 +607,7 @@ function selectPresentingComplaintsClaims(claims, allClaims) {
   const orderedClaims = [...claims, ...allClaims.filter((claim) => !claims.some((existing) => existing.claimId === claim.claimId))]
     .sort((left, right) => presentingComplaintsSpecificityScore(claimTextForMatching(right)) - presentingComplaintsSpecificityScore(claimTextForMatching(left)))
   const categories = [
-    [/time management|attention|focus|concentration|late|task|school bus|dance class|longer to do things/i, 'time_attention', 6],
+    [/time management|attention|focus|concentration|late|task|school bus|\bbus\b|dance class|longer to do things/i, 'time_attention', 6],
     [/sensory|quiet|light|noise|texture|air conditioning|jeans|sunshine/i, 'sensory', 6],
     [/rigid|routine|just right|shower|gets ready in a certain order|mantel|specific side|chairs/i, 'rigidity', 6],
     [/reading|re-read/i, 'reading', 1],
@@ -633,7 +634,7 @@ function selectPresentingComplaintsClaims(claims, allClaims) {
 
 function presentingComplaintsSpecificityScore(text) {
   const patterns = [
-    /school bus|dance class|air conditioning|jeans|sunshine|shower every day|mantel|specific side|chairs|prep for classes|assignments on time|re-read/i,
+    /school bus|\bbus\b|dance class|air conditioning|jeans|sunshine|shower every day|mantel|specific side|chairs|prep for classes|assignments on time|re-read/i,
     /quiet|light|noise|texture|just right|gets ready in a certain order|longer to do things/i,
     /time management|focus|attention|college|frustration/i
   ]
@@ -700,10 +701,10 @@ function distinctClaimIds(items) {
   return Array.from(new Set(items.map((item) => item.claimId)))
 }
 
-function buildCoverageNativeReasonForReferralSentence({ agePhrase, genderPhrase, referralSetting, items }) {
+function buildCoverageNativeReasonForReferralSentence({ agePhrase, genderPhrase, referralSetting, items, timeManagementMemo }) {
   const identity = `${agePhrase}${genderPhrase ? `, ${genderPhrase},` : ''}`
   const concernParts = []
-  if (items.some((item) => /time management|attention|concentration|focus/i.test(item.factText))) {
+  if (timeManagementMemo || items.some((item) => /time management|attention|concentration|focus/i.test(item.factText))) {
     concernParts.push('notable and long-standing difficulties with time management and concentration')
   }
   if (items.some((item) => /quiet|light|sound|noise|texture|sensory/i.test(item.factText))) {
@@ -727,15 +728,16 @@ function buildCoverageNativeReasonForReferralSentence({ agePhrase, genderPhrase,
   return `${base}.`
 }
 
-function buildCoverageNativeTimeManagementSentence(items) {
-  const hasBus = items.some((item) => /school bus/i.test(item.factText))
+function buildCoverageNativeTimeManagementSentence(items, timeManagementMemo) {
+  const hasBus = items.some((item) => /school bus|\bbus\b/i.test(item.factText)) || /school bus|\bbus\b/i.test(timeManagementMemo?.developmentalCourse ?? '')
   const hasDance = items.some((item) => /dance class/i.test(item.factText))
+  const hasSlowCompletion = timeManagementMemo?.supportedPattern?.includes('slow task completion') || items.some((item) => /longer to do things|task/i.test(item.factText))
   const examples = [
     hasBus ? 'frequent lateness for the school bus throughout elementary, middle, and high school' : null,
     hasDance ? 'arriving late to dance classes' : null
   ].filter(Boolean)
   const exampleClause = examples.length > 0 ? ` She explained that this was evident in ${joinClinicalList(examples)}.` : ''
-  return `She described long-standing challenges with time management beginning in early childhood, including chronic lateness, difficulty completing tasks efficiently, and needing more time than peers to finish work.${exampleClause}`
+  return `She described long-standing challenges with time management beginning in early childhood, including chronic lateness, difficulty completing tasks efficiently, and${hasSlowCompletion ? ' needing more time than peers to finish work' : ' difficulty managing tasks within the available structure'}.${exampleClause}`
 }
 
 function buildCoverageNativeSensoryOverviewSentence(items) {
@@ -892,4 +894,15 @@ function renderDraftMarkdown(title, draft) {
 
 async function writeJson(filePath, value) {
   await writeFile(filePath, JSON.stringify(value, null, 2) + '\n', 'utf8')
+}
+
+async function readOptionalJson(filePath) {
+  try {
+    return JSON.parse(await readFile(filePath, 'utf8'))
+  } catch (error) {
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT') {
+      return null
+    }
+    throw error
+  }
 }

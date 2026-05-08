@@ -53,6 +53,13 @@ async function main() {
       runId
     ])
 
+    runNodeScript('.sandcastle/history-report/scripts/domain-time-management-run.mjs', [
+      '--source-dir',
+      sourceDirectory,
+      '--run-id',
+      runId
+    ])
+
     runNodeScript('.sandcastle/history-report/scripts/style-profile-run.mjs', [
       '--source-dir',
       sourceDirectory,
@@ -147,6 +154,7 @@ function printSummary({ sourceDirectory, caseRoot, runRoot, runId }) {
   console.log(`- ${path.join(runRoot, '02-evidence', 'atomic-claims.json')}`)
   console.log(`- ${path.join(runRoot, '03-derived', 'case-classification.json')}`)
   console.log(`- ${path.join(runRoot, '03-derived', 'section-plan.md')}`)
+  console.log(`- ${path.join(runRoot, '03-derived', 'domain-memo.time-management-executive.json')}`)
   console.log(`- ${path.join(runRoot, '03-derived', 'governing-profile.json')}`)
   console.log(`- ${path.join(runRoot, '04-draft', 'reason-for-referral.draft.md')}`)
   console.log(`- ${path.join(runRoot, '04-draft', 'presenting-information.draft.md')}`)

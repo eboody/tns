@@ -21,6 +21,7 @@ async function main() {
   runNodeScript('.sandcastle/history-report/scripts/inventory-run.mjs', ['--source-dir', sourceDirectory, '--run-id', runId])
   runNodeScript('.sandcastle/history-report/scripts/evidence-run.mjs', ['--source-dir', sourceDirectory, '--run-id', runId])
   runNodeScript('.sandcastle/history-report/scripts/planning-run.mjs', ['--source-dir', sourceDirectory, '--run-id', runId])
+  runNodeScript('.sandcastle/history-report/scripts/domain-time-management-run.mjs', ['--source-dir', sourceDirectory, '--run-id', runId])
   runNodeScript('.sandcastle/history-report/scripts/style-profile-run.mjs', ['--source-dir', sourceDirectory, '--run-id', runId, '--exemplar-path', exemplarPath])
   runNodeScript('.sandcastle/history-report/scripts/presenting-section-run.mjs', ['--source-dir', sourceDirectory, '--run-id', runId])
   runNodeScript('.sandcastle/history-report/scripts/relevant-history-run.mjs', ['--source-dir', sourceDirectory, '--run-id', runId])
@@ -88,6 +89,7 @@ function printSummary({ sourceDirectory, exemplarPath, runId, caseRoot, runRoot,
   console.log(`- History report: ${finalized.historyPath}`)
   console.log(`- Clinician packet: ${finalized.packetPath}`)
   console.log(`- Governing profile: ${path.join(runRoot, '03-derived', 'governing-profile.json')}`)
+  console.log(`- Time-management domain memo: ${path.join(runRoot, '03-derived', 'domain-memo.time-management-executive.json')}`)
 }
 
 function printUsage() {

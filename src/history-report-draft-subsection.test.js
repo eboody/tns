@@ -7,6 +7,7 @@ import path from 'node:path'
 import { bootstrapHistoryReportRun } from './history-report-bootstrap.js'
 import { runHistoryReportInventory } from './history-report-inventory.js'
 import { runHistoryReportEvidence } from './history-report-evidence.js'
+import { runHistoryReportDomainTimeManagement } from './history-report-domain-time-management.js'
 import { runHistoryReportPlanning } from './history-report-planning.js'
 import { runHistoryReportStyleProfile } from './history-report-style-profile.js'
 import { runHistoryReportDraftSubsection } from './history-report-draft-subsection.js'
@@ -45,6 +46,7 @@ test('runHistoryReportDraftSubsection creates a traceable reason-for-referral dr
   await runHistoryReportInventory({ sourceDirectory, repoRoot, runId: bootstrap.runId })
   await runHistoryReportEvidence({ sourceDirectory, repoRoot, runId: bootstrap.runId })
   await runHistoryReportPlanning({ sourceDirectory, repoRoot, runId: bootstrap.runId })
+  await runHistoryReportDomainTimeManagement({ sourceDirectory, repoRoot, runId: bootstrap.runId })
   await runHistoryReportStyleProfile({ sourceDirectory, repoRoot, runId: bootstrap.runId })
 
   const result = await runHistoryReportDraftSubsection({ sourceDirectory, repoRoot, runId: bootstrap.runId })
@@ -110,6 +112,7 @@ test('runHistoryReportDraftSubsection keeps presenting-complaints detail and exc
   await runHistoryReportInventory({ sourceDirectory, repoRoot, runId: bootstrap.runId })
   await runHistoryReportEvidence({ sourceDirectory, repoRoot, runId: bootstrap.runId })
   await runHistoryReportPlanning({ sourceDirectory, repoRoot, runId: bootstrap.runId })
+  await runHistoryReportDomainTimeManagement({ sourceDirectory, repoRoot, runId: bootstrap.runId })
   await runHistoryReportStyleProfile({ sourceDirectory, repoRoot, runId: bootstrap.runId })
 
   const result = await runHistoryReportDraftSubsection({ sourceDirectory, repoRoot, runId: bootstrap.runId, subsectionId: 'presenting-complaints' })
@@ -124,12 +127,16 @@ test('runHistoryReportDraftSubsection keeps presenting-complaints detail and exc
   const coveragePack = JSON.parse(await readFile(path.join(bootstrap.runRoot, '04-draft', 'presenting-complaints.coverage-pack.json'), 'utf8'))
   assert.ok(coveragePack.items.some((item) => item.factKind === 'concrete_example'))
 
+  const domainMemo = JSON.parse(await readFile(path.join(bootstrap.runRoot, '03-derived', 'domain-memo.time-management-executive.json'), 'utf8'))
+  assert.match(domainMemo.developmentalCourse, /school bus|dance classes/)
+
   const coverageReview = JSON.parse(await readFile(path.join(bootstrap.runRoot, '05-audit', 'presenting-complaints.coverage-review.json'), 'utf8'))
   assert.equal(coverageReview.pass, true)
 
   const draftMarkdown = await readFile(path.join(bootstrap.runRoot, '04-draft', 'presenting-complaints.draft.md'), 'utf8')
   assert.match(draftMarkdown, /beginning in early childhood/)
   assert.match(draftMarkdown, /dance classes/)
+  assert.match(draftMarkdown, /school bus/)
   assert.match(draftMarkdown, /air-conditioning/)
   assert.match(draftMarkdown, /jeans/)
   assert.match(draftMarkdown, /bright natural light/)
