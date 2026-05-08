@@ -58,7 +58,7 @@ export function deriveRelatedRedactionTerms(term) {
 
 export function collectSuggestedRedactionTerms(filePreviews) {
   const existingTerms = collectWorkspaceRedactionTerms(filePreviews)
-  return collectSuggestedRedactionTermsForTerms(existingTerms)
+  return collectSuggestedRedactionTermsForWorkspace(filePreviews, existingTerms)
 }
 
 export function collectSuggestedRedactionTermsForTerms(existingTerms) {
@@ -78,6 +78,11 @@ export function collectSuggestedRedactionTermsForTerms(existingTerms) {
   }
 
   return suggestions
+}
+
+export function collectSuggestedRedactionTermsForWorkspace(filePreviews, existingTerms) {
+  return collectSuggestedRedactionTermsForTerms(existingTerms)
+    .filter((candidate) => hasUnredactedWorkspaceOccurrence(filePreviews, candidate))
 }
 
 export function redactionTermKey(term) {
@@ -102,4 +107,71 @@ function looksLikePersonName(value) {
 
 function normalizeTerm(value) {
   return typeof value === 'string' ? value.trim() : ''
+}
+
+function hasUnredactedWorkspaceOccurrence(filePreviews, candidate) {
+  return (Array.isArray(filePreviews) ? filePreviews : []).some((preview) =>
+    previewHasUnredactedOccurrence(preview, candidate)
+  )
+}
+
+function previewHasUnredactedOccurrence(preview, candidate) {
+  const originalText = normalizeTerm(preview?.originalText)
+  if (!originalText) {
+    return false
+  }
+
+  const ranges = Array.isArray(preview?.redactionRanges) ? preview.redactionRanges : []
+  for (const match of literalCaseInsensitiveMatches(originalText, candidate)) {
+    if (!hasExactMatchBoundaries(originalText, match.start, match.end, match.text)) {
+      continue
+    }
+
+    if (!ranges.some((range) => overlapsRange(match.start, match.end, range))) {
+      return true
+    }
+  }
+
+  return false
+}
+
+function literalCaseInsensitiveMatches(text, candidate) {
+  const escaped = candidate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const regex = new RegExp(escaped, 'gi')
+  const matches = []
+
+  for (const match of text.matchAll(regex)) {
+    const start = match.index ?? 0
+    const matchedText = match[0] ?? ''
+    matches.push({ start, end: start + matchedText.length, text: matchedText })
+  }
+
+  return matches
+}
+
+function hasExactMatchBoundaries(text, start, end, matchedText) {
+  const firstChar = matchedText[0]
+  const lastChar = matchedText.at(-1)
+  if (!firstChar || !lastChar) {
+    return false
+  }
+
+  const leftOk = isWordish(firstChar)
+    ? !isWordish(text[start - 1] ?? '')
+    : true
+  const rightOk = isWordish(lastChar)
+    ? !isWordish(text[end] ?? '')
+    : true
+
+  return leftOk && rightOk
+}
+
+function isWordish(char) {
+  return /[\p{L}\p{N}_]/u.test(char)
+}
+
+function overlapsRange(start, end, range) {
+  const rangeStart = Number(range?.start ?? -1)
+  const rangeEnd = Number(range?.end ?? -1)
+  return start < rangeEnd && end > rangeStart
 }

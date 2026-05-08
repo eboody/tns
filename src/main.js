@@ -2,6 +2,7 @@ import './styles.css'
 import { effect } from '@preact/signals-core'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
+import { loadSavedRedactionTerms, saveSavedRedactionTerms } from './redaction-term-store.js'
 import {
   createRedactionSidebarState
 } from './redaction-sidebar-state.js'
@@ -51,7 +52,9 @@ const loadingMessage = document.getElementById('loadingMessage')
 let workspace = createWorkspaceState(
   'Desktop shell loaded. Choose a file or folder to start local processing automatically.'
 )
+let savedRedactionTerms = loadSavedRedactionTerms()
 const redactionSidebar = createRedactionSidebarState()
+redactionSidebar.setPersistedTerms(savedRedactionTerms)
 let pendingPreviewActions = null
 let previewActionHideTimer = null
 let previewScrollSyncFrame = null
@@ -60,8 +63,10 @@ let previewActionInFlight = false
 let recentSelectionIntentUntil = 0
 let lastSidebarPreviewSet = null
 let activeRedactionTermId = null
-const liveRedactionTimers = new Map()
-const LIVE_REDACTION_DEBOUNCE_MS = 200
+const liveRedactionRequested = new Set()
+const liveRedactionInFlight = new Map()
+let debugInputSequence = 0
+const debugEvents = []
 
 renderWorkspace()
 
@@ -93,6 +98,17 @@ if (window.location.hostname === '127.0.0.1' || window.location.hostname === 'lo
         placement: previewActionTooltip.dataset.placement,
         arrowLeft: getComputedStyle(previewActionTooltip).getPropertyValue('--tooltip-arrow-left')
       }
+    },
+    redactionDebugState() {
+      return {
+        activeRedactionTermId,
+        terms: redactionSidebar.sourceTerms.value.map(snapshotTermState),
+        persistedTerms: [...savedRedactionTerms],
+        events: [...debugEvents]
+      }
+    },
+    clearRedactionDebugEvents() {
+      debugEvents.length = 0
     }
   }
 }
@@ -133,11 +149,20 @@ function renderWorkspace() {
 
 function syncRedactionSidebar(force = false) {
   if (!force && (activeRedactionTermId !== null || workspace.filePreviews === lastSidebarPreviewSet)) {
+    recordDebugEvent('skip-sidebar-sync', {
+      force,
+      activeRedactionTermId,
+      samePreviewSet: workspace.filePreviews === lastSidebarPreviewSet
+    })
     return
   }
 
   redactionSidebar.syncFromPreviews(workspace.filePreviews)
   lastSidebarPreviewSet = workspace.filePreviews
+  recordDebugEvent('sync-sidebar', {
+    force,
+    termIds: redactionSidebar.sourceTerms.value.map((term) => term.id)
+  })
 }
 
 function renderLoadingOverlay() {
@@ -154,6 +179,10 @@ function renderLoadingOverlay() {
 }
 
 function renderRedactionTermsPanel(terms) {
+  recordDebugEvent('render-terms-panel', {
+    activeRedactionTermId,
+    termIds: terms.map((term) => term.id)
+  })
   redactionTermsList.replaceChildren()
   if (terms.length === 0) {
     redactionTermsList.appendChild(createTagListItem('No redaction terms yet. Select text or use find and redact.'))
@@ -289,16 +318,21 @@ function createEditableTermListItem(term) {
   input.type = 'text'
   input.className = 'term-list-input'
   input.value = term.matchedText
+  input.dataset.debugInputId = `redaction-input-${++debugInputSequence}`
+  input.dataset.termId = term.id
   input.setAttribute('aria-label', `Redaction term ${term.matchedText}`)
   input.title = `${term.occurrences} occurrence${term.occurrences === 1 ? '' : 's'}`
   item.appendChild(input)
+  recordDebugEvent('create-term-input', {
+    debugInputId: input.dataset.debugInputId,
+    term: snapshotTermState(term)
+  })
 
   const actions = document.createElement('div')
   actions.className = 'term-list-actions'
 
   const flushEdit = async () => {
-    clearLiveRedactionTimer(term.id)
-    await applyLiveRedactionEdit(term.id)
+    await requestLiveRedactionEdit(term.id)
     activeRedactionTermId = null
     syncRedactionSidebar(true)
     renderRedactionTermsPanel(redactionSidebar.sourceTerms.peek())
@@ -306,16 +340,43 @@ function createEditableTermListItem(term) {
 
   input.addEventListener('focus', () => {
     activeRedactionTermId = term.id
+    recordDebugEvent('input-focus', {
+      debugInputId: input.dataset.debugInputId,
+      termId: term.id,
+      value: input.value,
+      draft: redactionSidebar.draftValueFor(term.id),
+      committed: redactionSidebar.committedValueFor(term.id)
+    })
   })
 
   input.addEventListener('input', () => {
     redactionSidebar.setDraft(term.id, input.value)
-    scheduleLiveRedactionEdit(term.id)
+    recordDebugEvent('input-change', {
+      debugInputId: input.dataset.debugInputId,
+      termId: term.id,
+      value: input.value,
+      draft: redactionSidebar.draftValueFor(term.id),
+      committed: redactionSidebar.committedValueFor(term.id)
+    })
+    void requestLiveRedactionEdit(term.id)
   })
   input.addEventListener('blur', () => {
+    recordDebugEvent('input-blur', {
+      debugInputId: input.dataset.debugInputId,
+      termId: term.id,
+      value: input.value,
+      draft: redactionSidebar.draftValueFor(term.id),
+      committed: redactionSidebar.committedValueFor(term.id)
+    })
     void flushEdit()
   })
   input.addEventListener('keydown', async (event) => {
+    recordDebugEvent('input-keydown', {
+      debugInputId: input.dataset.debugInputId,
+      termId: term.id,
+      key: event.key,
+      value: input.value
+    })
     if (event.key === 'Enter') {
       event.preventDefault()
       input.blur()
@@ -326,7 +387,6 @@ function createEditableTermListItem(term) {
       const committedTerm = redactionSidebar.committedValueFor(term.id)
       redactionSidebar.resetDraft(term.id)
       input.value = committedTerm
-      clearLiveRedactionTimer(term.id)
       input.blur()
     }
   })
@@ -343,8 +403,8 @@ function createEditableTermListItem(term) {
     }
 
     activeRedactionTermId = null
-    clearLiveRedactionTimer(term.id)
-    await deleteRedactionTerm(term.matchedText)
+    await settleLiveRedactionEdit(term.id)
+    await deleteRedactionTermById(term.id, term.matchedText)
   })
 
   actions.append(deleteButton)
@@ -352,40 +412,75 @@ function createEditableTermListItem(term) {
   return item
 }
 
-function clearLiveRedactionTimer(termId) {
-  const timer = liveRedactionTimers.get(termId)
-  if (timer) {
-    clearTimeout(timer)
-    liveRedactionTimers.delete(termId)
+async function requestLiveRedactionEdit(termId) {
+  liveRedactionRequested.add(termId)
+  recordDebugEvent('request-live-edit', {
+    termId,
+    draft: redactionSidebar.draftValueFor(termId),
+    committed: redactionSidebar.committedValueFor(termId)
+  })
+
+  if (liveRedactionInFlight.has(termId)) {
+    return liveRedactionInFlight.get(termId)
+  }
+
+  const run = drainLiveRedactionEdits(termId)
+  liveRedactionInFlight.set(termId, run)
+  await run
+}
+
+async function settleLiveRedactionEdit(termId) {
+  liveRedactionRequested.delete(termId)
+  recordDebugEvent('settle-live-edit', { termId })
+  if (liveRedactionInFlight.has(termId)) {
+    await liveRedactionInFlight.get(termId)
   }
 }
 
-function scheduleLiveRedactionEdit(termId) {
-  clearLiveRedactionTimer(termId)
-  liveRedactionTimers.set(termId, setTimeout(() => {
-    liveRedactionTimers.delete(termId)
-    void applyLiveRedactionEdit(termId)
-  }, LIVE_REDACTION_DEBOUNCE_MS))
+async function drainLiveRedactionEdits(termId) {
+  try {
+    while (liveRedactionRequested.has(termId)) {
+      liveRedactionRequested.delete(termId)
+      recordDebugEvent('drain-live-edit', {
+        termId,
+        draft: redactionSidebar.draftValueFor(termId),
+        committed: redactionSidebar.committedValueFor(termId)
+      })
+      await applyLiveRedactionEdit(termId)
+    }
+  } finally {
+    liveRedactionInFlight.delete(termId)
+    recordDebugEvent('live-edit-finished', { termId })
+  }
 }
 
 async function applyLiveRedactionEdit(termId) {
   const nextTerm = redactionSidebar.draftValueFor(termId).trim()
   const committedTerm = redactionSidebar.committedValueFor(termId)
+  recordDebugEvent('apply-live-edit', {
+    termId,
+    nextTerm,
+    committedTerm,
+    processingInFlight: workspace.processingInFlight,
+    previewCount: workspace.filePreviews.length
+  })
 
   if (!nextTerm || nextTerm === committedTerm || workspace.processingInFlight || workspace.filePreviews.length === 0) {
     return
   }
 
-  const applied = await replaceRedactionTerm(committedTerm, nextTerm, { quiet: true })
+  const applied = await replaceRedactionTerm(committedTerm, nextTerm, { quiet: true, termId })
   if (!applied) {
+    recordDebugEvent('apply-live-edit-failed', { termId, nextTerm, committedTerm })
     return
   }
 
   redactionSidebar.applyCommittedValue(termId, nextTerm)
-
-  if (redactionSidebar.draftValueFor(termId).trim() !== nextTerm) {
-    scheduleLiveRedactionEdit(termId)
-  }
+  recordDebugEvent('apply-live-edit-committed', {
+    termId,
+    committed: redactionSidebar.committedValueFor(termId),
+    draft: redactionSidebar.draftValueFor(termId)
+  })
 }
 
 function createTermChipPlaceholder(text) {
@@ -408,6 +503,7 @@ async function handleFindAndRedact() {
         targets: allPreviewRequests()
       }
     })
+    rememberSavedRedactionTerm(term)
     replacePreviewStates(result.updates ?? [])
     redactionTermInput.value = ''
     appendSummary(
@@ -420,6 +516,10 @@ async function handleFindAndRedact() {
 }
 
 async function deleteRedactionTerm(term) {
+  return deleteRedactionTermById(null, term)
+}
+
+async function deleteRedactionTermById(termId, term) {
   try {
     const result = await invoke('remove_redaction_term', {
       request: {
@@ -427,6 +527,7 @@ async function deleteRedactionTerm(term) {
         targets: allPreviewRequests()
       }
     })
+    forgetSavedRedactionTerm(termId, term)
     replacePreviewStates(result.updates ?? [])
     appendSummary(
       `Deleted redaction term "${term}" from ${result.updatedTargets ?? 0} file(s). `
@@ -437,28 +538,35 @@ async function deleteRedactionTerm(term) {
   }
 }
 
-async function replaceRedactionTerm(previousTerm, nextTerm, { quiet = false } = {}) {
+async function replaceRedactionTerm(previousTerm, nextTerm, { quiet = false, termId = null } = {}) {
   try {
-    const removed = await invoke('remove_redaction_term', {
+    const result = await invoke('replace_redaction_term', {
       request: {
-        term: previousTerm,
+        previousTerm,
+        nextTerm,
         targets: allPreviewRequests()
       }
     })
-    replacePreviewStates(removed.updates ?? [])
+    const updatedTargets = result.updatedTargets ?? 0
+    const unchangedTargets = result.unchangedTargets ?? 0
+    replacePreviewStates(result.updates ?? [])
 
-    const added = await invoke('find_and_redact_term', {
-      request: {
-        term: nextTerm,
-        targets: allPreviewRequests()
+    if (updatedTargets === 0) {
+      if (!quiet) {
+        appendSummary(
+          `Could not replace redaction term "${previousTerm}" with "${nextTerm}". `
+          + 'The edited text no longer matches an anchored source span.'
+        )
       }
-    })
-    replacePreviewStates(added.updates ?? [])
+      return false
+    }
+
+    replaceSavedRedactionTerm(termId, previousTerm, nextTerm)
 
     if (!quiet) {
       appendSummary(
         `Replaced redaction term "${previousTerm}" with "${nextTerm}". `
-        + `Removed from ${removed.updatedTargets ?? 0} file(s), added to ${added.updatedTargets ?? 0} file(s).`
+        + `Updated ${updatedTargets} file(s). ${unchangedTargets} file(s) were unchanged.`
       )
     }
     return true
@@ -515,11 +623,83 @@ async function processSelectedInput({ sourceLabel }) {
       outputPath,
       auditOutputPath
     })
+
+    await applySavedRedactionTermsToWorkspace()
   } catch (error) {
     workspace = failProcessing(workspace, `Error: ${String(error)}`)
   }
 
   renderWorkspace()
+}
+
+async function applySavedRedactionTermsToWorkspace() {
+  const terms = savedRedactionTerms
+  if (terms.length === 0 || workspace.filePreviews.length === 0) {
+    return
+  }
+
+  for (const term of terms) {
+    const result = await invoke('find_and_redact_term', {
+      request: {
+        term,
+        targets: allPreviewRequests()
+      }
+    })
+    replacePreviewStates(result.updates ?? [])
+  }
+
+  syncRedactionSidebar(true)
+}
+
+function rememberSavedRedactionTerm(term) {
+  savedRedactionTerms = saveSavedRedactionTerms([...savedRedactionTerms, term])
+  redactionSidebar.rememberPersistedTerm(term)
+}
+
+function forgetSavedRedactionTerm(termId, term) {
+  savedRedactionTerms = saveSavedRedactionTerms(
+    savedRedactionTerms.filter((savedTerm) => savedTerm.toLowerCase() !== term.toLowerCase())
+  )
+  if (termId) {
+    redactionSidebar.forgetPersistedTermById(termId)
+    return
+  }
+
+  redactionSidebar.setPersistedTerms(savedRedactionTerms)
+}
+
+function replaceSavedRedactionTerm(termId, previousTerm, nextTerm) {
+  savedRedactionTerms = saveSavedRedactionTerms(
+    savedRedactionTerms
+      .filter((savedTerm) => savedTerm.toLowerCase() !== previousTerm.toLowerCase())
+      .concat(nextTerm)
+  )
+  if (termId) {
+    redactionSidebar.replacePersistedTerm(termId, nextTerm)
+    return
+  }
+
+  redactionSidebar.setPersistedTerms(savedRedactionTerms)
+}
+
+function snapshotTermState(term) {
+  return {
+    id: term.id,
+    key: term.key,
+    matchedText: term.matchedText,
+    occurrences: term.occurrences
+  }
+}
+
+function recordDebugEvent(type, detail) {
+  if (!(window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost')) {
+    return
+  }
+
+  debugEvents.push({ type, at: performance.now(), detail })
+  if (debugEvents.length > 200) {
+    debugEvents.shift()
+  }
 }
 
 function fileListItem(primary, badge, secondary) {

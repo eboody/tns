@@ -3,6 +3,7 @@ use std::sync::Mutex;
 
 use crate::desktop::{
     DesktopAddRedactionRequest, DesktopFindAndRedactRequest, DesktopRedactionAcrossFilesRequest,
+    DesktopReplaceRedactionTermRequest,
     DesktopRemoveRedactionTermRequest,
     DesktopRemoveRedactionRequest, DesktopRunSettings, DesktopReplaceRequest,
     DesktopReviewRequest,
@@ -12,6 +13,7 @@ use crate::desktop::{
     inspect_manual_redaction as inspect_manual_redaction_service,
     inspect_redaction_across_files as inspect_redaction_across_files_service,
     merge_manual_redaction as merge_manual_redaction_service,
+    replace_redaction_term as replace_redaction_term_service,
     remove_redaction_term as remove_redaction_term_service,
     remove_redaction_from_all_files as remove_redaction_from_all_files_service,
     remove_redaction as remove_redaction_service, run_replace_job as run_replace_service,
@@ -140,6 +142,13 @@ fn remove_redaction_term(
 }
 
 #[tauri::command]
+fn replace_redaction_term(
+    request: DesktopReplaceRedactionTermRequest,
+) -> Result<crate::desktop::DesktopAcrossFilesUpdateResult, String> {
+    replace_redaction_term_service(request).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn open_last_output_path(
     app: tauri::AppHandle,
     artifacts: tauri::State<'_, LastReplaceArtifactsState>,
@@ -258,6 +267,7 @@ pub fn run() {
             inspect_redaction_across_files,
             find_and_redact_term,
             remove_redaction_term,
+            replace_redaction_term,
             open_last_output_path,
             open_last_audit_output_path
         ])

@@ -8,13 +8,15 @@ test('sidebar state recomputes related suggestions from inline drafts', () => {
 
   state.syncFromPreviews([
     {
+      originalText: 'John J. Doe met John.',
+      redactionRanges: [{ start: 0, end: 11 }],
       redactionTerms: [
         { matchedText: 'John J. Doe', replacement: '[MANUAL_REDACTION]', entityType: 'MANUAL_REDACTION', occurrences: 1 }
       ]
     }
-  ])
+  ], [])
 
-  assert.deepEqual(state.relatedSuggestions.value, ['Doe', 'John', 'John Doe'])
+  assert.deepEqual(state.relatedSuggestions.value, ['John'])
 
   const id = state.sourceTerms.value[0].id
   state.setDraft(id, 'John')
@@ -27,11 +29,13 @@ test('sidebar state clears drafts when previews resync', () => {
 
   state.syncFromPreviews([
     {
+      originalText: 'John Doe',
+      redactionRanges: [{ start: 0, end: 8 }],
       redactionTerms: [
         { matchedText: 'John Doe', replacement: '[MANUAL_REDACTION]', entityType: 'MANUAL_REDACTION', occurrences: 1 }
       ]
     }
-  ])
+  ], [])
 
   const id = state.sourceTerms.value[0].id
   state.setDraft(id, 'John')
@@ -39,11 +43,13 @@ test('sidebar state clears drafts when previews resync', () => {
 
   state.syncFromPreviews([
     {
+      originalText: 'John',
+      redactionRanges: [{ start: 0, end: 4 }],
       redactionTerms: [
         { matchedText: 'John', replacement: '[MANUAL_REDACTION]', entityType: 'MANUAL_REDACTION', occurrences: 1 }
       ]
     }
-  ])
+  ], [])
 
   assert.equal(state.draftValueFor(state.sourceTerms.value[0].id), 'John')
   assert.deepEqual(state.relatedSuggestions.value, [])
@@ -54,22 +60,35 @@ test('sidebar state can advance the committed term without clearing a newer draf
 
   state.syncFromPreviews([
     {
+      originalText: 'John Doe',
+      redactionRanges: [{ start: 0, end: 8 }],
       redactionTerms: [
         { matchedText: 'John Doe', replacement: '[MANUAL_REDACTION]', entityType: 'MANUAL_REDACTION', occurrences: 1 }
       ]
     }
-  ])
+  ], [])
 
   const id = state.sourceTerms.value[0].id
   state.setDraft(id, 'John D')
   state.applyCommittedValue(id, 'John D')
 
-  assert.equal(state.committedValueFor(id), 'John D')
-  assert.equal(state.draftValueFor(id), 'John D')
+  const updatedId = state.sourceTerms.value[0].id
+  assert.equal(state.committedValueFor(updatedId), 'John D')
+  assert.equal(state.draftValueFor(updatedId), 'John D')
 
-  state.setDraft(id, 'John Do')
-  state.applyCommittedValue(id, 'John D')
+  state.setDraft(updatedId, 'John Do')
+  state.applyCommittedValue(updatedId, 'John D')
 
-  assert.equal(state.committedValueFor(id), 'John D')
-  assert.equal(state.draftValueFor(id), 'John Do')
+  assert.equal(state.committedValueFor(state.sourceTerms.value[0].id), 'John D')
+  assert.equal(state.draftValueFor(updatedId), 'John Do')
+})
+
+test('sidebar state preserves saved manual terms across preview loads', () => {
+  const state = createRedactionSidebarState()
+
+  state.setPersistedTerms(['John Doe'])
+  state.syncFromPreviews([])
+
+  assert.equal(state.sourceTerms.value[0].matchedText, 'John Doe')
+  assert.equal(state.sourceTerms.value[0].occurrences, 0)
 })
