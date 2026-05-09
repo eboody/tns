@@ -317,8 +317,9 @@ effect(() => {
 
 effect(() => {
   const state = workspace.value
-  syncRedactionSidebar(state)
   draftPreviewState.syncWorkspace(state)
+  draftPreviewState.selectedDraftTerms.value
+  syncRedactionSidebar(state)
 })
 
 effect(() => {
@@ -326,14 +327,19 @@ effect(() => {
 })
 
 effect(() => {
+  draftPreviewState.draftPreviewByPath.value
   renderResultFiles(workspace.value)
 })
 
 effect(() => {
+  draftPreviewState.selectedDraftStatus.value
   renderSelectedFileStrip(workspace.value)
 })
 
 effect(() => {
+  draftPreviewState.draftBeforeHtml.value
+  draftPreviewState.draftAfterHtml.value
+  draftPreviewState.draftHighlightCount.value
   renderPreview(draftPreviewState.selectedPreview.value)
 })
 
