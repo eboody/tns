@@ -6,7 +6,7 @@ import { createRedactionSidebarState } from './redaction-sidebar-state.js'
 test('sidebar state recomputes related suggestions from inline drafts', () => {
   const state = createRedactionSidebarState()
 
-  state.syncFromPreviews([
+  state.syncFromDraftState({ filePreviews: [
     {
       originalText: 'John J. Doe met John.',
       redactionRanges: [{ start: 0, end: 11 }],
@@ -14,7 +14,7 @@ test('sidebar state recomputes related suggestions from inline drafts', () => {
         { matchedText: 'John J. Doe', replacement: '[MANUAL_REDACTION]', entityType: 'MANUAL_REDACTION', occurrences: 1 }
       ]
     }
-  ], [])
+  ] })
 
   assert.deepEqual(state.relatedSuggestions.value, ['John'])
 
@@ -24,10 +24,31 @@ test('sidebar state recomputes related suggestions from inline drafts', () => {
   assert.deepEqual(state.relatedSuggestions.value, [])
 })
 
+test('sidebar state keeps draft edits separate from committed redaction terms until applied', () => {
+  const state = createRedactionSidebarState()
+
+  state.syncFromDraftState({ filePreviews: [
+    {
+      originalText: 'John Doe met John.',
+      redactionRanges: [{ start: 0, end: 8 }],
+      redactionTerms: [
+        { matchedText: 'John Doe', replacement: '[MANUAL_REDACTION]', entityType: 'MANUAL_REDACTION', occurrences: 1 }
+      ]
+    }
+  ] })
+
+  const id = state.sourceTerms.value[0].id
+  state.setDraft(id, 'John')
+
+  assert.equal(state.draftValueFor(id), 'John')
+  assert.equal(state.committedValueFor(id), 'John Doe')
+  assert.equal(state.sourceTerms.value[0].matchedText, 'John Doe')
+})
+
 test('sidebar state clears drafts when previews resync', () => {
   const state = createRedactionSidebarState()
 
-  state.syncFromPreviews([
+  state.syncFromDraftState({ filePreviews: [
     {
       originalText: 'John Doe',
       redactionRanges: [{ start: 0, end: 8 }],
@@ -35,13 +56,13 @@ test('sidebar state clears drafts when previews resync', () => {
         { matchedText: 'John Doe', replacement: '[MANUAL_REDACTION]', entityType: 'MANUAL_REDACTION', occurrences: 1 }
       ]
     }
-  ], [])
+  ] })
 
   const id = state.sourceTerms.value[0].id
   state.setDraft(id, 'John')
   assert.equal(state.draftValueFor(id), 'John')
 
-  state.syncFromPreviews([
+  state.syncFromDraftState({ filePreviews: [
     {
       originalText: 'John',
       redactionRanges: [{ start: 0, end: 4 }],
@@ -49,7 +70,7 @@ test('sidebar state clears drafts when previews resync', () => {
         { matchedText: 'John', replacement: '[MANUAL_REDACTION]', entityType: 'MANUAL_REDACTION', occurrences: 1 }
       ]
     }
-  ], [])
+  ] })
 
   assert.equal(state.draftValueFor(state.sourceTerms.value[0].id), 'John')
   assert.deepEqual(state.relatedSuggestions.value, [])
@@ -58,7 +79,7 @@ test('sidebar state clears drafts when previews resync', () => {
 test('sidebar state can advance the committed term without clearing a newer draft', () => {
   const state = createRedactionSidebarState()
 
-  state.syncFromPreviews([
+  state.syncFromDraftState({ filePreviews: [
     {
       originalText: 'John Doe',
       redactionRanges: [{ start: 0, end: 8 }],
@@ -66,7 +87,7 @@ test('sidebar state can advance the committed term without clearing a newer draf
         { matchedText: 'John Doe', replacement: '[MANUAL_REDACTION]', entityType: 'MANUAL_REDACTION', occurrences: 1 }
       ]
     }
-  ], [])
+  ] })
 
   const id = state.sourceTerms.value[0].id
   state.setDraft(id, 'John D')
@@ -83,12 +104,39 @@ test('sidebar state can advance the committed term without clearing a newer draf
   assert.equal(state.draftValueFor(updatedId), 'John Do')
 })
 
-test('sidebar state preserves saved manual terms across preview loads', () => {
+test('sidebar state does not surface saved manual terms without matching preview terms', () => {
   const state = createRedactionSidebarState()
 
   state.setPersistedTerms(['John Doe'])
-  state.syncFromPreviews([])
+  state.syncFromDraftState({ filePreviews: [] })
 
-  assert.equal(state.sourceTerms.value[0].matchedText, 'John Doe')
-  assert.equal(state.sourceTerms.value[0].occurrences, 0)
+  assert.deepEqual(state.sourceTerms.value, [])
+})
+
+test('sidebar state preserves drafts for surviving term ids across draft-state syncs', () => {
+  const state = createRedactionSidebarState()
+
+  state.syncFromDraftState({
+    filePreviews: [{ originalText: 'alpha beta' }],
+    terms: [
+      { key: 'alpha::[MANUAL_REDACTION]::MANUAL_REDACTION', matchedText: 'alpha', replacement: '[MANUAL_REDACTION]', entityType: 'MANUAL_REDACTION', occurrences: 1 },
+      { key: 'beta::[MANUAL_REDACTION]::MANUAL_REDACTION', matchedText: 'beta', replacement: '[MANUAL_REDACTION]', entityType: 'MANUAL_REDACTION', occurrences: 1 }
+    ]
+  })
+
+  const alphaId = state.sourceTerms.value.find((term) => term.matchedText === 'alpha').id
+  state.setDraft(alphaId, 'alpha revised')
+
+  state.syncFromDraftState({
+    filePreviews: [{ originalText: 'alpha beta gamma' }],
+    terms: [
+      { key: 'alpha::[MANUAL_REDACTION]::MANUAL_REDACTION', matchedText: 'alpha', replacement: '[MANUAL_REDACTION]', entityType: 'MANUAL_REDACTION', occurrences: 1 },
+      { key: 'gamma::[MANUAL_REDACTION]::MANUAL_REDACTION', matchedText: 'gamma', replacement: '[MANUAL_REDACTION]', entityType: 'MANUAL_REDACTION', occurrences: 1 }
+    ]
+  })
+
+  const nextAlphaId = state.sourceTerms.value.find((term) => term.matchedText === 'alpha').id
+  assert.equal(nextAlphaId, alphaId)
+  assert.equal(state.draftValueFor(alphaId), 'alpha revised')
+  assert.equal(state.sourceTerms.value.some((term) => term.matchedText === 'beta'), false)
 })

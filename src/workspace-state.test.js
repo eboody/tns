@@ -6,6 +6,7 @@ import {
   failProcessing,
   finishProcessing,
   getFileReviewLabel,
+  getSidebarScopedPreviews,
   getSelectedPreview,
   getSelectedFileStatus,
   replacePreviewArtifacts,
@@ -122,4 +123,35 @@ test('selected file status follows the selected preview path', () => {
 
   assert.equal(getSelectedFileStatus(state)?.path, '/tmp/b.md')
   assert.equal(getFileReviewLabel(getSelectedFileStatus(state)), 'Needs manual review')
+})
+
+test('sidebar scoped previews follow the inspected file', () => {
+  let state = finishProcessing(createWorkspaceState('ready'), {
+    summary: 'done',
+    fileStatuses: [
+      { path: '/tmp/a.md', replacements: 1, status: 'processed' },
+      { path: '/tmp/b.md', replacements: 2, status: 'processed' }
+    ],
+    filePreviews: [
+      { path: '/tmp/a.md', redactedHtml: 'a' },
+      { path: '/tmp/b.md', redactedHtml: 'b' }
+    ],
+    outputPath: '/tmp/out',
+    auditOutputPath: '/tmp/audit'
+  })
+
+  assert.deepEqual(getSidebarScopedPreviews(state).map((preview) => preview.path), ['/tmp/a.md'])
+
+  state = selectPreviewPath(state, '/tmp/b.md')
+
+  assert.deepEqual(getSidebarScopedPreviews(state).map((preview) => preview.path), ['/tmp/b.md'])
+})
+
+test('sidebar scoped previews fall back to the first preview when selection is unset', () => {
+  const state = {
+    ...createWorkspaceState('ready'),
+    filePreviews: [{ path: '/tmp/a.md' }, { path: '/tmp/b.md' }]
+  }
+
+  assert.deepEqual(getSidebarScopedPreviews(state).map((preview) => preview.path), ['/tmp/a.md'])
 })

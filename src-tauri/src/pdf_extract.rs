@@ -17,6 +17,7 @@ pub struct PdfExtraction {
     pub text: String,
     pub text_degraded_detected: bool,
     pub low_confidence_review_required: bool,
+    pub quality_penalty: usize,
 }
 
 pub fn extract_pdf_to_markdown(path: &Path) -> Result<String> {
@@ -24,14 +25,26 @@ pub fn extract_pdf_to_markdown(path: &Path) -> Result<String> {
 }
 
 pub fn extract_pdf(path: &Path) -> Result<PdfExtraction> {
-    Ok(select_first_success(
-        [
-            extract_pdf_with_lopdf(path),
-            extract_pdf_with_pdftotext(path),
-        ],
-        "PDF contains no extractable text; treat as non-extractable or low-confidence",
-    )?
-    .value)
+    let lopdf = extract_pdf_with_lopdf(path);
+    let pdftotext = extract_pdf_with_pdftotext(path);
+
+    Ok(match (&lopdf, &pdftotext) {
+        (
+            ExtractionAttempt::Extracted { value: lopdf_value, .. },
+            ExtractionAttempt::Extracted { value: pdftotext_value, .. },
+        ) if should_prefer_pdftotext(lopdf_value, pdftotext_value) => {
+            select_first_success(
+                [pdftotext, lopdf],
+                "PDF contains no extractable text; treat as non-extractable or low-confidence",
+            )?
+            .value
+        }
+        _ => select_first_success(
+            [lopdf, pdftotext],
+            "PDF contains no extractable text; treat as non-extractable or low-confidence",
+        )?
+        .value,
+    })
 }
 
 pub fn extract_pdf_with_lopdf(path: &Path) -> ExtractionAttempt<PdfExtraction> {
@@ -44,13 +57,26 @@ pub fn extract_pdf_with_pdftotext(path: &Path) -> ExtractionAttempt<PdfExtractio
 
 fn build_pdf_extraction(text: String) -> PdfExtraction {
     let token_fusion_suspected = token_fusion_suspected(&text);
+    let line_fragmentation_suspected = line_fragmentation_suspected(&text);
     let repeated_page_furniture_suspected = repeated_page_furniture_suspected(&text);
+    let quality_penalty = quality_penalty(&text);
     let normalized = normalize_extracted_pdf_text(&text);
     PdfExtraction {
-        text_degraded_detected: token_fusion_suspected,
-        low_confidence_review_required: token_fusion_suspected || repeated_page_furniture_suspected,
+        text_degraded_detected: token_fusion_suspected || line_fragmentation_suspected,
+        low_confidence_review_required: token_fusion_suspected
+            || line_fragmentation_suspected
+            || repeated_page_furniture_suspected,
+        quality_penalty,
         text: normalized,
     }
+}
+
+pub fn should_prefer_pdftotext(lopdf: &PdfExtraction, pdftotext: &PdfExtraction) -> bool {
+    if lopdf.quality_penalty != pdftotext.quality_penalty {
+        return lopdf.quality_penalty > pdftotext.quality_penalty;
+    }
+
+    lopdf.text_degraded_detected && !pdftotext.text_degraded_detected
 }
 
 fn extract_pdf_text_with_lopdf(path: &Path) -> ExtractionAttempt<String> {
@@ -146,6 +172,93 @@ fn repeated_page_furniture_suspected(text: &str) -> bool {
     page_marker.find_iter(text).count() >= 2
 }
 
+fn line_fragmentation_suspected(text: &str) -> bool {
+    let trimmed_lines: Vec<&str> = text.lines().map(str::trim).collect();
+    let single_character_line_count = trimmed_lines
+        .iter()
+        .filter(|line| {
+            line.chars().count() == 1
+                && line
+                    .chars()
+                    .next()
+                    .is_some_and(|char| char.is_ascii_alphanumeric())
+        })
+        .count();
+
+    let broken_word_pairs = trimmed_lines
+        .windows(2)
+        .filter(|window| {
+            let [left, right] = window else { return false; };
+            left.chars().count() == 1
+                && left
+                    .chars()
+                    .next()
+                    .is_some_and(|char| char.is_ascii_alphabetic())
+                && right.chars().count() >= 2
+                && right
+                    .chars()
+                    .all(|char| char.is_ascii_alphabetic() || matches!(char, '-' | '\'' | '’'))
+        })
+        .count();
+
+    let broken_number_pairs = trimmed_lines
+        .windows(2)
+        .filter(|window| {
+            let [left, right] = window else { return false; };
+            left.chars().count() == 1
+                && left.chars().next().is_some_and(|char| char.is_ascii_digit())
+                && right.chars().count() >= 2
+                && right.chars().all(|char| char.is_ascii_digit() || char == '/')
+        })
+        .count();
+
+    single_character_line_count >= 6 || broken_word_pairs >= 3 || broken_number_pairs >= 2
+}
+
+fn quality_penalty(text: &str) -> usize {
+    let trimmed_lines: Vec<&str> = text.lines().map(str::trim).collect();
+
+    let single_character_line_count = trimmed_lines
+        .iter()
+        .filter(|line| {
+            line.chars().count() == 1
+                && line
+                    .chars()
+                    .next()
+                    .is_some_and(|char| char.is_ascii_alphanumeric())
+        })
+        .count();
+
+    let broken_word_pairs = trimmed_lines
+        .windows(2)
+        .filter(|window| {
+            let [left, right] = window else { return false; };
+            left.chars().count() == 1
+                && left
+                    .chars()
+                    .next()
+                    .is_some_and(|char| char.is_ascii_alphabetic())
+                && right.chars().count() >= 2
+                && right
+                    .chars()
+                    .all(|char| char.is_ascii_alphabetic() || matches!(char, '-' | '\'' | '’'))
+        })
+        .count();
+
+    let broken_number_pairs = trimmed_lines
+        .windows(2)
+        .filter(|window| {
+            let [left, right] = window else { return false; };
+            left.chars().count() == 1
+                && left.chars().next().is_some_and(|char| char.is_ascii_digit())
+                && right.chars().count() >= 2
+                && right.chars().all(|char| char.is_ascii_digit() || char == '/')
+        })
+        .count();
+
+    single_character_line_count * 3 + broken_word_pairs * 4 + broken_number_pairs * 5
+}
+
 fn normalize_extracted_pdf_text(text: &str) -> String {
     let collapsed_line_whitespace = Regex::new(r"[ \t]+")
         .expect("valid regex")
@@ -194,8 +307,9 @@ mod tests {
     use crate::extractor_pipeline::ExtractionAttempt;
 
     use super::{
-        extract_pdf_text_with_pdftotext, normalize_extracted_pdf_text,
-        repeated_page_furniture_suspected, token_fusion_suspected,
+        PdfExtraction, extract_pdf_text_with_pdftotext, line_fragmentation_suspected,
+        normalize_extracted_pdf_text, repeated_page_furniture_suspected, should_prefer_pdftotext,
+        token_fusion_suspected,
     };
 
     #[test]
@@ -280,5 +394,30 @@ mod tests {
         let raw = "Client Intake\nPage 1 of 3\nSummary text\n\nClient Intake\nPage 2 of 3\nMore summary text";
 
         assert!(repeated_page_furniture_suspected(raw));
+    }
+
+    #[test]
+    fn line_fragmentation_detection_marks_vertically_split_pdf_text_as_degraded() {
+        let raw = "Curriculum Associates, LLC, All Rights Reserved. |\ni-Ready.com\n09/17/25\n| Page:\n1\n/\n2\nHistorical Results\nS\nchool\nM\nEADOWS ELEMENTARY SCHOOL\nS\ntudent\nS\nurina Shah\nS\ntudent ID\n1\n04414\nS\ntudent Grade\n4";
+
+        assert!(line_fragmentation_suspected(raw));
+    }
+
+    #[test]
+    fn chooser_prefers_pdftotext_when_lopdf_fragmentation_is_worse() {
+        let lopdf = PdfExtraction {
+            text: "bad".into(),
+            text_degraded_detected: true,
+            low_confidence_review_required: true,
+            quality_penalty: 40,
+        };
+        let pdftotext = PdfExtraction {
+            text: "good".into(),
+            text_degraded_detected: false,
+            low_confidence_review_required: false,
+            quality_penalty: 0,
+        };
+
+        assert!(should_prefer_pdftotext(&lopdf, &pdftotext));
     }
 }

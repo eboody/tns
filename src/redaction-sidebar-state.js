@@ -13,40 +13,63 @@ export function createRedactionSidebarState() {
   const persistedTerms = signal([])
   const termDrafts = signal(new Map())
 
-  const sourceTerms = computed(() => mergePersistedTerms(
-    workspaceTerms.value,
-    persistedTerms.value
-  ))
+  const sourceTerms = computed(() => workspaceTerms.value)
+  const committedValueFor = (id) => sourceTerms.value.find((term) => term.id === id)?.matchedText ?? ''
+  const draftValueFor = (id) => {
+    const draft = termDrafts.value.get(id)
+    if (typeof draft === 'string') {
+      return draft
+    }
+
+    return committedValueFor(id)
+  }
 
   const suggestionTerms = computed(() => {
-    const drafts = termDrafts.value
-
     return sourceTerms.value
       .map((term) => ({
         ...term,
-        matchedText: normalizeDraft(drafts.get(term.id) ?? term.matchedText)
+        matchedText: normalizeDraft(draftValueFor(term.id))
       }))
       .filter((term) => term.matchedText)
   })
 
   const relatedSuggestions = computed(() => collectSuggestedRedactionTermsForWorkspace(sourcePreviews.value, suggestionTerms.value))
+  const pendingEdits = computed(() => sourceTerms.value
+    .map((term) => {
+      const nextTerm = normalizeDraft(draftValueFor(term.id))
+      const previousTerm = committedValueFor(term.id)
+
+      return {
+        termId: term.id,
+        previousTerm,
+        nextTerm
+      }
+    })
+    .filter((edit) => Boolean(edit.nextTerm) && edit.nextTerm !== edit.previousTerm))
+  const hasPendingEdits = computed(() => pendingEdits.value.length > 0)
 
   return {
     sourcePreviews,
     sourceTerms,
+    pendingEdits,
+    hasPendingEdits,
     relatedSuggestions,
-    syncFromPreviews(filePreviews) {
+    syncFromDraftState({ filePreviews, terms }) {
       const existingIdsByKey = new Map(
         workspaceTerms.peek().map((term) => [term.key, term.id])
       )
 
       batch(() => {
         sourcePreviews.value = Array.isArray(filePreviews) ? filePreviews : []
-        workspaceTerms.value = collectWorkspaceRedactionTerms(filePreviews).map((term) => ({
+        workspaceTerms.value = (Array.isArray(terms) ? terms : collectWorkspaceRedactionTerms(filePreviews)).map((term) => ({
           ...term,
           id: existingIdsByKey.get(term.key) ?? `workspace-term-${nextWorkspaceTermId++}`
         }))
-        termDrafts.value = new Map()
+        termDrafts.value = new Map(
+          Array.from(termDrafts.peek().entries()).filter(([id]) =>
+            workspaceTerms.value.some((term) => term.id === id)
+          )
+        )
       })
     },
     setPersistedTerms(terms) {
@@ -90,17 +113,8 @@ export function createRedactionSidebarState() {
       nextDrafts.delete(id)
       termDrafts.value = nextDrafts
     },
-    draftValueFor(id) {
-      const draft = termDrafts.peek().get(id)
-      if (typeof draft === 'string') {
-        return draft
-      }
-
-      return this.committedValueFor(id)
-    },
-    committedValueFor(id) {
-      return sourceTerms.value.find((term) => term.id === id)?.matchedText ?? ''
-    },
+    draftValueFor,
+    committedValueFor,
     applyCommittedValue(id, matchedText) {
       const normalized = normalizeDraft(matchedText)
 
@@ -150,42 +164,4 @@ function normalizePersistedEntry(term) {
     replacement: '[MANUAL_REDACTION]',
     entityType: 'MANUAL_REDACTION'
   }
-}
-
-function mergePersistedTerms(workspaceTerms, persistedTerms) {
-  const merged = new Map(
-    workspaceTerms.map((term) => [term.key, { ...term, id: term.id ?? term.key }])
-  )
-
-  for (const persistedTerm of Array.isArray(persistedTerms) ? persistedTerms : []) {
-    const matchedText = normalizeDraft(persistedTerm?.matchedText ?? persistedTerm)
-    if (!matchedText) {
-      continue
-    }
-
-    const key = redactionTermKey({
-      matchedText,
-      replacement: '[MANUAL_REDACTION]',
-      entityType: 'MANUAL_REDACTION'
-    })
-
-    if (!merged.has(key)) {
-      merged.set(key, {
-        id: persistedTerm?.id ?? key,
-        key,
-        matchedText,
-        replacement: '[MANUAL_REDACTION]',
-        entityType: 'MANUAL_REDACTION',
-        occurrences: 0
-      })
-      continue
-    }
-
-    const existing = merged.get(key)
-    if (persistedTerm?.id) {
-      existing.id = persistedTerm.id
-    }
-  }
-
-  return Array.from(merged.values())
 }

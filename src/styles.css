@@ -143,6 +143,24 @@ main {
   align-self: center;
 }
 
+.result-actions .save-redaction-edits-button {
+  background: #ef7fb0;
+  color: #4a0f2d;
+  border-color: rgba(190, 61, 118, 0.55);
+  font-weight: 700;
+  box-shadow:
+    0 10px 20px rgba(190, 61, 118, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.28);
+}
+
+.result-actions .save-redaction-edits-button:not(:disabled):hover {
+  background: color-mix(in srgb, #ef7fb0 92%, white 8%);
+  border-color: rgba(190, 61, 118, 0.7);
+  box-shadow:
+    0 12px 22px rgba(190, 61, 118, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
 .workspace {
   display: grid;
   grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
@@ -885,6 +903,7 @@ button:disabled {
   min-height: 34rem;
   max-height: 70vh;
   overflow: auto;
+  contain: content;
   margin: 0;
   padding: 18px 18px 24px;
   border-radius: var(--radius-lg);
@@ -956,6 +975,17 @@ button:disabled {
     0 4px 10px rgba(190, 61, 118, 0.12);
   background: #ffe6f1;
   color: #8a1f52;
+}
+
+.preview-text .pending-redaction-highlight {
+  background: #ef7fb0;
+  color: #4a0f2d;
+  outline: 2px solid rgba(190, 61, 118, 0.9);
+  box-shadow:
+    0 0 0 5px rgba(190, 61, 118, 0.18),
+    0 8px 18px rgba(190, 61, 118, 0.12),
+    inset 0 -1px 0 rgba(15, 23, 42, 0.12);
+  border-radius: 0.25rem;
 }
 
 #beforePreview mark {

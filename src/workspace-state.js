@@ -96,6 +96,11 @@ export function getSelectedPreview(state) {
   return state.filePreviews.find((preview) => (preview.path ?? '') === state.selectedPreviewPath) ?? null
 }
 
+export function getSidebarScopedPreviews(state) {
+  const selectedPreview = getSelectedPreview(state) ?? state.filePreviews[0] ?? null
+  return selectedPreview ? [selectedPreview] : []
+}
+
 export function getSelectedFileStatus(state) {
   return state.fileStatuses.find((status) => (status.path ?? '') === state.selectedPreviewPath) ?? state.fileStatuses[0] ?? null
 }

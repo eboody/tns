@@ -177,41 +177,54 @@ pub fn extract_input(input: &Path) -> Result<ExtractedInput> {
 }
 
 fn extract_pdf_input(input: &Path) -> Result<ExtractedInput> {
-    let selected = select_first_success(
-        [
-            pdf_extract::extract_pdf_with_lopdf(input).map(|extracted| {
-                ExtractedInput::successful(
-                    extracted.text,
-                    ExtractionFidelity::pdf(
-                        extracted.text_degraded_detected,
-                        extracted.low_confidence_review_required,
-                    ),
-                    ExtractionStrategy::PdfLopdf,
-                )
-            }),
-            pdf_extract::extract_pdf_with_pdftotext(input).map(|extracted| {
-                ExtractedInput::successful(
-                    extracted.text,
-                    ExtractionFidelity::pdf(
-                        extracted.text_degraded_detected,
-                        extracted.low_confidence_review_required,
-                    ),
-                    ExtractionStrategy::PdfPdftotext,
-                )
-            }),
-            ocr_extract::extract_pdf_via_ocr_attempt(input).map(|ocr| {
-                ExtractedInput::successful(
-                    ocr.text,
-                    ExtractionFidelity::ocr(false, true, false),
-                    ExtractionStrategy::PdfOcr,
-                )
-            }),
-        ],
-        "PDF contains no extractable text; treat as non-extractable or low-confidence",
-    )?;
+    let lopdf = pdf_extract::extract_pdf_with_lopdf(input);
+    let pdftotext = pdf_extract::extract_pdf_with_pdftotext(input);
+    let ocr = ocr_extract::extract_pdf_via_ocr_attempt(input).map(|ocr| {
+        pdf_extract::PdfExtraction {
+            text: ocr.text,
+            text_degraded_detected: false,
+            low_confidence_review_required: true,
+            quality_penalty: usize::MAX / 4,
+        }
+    });
 
-    let mut extracted = selected.value;
-    extracted.strategy = selected.strategy;
+    let selected = match (&lopdf, &pdftotext) {
+        (
+            crate::extractor_pipeline::ExtractionAttempt::Extracted {
+                value: lopdf_value,
+                ..
+            },
+            crate::extractor_pipeline::ExtractionAttempt::Extracted {
+                value: pdftotext_value,
+                ..
+            },
+        ) if pdf_extract::should_prefer_pdftotext(lopdf_value, pdftotext_value) => {
+            select_first_success(
+                [pdftotext, lopdf, ocr],
+                "PDF contains no extractable text; treat as non-extractable or low-confidence",
+            )?
+        }
+        _ => select_first_success(
+            [lopdf, pdftotext, ocr],
+            "PDF contains no extractable text; treat as non-extractable or low-confidence",
+        )?,
+    };
+
+    let mut extracted = match selected.strategy {
+        ExtractionStrategy::PdfLopdf | ExtractionStrategy::PdfPdftotext => {
+            let fidelity = ExtractionFidelity::pdf(
+                selected.value.text_degraded_detected,
+                selected.value.low_confidence_review_required,
+            );
+            ExtractedInput::successful(selected.value.text, fidelity, selected.strategy)
+        }
+        ExtractionStrategy::PdfOcr => ExtractedInput::successful(
+            selected.value.text,
+            ExtractionFidelity::ocr(false, true, false),
+            selected.strategy,
+        ),
+        _ => unreachable!("unexpected strategy for PDF extraction"),
+    };
     extracted.attempts = selected.attempts;
     Ok(extracted)
 }

@@ -1,8 +1,13 @@
 import './styles.css'
-import { effect } from '@preact/signals-core'
+import { effect, signal } from '@preact/signals-core'
 import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 import { loadSavedRedactionTerms, saveSavedRedactionTerms } from './redaction-term-store.js'
+import { createPreviewDraftState } from './preview-draft-state.js'
+import { createPreviewInteractionState } from './preview-interaction-state.js'
+import { setupPreviewInteractions } from './preview-interactions.js'
+import { createRedactionSidebarController } from './redaction-sidebar-controller.js'
+import { createWorkspaceProcessingController } from './workspace-processing-controller.js'
 import {
   createRedactionSidebarState
 } from './redaction-sidebar-state.js'
@@ -12,6 +17,7 @@ import {
   failProcessing,
   finishProcessing,
   getFileReviewLabel,
+  getSidebarScopedPreviews,
   getSelectedFileStatus,
   getSelectedPreview,
   replacePreviewArtifacts,
@@ -26,6 +32,7 @@ const pickInput = document.getElementById('pickInput')
 const pickFolder = document.getElementById('pickFolder')
 const redactionTermInput = document.getElementById('redactionTermInput')
 const findAndRedactButton = document.getElementById('findAndRedact')
+const saveRedactionEditsButton = document.getElementById('saveRedactionEdits')
 const redactionTermsList = document.getElementById('redactionTermsList')
 const relatedRedactionTerms = document.getElementById('relatedRedactionTerms')
 const resultsPanel = document.getElementById('resultsPanel')
@@ -49,45 +56,37 @@ const loadingOverlay = document.getElementById('loadingOverlay')
 const loadingTitle = document.getElementById('loadingTitle')
 const loadingMessage = document.getElementById('loadingMessage')
 
-let workspace = createWorkspaceState(
+const workspace = signal(createWorkspaceState(
   'Desktop shell loaded. Choose a file or folder to start local processing automatically.'
-)
+))
 let savedRedactionTerms = loadSavedRedactionTerms()
 const redactionSidebar = createRedactionSidebarState()
+const draftPreviewState = createPreviewDraftState({ redactionSidebar })
+const previewInteractionState = createPreviewInteractionState()
 redactionSidebar.setPersistedTerms(savedRedactionTerms)
-let pendingPreviewActions = null
-let previewActionHideTimer = null
 let previewScrollSyncFrame = null
 let suppressPreviewScrollSync = false
-let previewActionInFlight = false
+let saveRedactionEditsInFlight = false
 let recentSelectionIntentUntil = 0
 let lastSidebarPreviewSet = null
-let activeRedactionTermId = null
-const liveRedactionRequested = new Set()
-const liveRedactionInFlight = new Map()
+let lastSidebarPreviewPath = null
+const activeRedactionTermId = signal(null)
 let debugInputSequence = 0
 const debugEvents = []
-
-renderWorkspace()
-
-effect(() => {
-  renderRelatedRedactionSuggestions(redactionSidebar.relatedSuggestions.value)
-})
 
 if (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost') {
   window.__tnsDesktopDebug = {
     setWorkspaceFixture(nextWorkspace) {
-      workspace = {
-        ...workspace,
+      workspace.value = {
+        ...workspace.peek(),
         ...nextWorkspace
       }
-      renderWorkspace()
     },
     selectionWithinPreview() {
-      return selectionWithinPreview()
+      return previewInteractions.selectionWithinPreview()
     },
     showSelectionTooltip() {
-      maybeShowAddRedactionTooltip()
+      previewInteractions.maybeShowAddRedactionTooltip()
       const rect = previewActionTooltip.getBoundingClientRect()
       return {
         hidden: previewActionTooltip.hidden,
@@ -101,8 +100,8 @@ if (window.location.hostname === '127.0.0.1' || window.location.hostname === 'lo
     },
     redactionDebugState() {
       return {
-        activeRedactionTermId,
-        terms: redactionSidebar.sourceTerms.value.map(snapshotTermState),
+        activeRedactionTermId: activeRedactionTermId.value,
+        terms: redactionSidebar.sourceTerms.value.map((term) => redactionSidebarController.snapshotTermState(term)),
         persistedTerms: [...savedRedactionTerms],
         events: [...debugEvents]
       }
@@ -114,111 +113,63 @@ if (window.location.hostname === '127.0.0.1' || window.location.hostname === 'lo
 }
 
 toggleHighlights.addEventListener('click', () => {
-  workspace = toggleWorkspaceHighlights(workspace)
-  applyHighlightVisibility()
+  workspace.value = toggleWorkspaceHighlights(workspace.peek())
 })
 
-function setResultActionsEnabled(enabled) {
-  openOutput.disabled = !enabled
-  openAudit.disabled = !enabled
-}
+function syncRedactionSidebar(state, force = false) {
+  const sidebarPreviews = getSidebarScopedPreviews(state)
+  const sidebarPreviewPath = sidebarPreviews[0]?.path ?? null
+  const sidebarTerms = draftPreviewState.selectedDraftTerms.value
 
-function setInputControlsEnabled(enabled) {
-  pickInput.disabled = !enabled
-  pickFolder.disabled = !enabled
-  const hasPreviews = workspace.filePreviews.length > 0
-  findAndRedactButton.disabled = !enabled || !hasPreviews
-  redactionTermInput.disabled = !enabled || !hasPreviews
-}
-
-function renderWorkspace() {
-  syncRedactionSidebar()
-  renderSelectedInput()
-  if (activeRedactionTermId === null) {
-    renderRedactionTermsPanel(redactionSidebar.sourceTerms.peek())
-  }
-  renderResultFiles()
-  renderSelectedFileStrip()
-  renderPreview(getSelectedPreview(workspace))
-  renderLoadingOverlay()
-  summary.textContent = workspace.summary
-  setResultActionsEnabled(workspace.artifactsAvailable)
-  setInputControlsEnabled(!workspace.processingInFlight)
-  applyHighlightVisibility()
-}
-
-function syncRedactionSidebar(force = false) {
-  if (!force && (activeRedactionTermId !== null || workspace.filePreviews === lastSidebarPreviewSet)) {
+  if (!force && (activeRedactionTermId.value !== null || (
+    state.filePreviews === lastSidebarPreviewSet
+    && sidebarPreviewPath === lastSidebarPreviewPath
+  ))) {
     recordDebugEvent('skip-sidebar-sync', {
       force,
-      activeRedactionTermId,
-      samePreviewSet: workspace.filePreviews === lastSidebarPreviewSet
+      activeRedactionTermId: activeRedactionTermId.value,
+      samePreviewSet: state.filePreviews === lastSidebarPreviewSet,
+      samePreviewPath: sidebarPreviewPath === lastSidebarPreviewPath,
+      sidebarPreviewPath
     })
     return
   }
 
-  redactionSidebar.syncFromPreviews(workspace.filePreviews)
-  lastSidebarPreviewSet = workspace.filePreviews
+  redactionSidebar.syncFromDraftState({
+    filePreviews: sidebarPreviews,
+    terms: sidebarTerms
+  })
+  lastSidebarPreviewSet = state.filePreviews
+  lastSidebarPreviewPath = sidebarPreviewPath
   recordDebugEvent('sync-sidebar', {
     force,
+    sidebarPreviewPath,
     termIds: redactionSidebar.sourceTerms.value.map((term) => term.id)
   })
 }
 
-function renderLoadingOverlay() {
-  if (!workspace.processingInFlight) {
+function renderLoadingOverlay(state) {
+  if (!state.processingInFlight) {
     loadingOverlay.hidden = true
     return
   }
 
-  loadingTitle.textContent = workspace.inputPath.trim()
+  loadingTitle.textContent = state.inputPath.trim()
     ? 'Preparing review workspace…'
     : 'Processing selection…'
-  loadingMessage.textContent = workspace.summary || 'Loading selected files and building previews.'
+  loadingMessage.textContent = state.summary || 'Loading selected files and building previews.'
   loadingOverlay.hidden = false
 }
 
-function renderRedactionTermsPanel(terms) {
-  recordDebugEvent('render-terms-panel', {
-    activeRedactionTermId,
-    termIds: terms.map((term) => term.id)
-  })
-  redactionTermsList.replaceChildren()
-  if (terms.length === 0) {
-    redactionTermsList.appendChild(createTagListItem('No redaction terms yet. Select text or use find and redact.'))
-  } else {
-    for (const term of terms) {
-      redactionTermsList.appendChild(createEditableTermListItem(term))
-    }
-  }
-}
-
-function renderRelatedRedactionSuggestions(suggestions) {
-  relatedRedactionTerms.replaceChildren()
-  if (suggestions.length === 0) {
-    relatedRedactionTerms.appendChild(createTermChipPlaceholder('No related suggestions yet.'))
-    return
-  }
-
-  for (const suggestion of suggestions) {
-    const button = document.createElement('button')
-    button.type = 'button'
-    button.className = 'term-chip secondary-button'
-    button.textContent = suggestion
-    button.addEventListener('click', async () => {
-      redactionTermInput.value = suggestion
-      await handleFindAndRedact()
-    })
-    relatedRedactionTerms.appendChild(button)
-  }
-}
-
-function renderSelectedFileStrip() {
-  const selectedStatus = getSelectedFileStatus(workspace)
+function renderSelectedFileStrip(state) {
+  const selectedStatus = getSelectedFileStatus(state)
+  const selectedDraftStatus = draftPreviewState.selectedDraftStatus.value
   const reviewLabel = getFileReviewLabel(selectedStatus)
   previewTitle.textContent = selectedStatus?.path ?? 'No file selected'
-  selectedFileCount.textContent = `${selectedStatus?.replacements ?? 0} redactions`
-  selectedFileStatus.textContent = reviewLabel
+  selectedFileCount.textContent = `${selectedDraftStatus?.replacements ?? selectedStatus?.replacements ?? 0} redactions`
+  selectedFileStatus.textContent = selectedDraftStatus?.hasDraftChanges
+    ? `${reviewLabel} • Draft changes pending`
+    : reviewLabel
   selectedFileStatus.className = `status-badge ${selectedFileStatusClass(reviewLabel)}`
 }
 
@@ -247,41 +198,27 @@ pickFolder.addEventListener('click', async () => {
 })
 
 async function pickInputPath({ directory, label }) {
-  workspace = {
-    ...workspace,
-    processingInFlight: true,
-    summary: `Opening ${label} picker...`
-  }
-  renderWorkspace()
-  await nextPaint()
-
   try {
-    const selected = await open({
-      directory,
-      multiple: false
-    })
+    const selected = await open({ directory, multiple: false })
 
     if (typeof selected === 'string') {
-      workspace = {
-        ...setSelectedInput(workspace, selected),
-        processingInFlight: false
+      workspace.value = {
+        ...setSelectedInput(workspace.peek(), selected),
+        summary: `Selected ${label}. Preparing review workspace...`
       }
-      await processSelectedInput({ sourceLabel: label })
-    } else {
-      workspace = {
-        ...workspace,
-        processingInFlight: false,
-        summary: `${capitalize(label)} selection cancelled.`
-      }
-      renderWorkspace()
+      await workspaceProcessingController.processSelectedInput({ sourceLabel: label })
+      return
+    }
+
+    workspace.value = {
+      ...workspace.peek(),
+      summary: `${capitalize(label)} selection cancelled.`
     }
   } catch (error) {
-    workspace = {
-      ...workspace,
-      processingInFlight: false,
+    workspace.value = {
+      ...workspace.peek(),
       summary: `${capitalize(label)} picker error: ${String(error)}`
     }
-    renderWorkspace()
   }
 }
 
@@ -299,220 +236,275 @@ function nextPaint() {
   })
 }
 
-function renderSelectedInput() {
-  inputPath.value = workspace.inputPath.trim()
-}
+const previewInteractions = setupPreviewInteractions({
+  beforePreview,
+  afterPreview,
+  previewActionTooltip,
+  previewActionLabel,
+  previewActionButtons,
+  previewInteractionState,
+  getCurrentPreview,
+  toPreviewRequest,
+  allPreviewRequests,
+  queuePendingRedactionOperation,
+  draftPreviewState,
+  replacePreviewState,
+  replacePreviewStates,
+  appendSummary,
+  nextPaint,
+  buildCrossFileDraftEffect,
+  invoke,
+  schedulePreviewScrollSync,
+  rememberSelectionIntent,
+  clearRecentSelectionIntent,
+  hasRecentSelectionIntent
+})
 
-function createTagListItem(text) {
-  const item = document.createElement('li')
-  item.className = 'term-list-item'
-  item.textContent = text
-  return item
-}
-
-function createEditableTermListItem(term) {
-  const item = document.createElement('li')
-  item.className = 'term-list-item term-list-item-row'
-
-  const input = document.createElement('input')
-  input.type = 'text'
-  input.className = 'term-list-input'
-  input.value = term.matchedText
-  input.dataset.debugInputId = `redaction-input-${++debugInputSequence}`
-  input.dataset.termId = term.id
-  input.setAttribute('aria-label', `Redaction term ${term.matchedText}`)
-  input.title = `${term.occurrences} occurrence${term.occurrences === 1 ? '' : 's'}`
-  item.appendChild(input)
-  recordDebugEvent('create-term-input', {
-    debugInputId: input.dataset.debugInputId,
-    term: snapshotTermState(term)
-  })
-
-  const actions = document.createElement('div')
-  actions.className = 'term-list-actions'
-
-  const flushEdit = async () => {
-    await requestLiveRedactionEdit(term.id)
-    activeRedactionTermId = null
-    syncRedactionSidebar(true)
-    renderRedactionTermsPanel(redactionSidebar.sourceTerms.peek())
-  }
-
-  input.addEventListener('focus', () => {
-    activeRedactionTermId = term.id
-    recordDebugEvent('input-focus', {
-      debugInputId: input.dataset.debugInputId,
-      termId: term.id,
-      value: input.value,
-      draft: redactionSidebar.draftValueFor(term.id),
-      committed: redactionSidebar.committedValueFor(term.id)
-    })
-  })
-
-  input.addEventListener('input', () => {
-    redactionSidebar.setDraft(term.id, input.value)
-    recordDebugEvent('input-change', {
-      debugInputId: input.dataset.debugInputId,
-      termId: term.id,
-      value: input.value,
-      draft: redactionSidebar.draftValueFor(term.id),
-      committed: redactionSidebar.committedValueFor(term.id)
-    })
-    void requestLiveRedactionEdit(term.id)
-  })
-  input.addEventListener('blur', () => {
-    recordDebugEvent('input-blur', {
-      debugInputId: input.dataset.debugInputId,
-      termId: term.id,
-      value: input.value,
-      draft: redactionSidebar.draftValueFor(term.id),
-      committed: redactionSidebar.committedValueFor(term.id)
-    })
-    void flushEdit()
-  })
-  input.addEventListener('keydown', async (event) => {
-    recordDebugEvent('input-keydown', {
-      debugInputId: input.dataset.debugInputId,
-      termId: term.id,
-      key: event.key,
-      value: input.value
-    })
-    if (event.key === 'Enter') {
-      event.preventDefault()
-      input.blur()
-      return
-    }
-
-    if (event.key === 'Escape') {
-      const committedTerm = redactionSidebar.committedValueFor(term.id)
-      redactionSidebar.resetDraft(term.id)
-      input.value = committedTerm
-      input.blur()
-    }
-  })
-
-  const deleteButton = document.createElement('button')
-  deleteButton.type = 'button'
-  deleteButton.className = 'secondary-button term-list-action'
-  deleteButton.textContent = '×'
-  deleteButton.setAttribute('aria-label', `Delete redaction term ${term.matchedText}`)
-  deleteButton.title = `Delete ${term.matchedText}`
-  deleteButton.addEventListener('click', async () => {
+const redactionSidebarController = createRedactionSidebarController({
+  redactionSidebar,
+  activeRedactionTermId,
+  redactionTermsList,
+  relatedRedactionTerms,
+  redactionTermInput,
+  recordDebugEvent,
+  onSuggestionSelected: async () => {
+    await handleFindAndRedact()
+  },
+  onDeleteTermRequested: async (term) => {
     if (!window.confirm(`Remove redaction term "${term.matchedText}" everywhere in this workspace?`)) {
       return
     }
 
-    activeRedactionTermId = null
-    await settleLiveRedactionEdit(term.id)
-    await deleteRedactionTermById(term.id, term.matchedText)
-  })
+    activeRedactionTermId.value = null
+    queuePendingRedactionOperation({
+      queuedMessage: `Queued deletion of redaction term "${term.matchedText}". Press Save to apply it.`,
+      draftEffect: {
+        kind: 'delete-redaction-term',
+        term: term.matchedText
+      },
+      run: async () => await deleteRedactionTermById(term.id, term.matchedText)
+    })
+  },
+  nextDebugInputId: () => `redaction-input-${++debugInputSequence}`
+})
 
-  actions.append(deleteButton)
-  item.appendChild(actions)
-  return item
+const workspaceProcessingController = createWorkspaceProcessingController({
+  workspace,
+  invoke,
+  nextPaint,
+  startProcessing,
+  finishProcessing,
+  failProcessing,
+  queuePendingRedactionOperation,
+  syncRedactionSidebar,
+  saveSavedRedactionTerms,
+  redactionSidebar,
+  replacePreviewStates,
+  appendSummary,
+  getSavedRedactionTerms: () => savedRedactionTerms,
+  setSavedRedactionTerms: (terms) => {
+    savedRedactionTerms = terms
+  }
+})
+
+effect(() => {
+  redactionSidebarController.renderSuggestions(redactionSidebar.relatedSuggestions.value)
+})
+
+effect(() => {
+  saveRedactionEditsButton.disabled = !draftPreviewState.saveButtonEnabled.value
+})
+
+effect(() => {
+  const state = workspace.value
+  syncRedactionSidebar(state)
+  draftPreviewState.syncWorkspace(state)
+})
+
+effect(() => {
+  renderSelectedInput(workspace.value.inputPath)
+})
+
+effect(() => {
+  renderResultFiles(workspace.value)
+})
+
+effect(() => {
+  renderSelectedFileStrip(workspace.value)
+})
+
+effect(() => {
+  renderPreview(draftPreviewState.selectedPreview.value)
+})
+
+effect(() => {
+  renderLoadingOverlay(workspace.value)
+})
+
+effect(() => {
+  summary.textContent = workspace.value.summary
+})
+
+effect(() => {
+  const state = workspace.value
+  openOutput.disabled = !state.artifactsAvailable
+  openAudit.disabled = !state.artifactsAvailable
+})
+
+effect(() => {
+  const state = workspace.value
+  const enabled = !state.processingInFlight
+  const hasPreviews = state.filePreviews.length > 0
+  pickInput.disabled = !enabled
+  pickFolder.disabled = !enabled
+  findAndRedactButton.disabled = !enabled || !hasPreviews
+  redactionTermInput.disabled = !enabled || !hasPreviews
+})
+
+effect(() => {
+  applyHighlightVisibility(workspace.value)
+})
+
+effect(() => {
+  if (activeRedactionTermId.value === null) {
+    redactionSidebarController.renderTerms(redactionSidebar.sourceTerms.value)
+  }
+})
+
+effect(() => {
+  const tooltip = previewInteractionState.tooltip.value
+  previewActionLabel.textContent = tooltip.label
+  previewActionButtons.replaceChildren(
+    ...tooltip.actions.map((action, index) => {
+      const button = document.createElement('button')
+      button.type = 'button'
+      button.className = `preview-action-button secondary-button ${action.variant ?? ''}`.trim()
+      button.dataset.actionIndex = String(index)
+      button.textContent = action.buttonText
+      button.disabled = Boolean(action.disabled)
+      return button
+    })
+  )
+  previewActionTooltip.hidden = tooltip.hidden
+  previewActionTooltip.setAttribute('aria-hidden', tooltip.ariaHidden)
+  if (tooltip.state) {
+    previewActionTooltip.dataset.state = tooltip.state
+  } else {
+    delete previewActionTooltip.dataset.state
+  }
+  if (tooltip.placement) {
+    previewActionTooltip.dataset.placement = tooltip.placement
+  } else {
+    delete previewActionTooltip.dataset.placement
+  }
+  if (tooltip.arrowLeft !== null) {
+    previewActionTooltip.style.setProperty('--tooltip-arrow-left', `${tooltip.arrowLeft}px`)
+  }
+  if (tooltip.left !== null) {
+    previewActionTooltip.style.left = `${tooltip.left}px`
+  }
+  if (tooltip.top !== null) {
+    previewActionTooltip.style.top = `${tooltip.top}px`
+  }
+})
+
+function renderSelectedInput(inputPathValue) {
+  inputPath.value = inputPathValue.trim()
 }
 
-async function requestLiveRedactionEdit(termId) {
-  liveRedactionRequested.add(termId)
-  recordDebugEvent('request-live-edit', {
-    termId,
-    draft: redactionSidebar.draftValueFor(termId),
-    committed: redactionSidebar.committedValueFor(termId)
-  })
+function queuePendingRedactionOperation(operation) {
+  draftPreviewState.queuePendingOperation(operation)
+  appendSummary(operation.queuedMessage)
+}
 
-  if (liveRedactionInFlight.has(termId)) {
-    return liveRedactionInFlight.get(termId)
+async function savePendingRedactionEdits() {
+  const pendingEdits = redactionSidebar.pendingEdits.value
+  const state = workspace.peek()
+  if (saveRedactionEditsInFlight || !draftPreviewState.hasPendingChanges.value || state.processingInFlight || state.filePreviews.length === 0) {
+    return
   }
 
-  const run = drainLiveRedactionEdits(termId)
-  liveRedactionInFlight.set(termId, run)
-  await run
-}
+  saveRedactionEditsInFlight = true
+  draftPreviewState.setSaveInFlight(true)
 
-async function settleLiveRedactionEdit(termId) {
-  liveRedactionRequested.delete(termId)
-  recordDebugEvent('settle-live-edit', { termId })
-  if (liveRedactionInFlight.has(termId)) {
-    await liveRedactionInFlight.get(termId)
-  }
-}
-
-async function drainLiveRedactionEdits(termId) {
   try {
-    while (liveRedactionRequested.has(termId)) {
-      liveRedactionRequested.delete(termId)
-      recordDebugEvent('drain-live-edit', {
-        termId,
-        draft: redactionSidebar.draftValueFor(termId),
-        committed: redactionSidebar.committedValueFor(termId)
+    let appliedCount = 0
+    const queuedOperations = draftPreviewState.takePendingOperations()
+    const failedOperations = []
+
+    for (const edit of pendingEdits) {
+      const applied = await replaceRedactionTerm(edit.previousTerm, edit.nextTerm, {
+        quiet: true,
+        termId: edit.termId
       })
-      await applyLiveRedactionEdit(termId)
+      if (!applied) {
+        continue
+      }
+
+      appliedCount += 1
+      redactionSidebar.applyCommittedValue(edit.termId, edit.nextTerm)
+    }
+
+    for (const operation of queuedOperations) {
+      const applied = await operation.run()
+      if (!applied) {
+        failedOperations.push(operation)
+        continue
+      }
+
+      appliedCount += 1
+    }
+
+    draftPreviewState.restorePendingOperations(failedOperations)
+
+    activeRedactionTermId.value = null
+    syncRedactionSidebar(workspace.peek(), true)
+
+    if (appliedCount > 0) {
+      appendSummary(`Saved ${appliedCount} redaction term edit${appliedCount === 1 ? '' : 's'}.`)
     }
   } finally {
-    liveRedactionInFlight.delete(termId)
-    recordDebugEvent('live-edit-finished', { termId })
+    saveRedactionEditsInFlight = false
+    draftPreviewState.setSaveInFlight(false)
   }
-}
-
-async function applyLiveRedactionEdit(termId) {
-  const nextTerm = redactionSidebar.draftValueFor(termId).trim()
-  const committedTerm = redactionSidebar.committedValueFor(termId)
-  recordDebugEvent('apply-live-edit', {
-    termId,
-    nextTerm,
-    committedTerm,
-    processingInFlight: workspace.processingInFlight,
-    previewCount: workspace.filePreviews.length
-  })
-
-  if (!nextTerm || nextTerm === committedTerm || workspace.processingInFlight || workspace.filePreviews.length === 0) {
-    return
-  }
-
-  const applied = await replaceRedactionTerm(committedTerm, nextTerm, { quiet: true, termId })
-  if (!applied) {
-    recordDebugEvent('apply-live-edit-failed', { termId, nextTerm, committedTerm })
-    return
-  }
-
-  redactionSidebar.applyCommittedValue(termId, nextTerm)
-  recordDebugEvent('apply-live-edit-committed', {
-    termId,
-    committed: redactionSidebar.committedValueFor(termId),
-    draft: redactionSidebar.draftValueFor(termId)
-  })
-}
-
-function createTermChipPlaceholder(text) {
-  const placeholder = document.createElement('span')
-  placeholder.className = 'term-list-item'
-  placeholder.textContent = text
-  return placeholder
 }
 
 async function handleFindAndRedact() {
   const term = redactionTermInput.value.trim()
-  if (!term || workspace.processingInFlight || workspace.filePreviews.length === 0) {
+  const state = workspace.peek()
+  if (!term || state.processingInFlight || saveRedactionEditsInFlight || state.filePreviews.length === 0) {
     return
   }
 
-  try {
-    const result = await invoke('find_and_redact_term', {
-      request: {
-        term,
-        targets: allPreviewRequests()
+  queuePendingRedactionOperation({
+    queuedMessage: `Queued find and redact for "${term}". Press Save to apply it.`,
+    draftEffect: {
+      kind: 'find-and-redact-term',
+      term
+    },
+    run: async () => {
+      try {
+        const result = await invoke('find_and_redact_term', {
+          request: {
+            term,
+            targets: allPreviewRequests()
+          }
+        })
+        workspaceProcessingController.rememberSavedRedactionTerm(term)
+        replacePreviewStates(result.updates ?? [])
+        appendSummary(
+          `Find and redact applied \"${term}\" across ${result.updatedTargets ?? 0} file(s). `
+          + `${result.unchangedTargets ?? 0} file(s) already matched.`
+        )
+        return true
+      } catch (error) {
+        appendSummary(`Find and redact error: ${String(error)}`)
+        return false
       }
-    })
-    rememberSavedRedactionTerm(term)
-    replacePreviewStates(result.updates ?? [])
-    redactionTermInput.value = ''
-    appendSummary(
-      `Find and redact applied \"${term}\" across ${result.updatedTargets ?? 0} file(s). `
-      + `${result.unchangedTargets ?? 0} file(s) already matched.`
-    )
-  } catch (error) {
-    appendSummary(`Find and redact error: ${String(error)}`)
-  }
+    }
+  })
+
+  redactionTermInput.value = ''
 }
 
 async function deleteRedactionTerm(term) {
@@ -527,14 +519,16 @@ async function deleteRedactionTermById(termId, term) {
         targets: allPreviewRequests()
       }
     })
-    forgetSavedRedactionTerm(termId, term)
+    workspaceProcessingController.forgetSavedRedactionTerm(termId, term)
     replacePreviewStates(result.updates ?? [])
     appendSummary(
       `Deleted redaction term "${term}" from ${result.updatedTargets ?? 0} file(s). `
       + `${result.unchangedTargets ?? 0} file(s) had nothing to remove.`
     )
+    return true
   } catch (error) {
     appendSummary(`Delete redaction term error: ${String(error)}`)
+    return false
   }
 }
 
@@ -561,7 +555,7 @@ async function replaceRedactionTerm(previousTerm, nextTerm, { quiet = false, ter
       return false
     }
 
-    replaceSavedRedactionTerm(termId, previousTerm, nextTerm)
+    workspaceProcessingController.replaceSavedRedactionTerm(termId, previousTerm, nextTerm)
 
     if (!quiet) {
       appendSummary(
@@ -571,123 +565,8 @@ async function replaceRedactionTerm(previousTerm, nextTerm, { quiet = false, ter
     }
     return true
   } catch (error) {
-    appendSummary(`${quiet ? 'Live edit' : 'Edit'} redaction term error: ${String(error)}`)
+    appendSummary(`${quiet ? 'Save pending redaction edits' : 'Save redaction term'} error: ${String(error)}`)
     return false
-  }
-}
-
-async function processSelectedInput({ sourceLabel }) {
-  const value = workspace.inputPath.trim()
-  if (!value || workspace.processingInFlight) {
-    return
-  }
-
-  workspace = startProcessing(workspace, `Processing selected ${sourceLabel}...`)
-  renderWorkspace()
-  await nextPaint()
-
-  try {
-    const result = await invoke('run_replace_job', {
-      input: value,
-      config: null,
-      settings: null,
-      includePatterns: [],
-      excludePatterns: []
-    })
-
-    const replacements = result.replacements
-    const nonTextOmissionsDetected = result.nonTextOmissionsDetected
-    const reviewSummary = result.reviewSummary ?? ''
-    const coverageNote = result.coverageNote ?? ''
-    const outputPath = result.outputPath ?? ''
-    const auditOutputPath = result.auditOutputPath ?? ''
-    const fileStatuses = result.fileStatuses ?? []
-    const filePreviews = result.filePreviews ?? []
-
-    const nextSummary = [
-      `mode: live review (processed automatically after ${sourceLabel} selection)`,
-      `replacements: ${replacements}`,
-      `non-text omissions detected: ${nonTextOmissionsDetected}`,
-      `output path: ${outputPath}`,
-      `audit path: ${auditOutputPath}`,
-      '',
-      reviewSummary,
-      '',
-      `note: ${coverageNote}`
-    ].join('\n')
-
-    workspace = finishProcessing(workspace, {
-      summary: nextSummary,
-      fileStatuses,
-      filePreviews,
-      outputPath,
-      auditOutputPath
-    })
-
-    await applySavedRedactionTermsToWorkspace()
-  } catch (error) {
-    workspace = failProcessing(workspace, `Error: ${String(error)}`)
-  }
-
-  renderWorkspace()
-}
-
-async function applySavedRedactionTermsToWorkspace() {
-  const terms = savedRedactionTerms
-  if (terms.length === 0 || workspace.filePreviews.length === 0) {
-    return
-  }
-
-  for (const term of terms) {
-    const result = await invoke('find_and_redact_term', {
-      request: {
-        term,
-        targets: allPreviewRequests()
-      }
-    })
-    replacePreviewStates(result.updates ?? [])
-  }
-
-  syncRedactionSidebar(true)
-}
-
-function rememberSavedRedactionTerm(term) {
-  savedRedactionTerms = saveSavedRedactionTerms([...savedRedactionTerms, term])
-  redactionSidebar.rememberPersistedTerm(term)
-}
-
-function forgetSavedRedactionTerm(termId, term) {
-  savedRedactionTerms = saveSavedRedactionTerms(
-    savedRedactionTerms.filter((savedTerm) => savedTerm.toLowerCase() !== term.toLowerCase())
-  )
-  if (termId) {
-    redactionSidebar.forgetPersistedTermById(termId)
-    return
-  }
-
-  redactionSidebar.setPersistedTerms(savedRedactionTerms)
-}
-
-function replaceSavedRedactionTerm(termId, previousTerm, nextTerm) {
-  savedRedactionTerms = saveSavedRedactionTerms(
-    savedRedactionTerms
-      .filter((savedTerm) => savedTerm.toLowerCase() !== previousTerm.toLowerCase())
-      .concat(nextTerm)
-  )
-  if (termId) {
-    redactionSidebar.replacePersistedTerm(termId, nextTerm)
-    return
-  }
-
-  redactionSidebar.setPersistedTerms(savedRedactionTerms)
-}
-
-function snapshotTermState(term) {
-  return {
-    id: term.id,
-    key: term.key,
-    matchedText: term.matchedText,
-    occurrences: term.occurrences
   }
 }
 
@@ -727,22 +606,18 @@ function fileListItem(primary, badge, secondary) {
 }
 
 function getPreviewByPath(path) {
-  return workspace.filePreviews.find((preview) => (preview.path ?? '') === path) ?? null
+  return workspace.peek().filePreviews.find((preview) => (preview.path ?? '') === path) ?? null
 }
 
-function countHighlights(html) {
-  return (html.match(/<mark\b/g) ?? []).length
-}
-
-function applyHighlightVisibility() {
-  previewPanel.classList.toggle('highlights-hidden', !workspace.highlightsVisible)
-  toggleHighlights.textContent = workspace.highlightsVisible ? 'Hide highlights' : 'Show highlights'
+function applyHighlightVisibility(state) {
+  previewPanel.classList.toggle('highlights-hidden', !state.highlightsVisible)
+  toggleHighlights.textContent = state.highlightsVisible ? 'Hide highlights' : 'Show highlights'
 }
 
 function renderPreview(preview) {
   if (!preview) {
     previewPanel.hidden = false
-    hidePreviewActionTooltip()
+    previewInteractions.hidePreviewActionTooltip()
     previewHighlightCount.textContent = '0 highlighted spans'
     previewNote.hidden = true
     previewNote.textContent = ''
@@ -753,18 +628,17 @@ function renderPreview(preview) {
     return
   }
 
-  hidePreviewActionTooltip()
+  previewInteractions.hidePreviewActionTooltip()
   previewTitle.textContent = preview.path ?? ''
   const note = buildReviewNotice(preview.review)
-  const beforeHtml = preview.originalHtml ?? 'Original preview unavailable.'
-  const afterHtml = preview.redactedHtml ?? ''
-  const highlightCount = countHighlights(beforeHtml) + countHighlights(afterHtml)
+  const beforeHtml = draftPreviewState.draftBeforeHtml.value
+  const afterHtml = draftPreviewState.draftAfterHtml.value
 
-  previewHighlightCount.textContent = `${highlightCount} highlighted spans`
   previewNote.hidden = !note
   previewNote.textContent = note
   beforePreview.innerHTML = beforeHtml
   afterPreview.innerHTML = afterHtml
+  previewHighlightCount.textContent = `${draftPreviewState.draftHighlightCount.value} highlighted spans`
 }
 
 function schedulePreviewScrollSync(source, target) {
@@ -780,9 +654,15 @@ function schedulePreviewScrollSync(source, target) {
     const sourceMax = Math.max(source.scrollHeight - source.clientHeight, 0)
     const targetMax = Math.max(target.scrollHeight - target.clientHeight, 0)
     const ratio = sourceMax > 0 ? source.scrollTop / sourceMax : 0
+    const nextTargetScrollTop = ratio * targetMax
+
+    if (Math.abs(target.scrollTop - nextTargetScrollTop) < 1) {
+      previewScrollSyncFrame = null
+      return
+    }
 
     suppressPreviewScrollSync = true
-    target.scrollTop = ratio * targetMax
+    target.scrollTop = nextTargetScrollTop
     requestAnimationFrame(() => {
       suppressPreviewScrollSync = false
     })
@@ -790,17 +670,8 @@ function schedulePreviewScrollSync(source, target) {
   })
 }
 
-function selectPreview(item, preview) {
-  for (const element of resultFiles.querySelectorAll('.preview-selected')) {
-    element.classList.remove('preview-selected')
-  }
-  item.classList.add('preview-selected')
-  workspace = selectPreviewPath(workspace, preview.path ?? null)
-  renderPreview(preview)
-}
-
-function renderResultFiles() {
-  const statuses = workspace.fileStatuses
+function renderResultFiles(state) {
+  const statuses = state.fileStatuses
   resultFiles.replaceChildren()
 
   if (statuses.length === 0) {
@@ -811,8 +682,9 @@ function renderResultFiles() {
 
   for (const [index, status] of statuses.entries()) {
     const path = status.path ?? ''
+    const draftStatus = draftPreviewState.draftStatusByPath(path)
     const kind = status.status ?? 'unknown'
-    const replacements = status.replacements ?? 0
+    const replacements = draftStatus?.replacements ?? status.replacements ?? 0
     const reviewSensitive = status.reviewSensitive ?? false
     const omissions = status.nonTextOmissionsDetected ?? false
     const degraded = status.textDegradedDetected ?? false
@@ -834,15 +706,20 @@ function renderResultFiles() {
     })
 
     const preview = getPreviewByPath(path)
-    const item = fileListItem(path, kind, details)
+    const item = fileListItem(
+      path,
+      kind,
+      draftStatus?.hasDraftChanges
+        ? `${details} • ${replacements} redactions • Draft changes pending`
+        : `${details} • ${replacements} redactions`
+    )
 
     if (preview) {
       item.classList.add('preview-selectable')
       item.addEventListener('click', () => {
-        workspace = selectPreviewPath(workspace, preview.path ?? null)
-        renderWorkspace()
+        workspace.value = selectPreviewPath(workspace.peek(), preview.path ?? null)
       })
-      if ((preview.path ?? '') === workspace.selectedPreviewPath || (index === 0 && !workspace.selectedPreviewPath)) {
+      if ((preview.path ?? '') === state.selectedPreviewPath || (index === 0 && !state.selectedPreviewPath)) {
         item.classList.add('preview-selected')
       }
     }
@@ -851,7 +728,7 @@ function renderResultFiles() {
 }
 
 function getCurrentPreview() {
-  return getSelectedPreview(workspace)
+  return getSelectedPreview(workspace.peek())
 }
 
 function toPreviewRequest(preview) {
@@ -864,507 +741,54 @@ function toPreviewRequest(preview) {
 }
 
 function replacePreviewState(updatedPreview, replacements) {
-  workspace = replacePreviewArtifacts(workspace, updatedPreview, replacements)
-  renderWorkspace()
+  workspace.value = replacePreviewArtifacts(workspace.peek(), updatedPreview, replacements)
 }
 
 function replacePreviewStates(updates) {
   for (const update of updates) {
-    workspace = replacePreviewArtifacts(workspace, update.preview, update.replacements)
+    workspace.value = replacePreviewArtifacts(workspace.peek(), update.preview, update.replacements)
   }
-  renderWorkspace()
 }
 
 function allPreviewRequests() {
-  return workspace.filePreviews.map((preview) => toPreviewRequest(preview))
+  return workspace.peek().filePreviews.map((preview) => toPreviewRequest(preview))
 }
 
 function appendSummary(message) {
-  summary.textContent = `${message}\n\n${summary.textContent}`
-}
-
-function targetElement(target) {
-  return target instanceof Element ? target : target?.parentElement ?? null
-}
-
-function clearRedactionClass(className) {
-  for (const mark of document.querySelectorAll(`.preview-text mark.${className}`)) {
-    mark.classList.remove(className)
+  workspace.value = {
+    ...workspace.peek(),
+    summary: `${message}\n\n${workspace.peek().summary}`
   }
-}
-
-function setMatchingRedactionClass({ start, end, replacement }, className) {
-  clearRedactionClass(className)
-
-  for (const mark of document.querySelectorAll('.preview-text mark[data-record-start]')) {
-    if (
-      mark.dataset.recordStart === String(start)
-      && mark.dataset.recordEnd === String(end)
-      && mark.dataset.recordReplacement === replacement
-    ) {
-      mark.classList.add(className)
-    }
-  }
-}
-
-function clearFocusedRedactions() {
-  clearRedactionClass('focused-redaction')
-}
-
-function clearHoveredRedactions() {
-  clearRedactionClass('hovered-redaction')
-}
-
-function focusMatchingRedactions(identity) {
-  setMatchingRedactionClass(identity, 'focused-redaction')
-}
-
-function hoverMatchingRedactions(identity) {
-  setMatchingRedactionClass(identity, 'hovered-redaction')
-}
-
-function hidePreviewActionTooltip() {
-  pendingPreviewActions = null
-  clearFocusedRedactions()
-  if (previewActionHideTimer) {
-    clearTimeout(previewActionHideTimer)
-    previewActionHideTimer = null
-  }
-
-  previewActionTooltip.dataset.state = 'closing'
-  previewActionTooltip.setAttribute('aria-hidden', 'true')
-  previewActionHideTimer = setTimeout(() => {
-    previewActionTooltip.hidden = true
-    delete previewActionTooltip.dataset.state
-    previewActionHideTimer = null
-  }, 180)
-}
-
-function showPreviewActionTooltip({ rect, label, actions }) {
-  if (previewActionHideTimer) {
-    clearTimeout(previewActionHideTimer)
-    previewActionHideTimer = null
-  }
-
-  pendingPreviewActions = Array.isArray(actions) ? actions : []
-  previewActionLabel.textContent = label
-  previewActionButtons.replaceChildren(
-    ...pendingPreviewActions.map((action, index) => {
-      const button = document.createElement('button')
-      button.type = 'button'
-      button.className = `preview-action-button secondary-button ${action.variant ?? ''}`.trim()
-      button.dataset.actionIndex = String(index)
-      button.textContent = action.buttonText
-      return button
-    })
-  )
-  previewActionTooltip.hidden = false
-  previewActionTooltip.setAttribute('aria-hidden', 'false')
-  previewActionTooltip.dataset.state = 'opening'
-
-  const tooltipGap = 10
-  const viewportPadding = 12
-  const tooltipWidth = previewActionTooltip.offsetWidth || 240
-  const tooltipHeight = previewActionTooltip.offsetHeight || 88
-  const targetCenterX = rect.left + rect.width / 2
-  const centeredLeft = targetCenterX - tooltipWidth / 2
-  const clampedLeft = Math.min(
-    Math.max(centeredLeft, viewportPadding),
-    window.innerWidth - tooltipWidth - viewportPadding
-  )
-  const preferredTop = rect.top - tooltipHeight - tooltipGap
-  const canPlaceAbove = preferredTop >= viewportPadding
-  const top = canPlaceAbove
-    ? preferredTop
-    : Math.min(rect.bottom + tooltipGap, window.innerHeight - tooltipHeight - viewportPadding)
-  const arrowLeft = Math.min(Math.max(targetCenterX - clampedLeft, 18), tooltipWidth - 18)
-
-  previewActionTooltip.dataset.placement = canPlaceAbove ? 'top' : 'bottom'
-  previewActionTooltip.style.setProperty('--tooltip-arrow-left', `${arrowLeft}px`)
-  previewActionTooltip.style.left = `${clampedLeft}px`
-  previewActionTooltip.style.top = `${top}px`
-
-  requestAnimationFrame(() => {
-    previewActionTooltip.dataset.state = 'open'
-  })
-}
-
-function utf8ByteLength(value) {
-  return new TextEncoder().encode(value).length
-}
-
-function absoluteCodeUnitOffset(root, node, offset) {
-  const range = document.createRange()
-  range.setStart(root, 0)
-  range.setEnd(node, offset)
-  return range.toString().length
-}
-
-function selectionAnchorRect(range) {
-  const rects = Array.from(range.getClientRects()).filter((rect) => rect.width > 0 && rect.height > 0)
-  const rect = rects[0] ?? range.getBoundingClientRect()
-
-  return {
-    left: rect.left,
-    top: rect.top,
-    width: rect.width,
-    height: rect.height,
-    bottom: rect.bottom
-  }
-}
-
-function selectionWithinPreview() {
-  const selection = window.getSelection()
-  if (!selection || selection.rangeCount === 0 || selection.isCollapsed) {
-    return null
-  }
-
-  const range = selection.getRangeAt(0)
-  const containers = [
-    { element: beforePreview, sourcePreview: 'original' },
-    { element: afterPreview, sourcePreview: 'redacted' }
-  ]
-
-  for (const { element, sourcePreview } of containers) {
-    if (!element.contains(range.startContainer) || !element.contains(range.endContainer)) {
-      continue
-    }
-
-    const fullText = element.textContent ?? ''
-    const startCodeUnits = absoluteCodeUnitOffset(element, range.startContainer, range.startOffset)
-    const endCodeUnits = absoluteCodeUnitOffset(element, range.endContainer, range.endOffset)
-    if (startCodeUnits === endCodeUnits) {
-      return null
-    }
-
-    return {
-      sourcePreview,
-      selectionStart: utf8ByteLength(fullText.slice(0, startCodeUnits)),
-      selectionEnd: utf8ByteLength(fullText.slice(0, endCodeUnits)),
-      rect: selectionAnchorRect(range)
-    }
-  }
-
-  return null
 }
 
 function rememberSelectionIntent() {
-  recentSelectionIntentUntil = performance.now() + 250
+  recentSelectionIntentUntil = performance.now() + 80
+}
+
+function clearRecentSelectionIntent() {
+  recentSelectionIntentUntil = 0
 }
 
 function hasRecentSelectionIntent() {
   return performance.now() < recentSelectionIntentUntil
 }
 
-async function handleRedactionRemoval(markElement) {
-  if (previewActionInFlight) {
-    return
-  }
+function buildCrossFileDraftEffect(kind, preview, redactionIdentity) {
+  const originalText = preview?.originalText ?? ''
+  const matchedText = typeof originalText === 'string'
+    ? sliceUtf8Bytes(originalText, redactionIdentity.start, redactionIdentity.end)
+    : ''
 
-  const preview = getCurrentPreview()
-  if (!preview) {
-    return
-  }
-
-  const rect = markElement.getBoundingClientRect()
-  const recordLabel = markElement.dataset.recordLabel ?? 'this redaction'
-  const removalLabel = markElement.dataset.manualNumber
-    ? `Manage ${recordLabel.toLowerCase()}?`
-    : 'Manage this redaction?'
-  const redactionIdentity = {
-    start: Number(markElement.dataset.recordStart ?? 0),
-    end: Number(markElement.dataset.recordEnd ?? 0),
-    replacement: markElement.dataset.recordReplacement ?? ''
-  }
-  const request = {
-    source: {
-      preview: toPreviewRequest(preview),
-      ...redactionIdentity
-    },
-    targets: allPreviewRequests()
-  }
-  focusMatchingRedactions({
-    ...redactionIdentity
-  })
-
-  let availability
-  try {
-    availability = await invoke('inspect_redaction_across_files', { request })
-  } catch (error) {
-    appendSummary(`Inspect redaction everywhere error: ${String(error)}`)
-    return
-  }
-
-  const actions = []
-  if ((availability?.applicableTargets ?? 0) > 0) {
-    actions.push({
-      buttonText: 'Apply everywhere',
-      variant: 'preview-action-button-accent',
-      run: async () => {
-        try {
-          const result = await invoke('apply_redaction_to_all_files', { request })
-          replacePreviewStates(result.updates ?? [])
-          appendSummary(
-            `Applied this redaction across ${result.updatedTargets ?? 0} file(s). `
-            + `${result.unchangedTargets ?? 0} file(s) already matched.`
-          )
-        } catch (error) {
-          appendSummary(`Apply redaction everywhere error: ${String(error)}`)
-        }
-      }
-    })
-  }
-
-  if ((availability?.removableTargets ?? 0) > 0) {
-    actions.push({
-      buttonText: 'Remove everywhere',
-      run: async () => {
-        try {
-          const result = await invoke('remove_redaction_from_all_files', { request })
-          replacePreviewStates(result.updates ?? [])
-          appendSummary(
-            `Removed this redaction across ${result.updatedTargets ?? 0} file(s). `
-            + `${result.unchangedTargets ?? 0} file(s) had nothing to remove.`
-          )
-        } catch (error) {
-          appendSummary(`Remove redaction everywhere error: ${String(error)}`)
-        }
-      }
-    })
-  }
-
-  actions.push({
-    buttonText: 'Remove here',
-    run: async () => {
-      try {
-        const result = await invoke('remove_redaction', {
-          request: {
-            ...toPreviewRequest(preview),
-            ...redactionIdentity,
-            redactionScope: 'single_occurrence'
-          }
-        })
-        replacePreviewState(result.preview, result.replacements)
-        appendSummary('Removed selected redaction from this file.')
-      } catch (error) {
-        appendSummary(`Remove redaction error: ${String(error)}`)
-      }
-    }
-  })
-
-  showPreviewActionTooltip({
-    rect,
-    label: removalLabel,
-    actions
-  })
-}
-
-function createManualRedactionAction(preview, selection, scope, successMessage) {
-  return async () => {
-    try {
-      const result = await invoke('add_manual_redaction', {
-        request: {
-          ...toPreviewRequest(preview),
-          sourcePreview: selection.sourcePreview,
-          selectionStart: selection.selectionStart,
-          selectionEnd: selection.selectionEnd,
-          redactionScope: scope
-        }
-      })
-      window.getSelection()?.removeAllRanges()
-      replacePreviewState(result.preview, result.replacements)
-      appendSummary(successMessage)
-    } catch (error) {
-      appendSummary(`Add redaction error: ${String(error)}`)
-    }
+  return {
+    kind,
+    matchedText,
+    replacement: redactionIdentity.replacement,
+    label: redactionIdentity.replacement
   }
 }
 
-function createMergeManualRedactionAction(preview, selection) {
-  return async () => {
-    try {
-      const result = await invoke('merge_manual_redaction', {
-        request: {
-          ...toPreviewRequest(preview),
-          sourcePreview: selection.sourcePreview,
-          selectionStart: selection.selectionStart,
-          selectionEnd: selection.selectionEnd,
-          redactionScope: 'single_occurrence'
-        }
-      })
-      window.getSelection()?.removeAllRanges()
-      replacePreviewState(result.preview, result.replacements)
-      appendSummary('Merged selection into one manual redaction and updated output files.')
-    } catch (error) {
-      appendSummary(`Merge redaction error: ${String(error)}`)
-    }
-  }
-}
-
-function maybeShowAddRedactionTooltip() {
-  void maybeShowAddRedactionTooltipAsync()
-}
-
-async function maybeShowAddRedactionTooltipAsync() {
-  const preview = getCurrentPreview()
-  if (!preview) {
-    hidePreviewActionTooltip()
-    return
-  }
-
-  const selection = selectionWithinPreview()
-  if (!selection) {
-    hidePreviewActionTooltip()
-    return
-  }
-
-  let availability
-  try {
-    availability = await invoke('inspect_manual_redaction', {
-      request: {
-        ...toPreviewRequest(preview),
-        sourcePreview: selection.sourcePreview,
-        selectionStart: selection.selectionStart,
-        selectionEnd: selection.selectionEnd,
-        redactionScope: 'file_exact_matches'
-      }
-    })
-  } catch (_error) {
-    hidePreviewActionTooltip()
-    return
-  }
-
-  const actions = []
-  if (availability?.mergeable) {
-    actions.push({
-      buttonText: 'Merge into redaction',
-      variant: 'preview-action-button-accent',
-      run: createMergeManualRedactionAction(preview, selection)
-    })
-  } else if ((availability?.exactMatchCount ?? 0) > 1) {
-    actions.push({
-      buttonText: 'Redact all matches',
-      variant: 'preview-action-button-accent',
-      run: createManualRedactionAction(
-        preview,
-        selection,
-        'file_exact_matches',
-        'Added manual redaction for all exact matches and updated output files.'
-      )
-    })
-  }
-
-  if (!availability?.mergeable) {
-    actions.push({
-      buttonText: 'Redact this',
-      run: createManualRedactionAction(
-        preview,
-        selection,
-        'single_occurrence',
-        'Added manual redaction for the selected occurrence and updated output files.'
-      )
-    })
-  }
-
-  showPreviewActionTooltip({
-    rect: selection.rect,
-    label: availability?.mergeable
-      ? 'Merge this selection into one redaction?'
-      : actions.length > 1
-      ? 'Choose whether to redact just this occurrence or all exact matches in this file.'
-      : 'Redact this selected text?'
-    ,
-    actions
-  })
-}
-
-beforePreview.addEventListener('click', async (event) => {
-  if (selectionWithinPreview() || hasRecentSelectionIntent()) {
-    event.preventDefault()
-    setTimeout(maybeShowAddRedactionTooltip, 0)
-    return
-  }
-
-  const mark = targetElement(event.target)?.closest('mark[data-record-start]')
-  if (mark) {
-    event.preventDefault()
-    await handleRedactionRemoval(mark)
-  }
-})
-
-afterPreview.addEventListener('click', async (event) => {
-  if (selectionWithinPreview() || hasRecentSelectionIntent()) {
-    event.preventDefault()
-    setTimeout(maybeShowAddRedactionTooltip, 0)
-    return
-  }
-
-  const mark = targetElement(event.target)?.closest('mark[data-record-start]')
-  if (mark) {
-    event.preventDefault()
-    await handleRedactionRemoval(mark)
-  }
-})
-
-function handleRedactionHover(event) {
-  const mark = targetElement(event.target)?.closest('mark[data-record-start]')
-  if (!mark) {
-    clearHoveredRedactions()
-    return
-  }
-
-  hoverMatchingRedactions({
-    start: Number(mark.dataset.recordStart ?? 0),
-    end: Number(mark.dataset.recordEnd ?? 0),
-    replacement: mark.dataset.recordReplacement ?? ''
-  })
-}
-
-function handleRedactionHoverLeave(event) {
-  const related = targetElement(event.relatedTarget)
-  if (related?.closest('mark[data-record-start]')) {
-    return
-  }
-
-  clearHoveredRedactions()
-}
-
-beforePreview.addEventListener('mouseover', handleRedactionHover)
-afterPreview.addEventListener('mouseover', handleRedactionHover)
-beforePreview.addEventListener('mouseout', handleRedactionHoverLeave)
-afterPreview.addEventListener('mouseout', handleRedactionHoverLeave)
-
-beforePreview.addEventListener('mouseup', (event) => {
-  if (selectionWithinPreview()) {
-    rememberSelectionIntent()
-  }
-  setTimeout(maybeShowAddRedactionTooltip, 0)
-})
-
-afterPreview.addEventListener('mouseup', (event) => {
-  if (selectionWithinPreview()) {
-    rememberSelectionIntent()
-  }
-  setTimeout(maybeShowAddRedactionTooltip, 0)
-})
-
-beforePreview.addEventListener('keyup', () => {
-  setTimeout(maybeShowAddRedactionTooltip, 0)
-})
-
-afterPreview.addEventListener('keyup', () => {
-  setTimeout(maybeShowAddRedactionTooltip, 0)
-})
-
-beforePreview.addEventListener('scroll', () => {
-  hidePreviewActionTooltip()
-  schedulePreviewScrollSync(beforePreview, afterPreview)
-})
-afterPreview.addEventListener('scroll', () => {
-  hidePreviewActionTooltip()
-  schedulePreviewScrollSync(afterPreview, beforePreview)
-})
 findAndRedactButton.addEventListener('click', handleFindAndRedact)
+saveRedactionEditsButton.addEventListener('click', savePendingRedactionEdits)
 redactionTermInput.addEventListener('keydown', async (event) => {
   if (event.key === 'Enter') {
     event.preventDefault()
@@ -1372,48 +796,11 @@ redactionTermInput.addEventListener('keydown', async (event) => {
   }
 })
 
-previewActionButtons.addEventListener('click', async (event) => {
-  const button = targetElement(event.target)?.closest('button[data-action-index]')
-  if (!button) {
-    return
-  }
-
-  const action = pendingPreviewActions?.[Number(button.dataset.actionIndex)]?.run
-  if (!action) {
-    return
-  }
-
-  previewActionInFlight = true
-  hidePreviewActionTooltip()
-  try {
-    await action()
-    await nextPaint()
-  } finally {
-    previewActionInFlight = false
-  }
-})
-
-document.addEventListener('click', (event) => {
-  if (previewActionTooltip.hidden) {
-    return
-  }
-
-  if (previewActionTooltip.contains(event.target)) {
-    return
-  }
-
-  if (targetElement(event.target)?.closest('.preview-text mark')) {
-    return
-  }
-
-  hidePreviewActionTooltip()
-})
-
 openOutput.addEventListener('click', async () => {
   try {
     await invoke('open_last_output_path')
   } catch (error) {
-    summary.textContent = `Open output error: ${String(error)}\n\n${summary.textContent}`
+    appendSummary(`Open output error: ${String(error)}`)
   }
 })
 
@@ -1421,6 +808,6 @@ openAudit.addEventListener('click', async () => {
   try {
     await invoke('open_last_audit_output_path')
   } catch (error) {
-    summary.textContent = `Open audit error: ${String(error)}\n\n${summary.textContent}`
+    appendSummary(`Open audit error: ${String(error)}`)
   }
 })
