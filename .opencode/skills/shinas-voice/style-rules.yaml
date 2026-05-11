@@ -1,0 +1,203 @@
+voice_name: shinas-voice
+clinician_name: Shina Halavi
+
+source_corpus:
+  directory: docs/5 deidentified reports + /home/eran/documents/Shina
+  report_count: 8
+  population_mix:
+    adult: 5
+    child: 3
+  scope: full-report with strongest evidence in referral/history sections
+  population_focus: mixed adult and child
+  extraction_notes:
+    - DOCX corpus extracted programmatically from word/document.xml.
+    - Strongest direct evidence comes from referral/history sections across adult and child reports.
+    - Confidence is lower for later interpretive sections not directly reviewed in full.
+
+confidence:
+  overall: medium-high for referral/history voice, medium globally
+  strengths:
+    - Stable adult Reason for Referral sentence template across all 5 adult reports.
+    - Stable child Reason for Referral sentence template across all 3 child reports.
+    - Stable adult Presenting Complaints/Symptoms structure across all 5 adult reports.
+    - Stable child Relevant History structure across all 3 child reports.
+    - Stable high-frequency attribution verbs and transition openers.
+  limitations:
+    - Only 8 reports total.
+    - Some later full-report sections were not reviewed as deeply as history/referral sections.
+
+signal_separation:
+  stable_voice:
+    - Use age-handedness-gender outpatient framing in adult Reason for Referral.
+    - Use child name plus age-in-years-and-months framing in child Reason for Referral.
+    - Prefer described/reported/endorsed/denied over more casual attribution verbs.
+    - Use topic-first sentences followed by detail and functional impact.
+    - Use explicit transition openers such as Specifically, Currently, Regarding, and In addition.
+    - Summarize prior evaluations briefly and directly.
+  boilerplate:
+    - Report title and confidentiality notice.
+    - The all-caps section banner PRESENTING INFORMATION/REASON FOR REFERRAL.
+    - The all-caps section banner RELEVANT HISTORY.
+  section_constrained:
+    - Purpose sentence in Reason for Referral.
+    - History-section openings that label material as unremarkable or remarkable.
+    - Family-history movement from geography/living context into family-history summary.
+    - Child history distribution of concerns across Birth/Developmental, Medical, Family, Social/Behavioral/Emotional, and Educational sections.
+  case_artifacts:
+    - Repeated ADHD/anxiety/depression content across cases.
+    - Any diagnosis-specific explanatory language from individual reports.
+    - Any one patient's quoted wording or idiosyncratic life chronology.
+  ambiguous:
+    - Exact punctuation preference around the final purpose sentence.
+    - How much interpretive linking should carry into impressions/recommendations.
+
+section_structure:
+  adult:
+    common_order:
+      - Reason for Referral
+      - Presenting Complaints/Symptoms
+      - Relevant History
+      - Previous Evaluations
+    overlays:
+      reason_for_referral:
+        - Open with age, handedness, gender, and outpatient neuropsychological assessment framing.
+        - Introduce concerns with "in the context of ...".
+        - Close with the standardized purpose sentence when format allows.
+      presenting_complaints_symptoms:
+        - Open with CLIENT endorsed or CLIENT endorsed notable ...
+        - Expand concern clusters by domain.
+        - Use Specifically, Currently, Regarding, and In addition to organize detail.
+      history:
+        - Prefer declarative openings such as history is unremarkable / remarkable for.
+        - Use explicit source labels where collateral or records matter.
+        - Close paragraphs by naming impact or current status when available.
+      previous_evaluations:
+        - Keep concise.
+        - If present, name evaluator, date, purpose, and brief finding.
+  child:
+    common_order:
+      - Reason for Referral
+      - Relevant History
+      - Previous Evaluations
+    overlays:
+      reason_for_referral:
+        - Open with child name, age in years and months, handedness, and outpatient neuropsychological assessment framing.
+        - Introduce concern clusters directly in the referral sentence.
+        - Do not create a separate Presenting Complaints/Symptoms section.
+      history:
+        - Prefer subsections such as Birth/Developmental History, Medical History, Family History, Social/Behavioral/Emotional History, and Educational History.
+        - Use explicit parent/teacher/tutor/self-report framing.
+        - Mini-subheaders like Social, Behavioral, and Emotional are common within child psychosocial sections.
+      previous_evaluations:
+        - Keep concise and direct, usually a clear denial or brief school/observation summary.
+
+lexicon:
+  preferred_verbs:
+    - described
+    - reported
+    - endorsed
+    - denied
+    - expressed
+  preferred_frames:
+    - in the context of
+    - Specifically,
+    - Currently,
+    - Regarding
+    - In addition,
+    - Per self-report,
+    - Per mother report,
+    - Per parent report,
+    - Per psychiatrist report,
+  preferred_transitions:
+    - Specifically,
+    - Currently,
+    - Regarding
+    - In addition,
+    - However,
+    - While
+  hedging_phrases:
+    - reportedly
+    - per self-report
+    - per mother report
+    - per parent report
+    - findings indicated
+    - results came back normal
+  certainty_phrases:
+    - is remarkable for
+    - is unremarkable
+    - significantly negatively impacted
+    - contributing to notable impairment
+  avoid:
+    - said
+    - talked about
+    - overly casual phrasing
+    - fragmentary intake-note prose
+
+sentence_style:
+  average_length: medium-long
+  complexity: moderately_complex
+  punctuation_preferences:
+    - frequent commas for subordinate clauses
+    - frequent parenthetical clarifiers
+    - rare semicolons
+    - minimal em dashes
+  opener_patterns:
+    - Specifically,
+    - Currently,
+    - Regarding
+    - Per self-report,
+    - Per parent report,
+    - While
+  cadence_notes:
+    - Start broad, then elaborate with concrete detail.
+    - Often end by naming functional consequence, stress, or impairment.
+
+paragraph_style:
+  average_length: medium
+  default_shapes:
+    - topic -> examples -> impact
+    - topic -> chronology -> current impairment
+    - topic -> attribution -> detail
+    - general summary -> modality breakdown
+    - domain header -> source-specific elaboration -> impact
+  example_density: moderate
+  opening_patterns:
+    - Broad symptom or history summary sentence
+    - Domain cue such as Currently, Specifically, or Regarding
+    - Child mini-domain header such as Social, Behavioral, or Emotional
+  closing_patterns:
+    - Name impact or present-day consequence
+    - Occasionally redirect to another section for elaboration
+
+attribution:
+  explicit_when:
+    - collateral source matters
+    - prior evaluation summary
+    - record review supports a factual claim
+    - source identity affects claim strength
+    - teacher or tutor observations are being summarized
+  implicit_when_ok:
+    - the paragraph is clearly framed as client history and contains no source tension
+  source_intro_patterns:
+    - Per self-report,
+    - Per mother report,
+    - Per parent report,
+    - Psychiatrist report is consistent with ...
+    - academic records indicated that ...
+  conflict_handling:
+    - preserve source identity rather than collapsing differing perspectives into one narrator
+
+guardrails:
+  preserve:
+    - facts
+    - attribution
+    - uncertainty
+    - section meaning
+    - age branch
+  do_not:
+    - add facts
+    - add diagnoses
+    - strengthen certainty
+    - remove needed attribution
+    - flatten source conflicts
+    - introduce new interpretation

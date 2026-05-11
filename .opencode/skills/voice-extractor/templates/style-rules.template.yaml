@@ -1,0 +1,113 @@
+voice_name: <VOICE_NAME>
+clinician_name: <CLINICIAN_NAME>
+
+source_corpus:
+  directory: <SOURCE_DIRECTORY>
+  report_count: <REPORT_COUNT>
+  population_mix:
+    adult: <ADULT_REPORT_COUNT>
+    child: <CHILD_REPORT_COUNT>
+  scope: <SCOPE>
+  population_focus: <POPULATION_FOCUS>
+  extraction_notes:
+    - <EXTRACTION_NOTE>
+
+confidence:
+  overall: <OVERALL_CONFIDENCE>
+  strengths:
+    - <CONFIDENCE_STRENGTH>
+  limitations:
+    - <CONFIDENCE_LIMITATION>
+
+signal_separation:
+  stable_voice:
+    - <STABLE_VOICE_RULE>
+  boilerplate:
+    - <BOILERPLATE_RULE>
+  section_constrained:
+    - <SECTION_CONSTRAINED_RULE>
+  case_artifacts:
+    - <CASE_ARTIFACT>
+  ambiguous:
+    - <AMBIGUOUS_PATTERN>
+
+section_structure:
+  adult:
+    common_order:
+      - <ADULT_SECTION>
+    overlays:
+      reason_for_referral:
+        - <ADULT_REFERRAL_RULE>
+      history:
+        - <ADULT_HISTORY_RULE>
+      previous_evaluations:
+        - <ADULT_PREVIOUS_EVALS_RULE>
+  child:
+    common_order:
+      - <CHILD_SECTION>
+    overlays:
+      reason_for_referral:
+        - <CHILD_REFERRAL_RULE>
+      history:
+        - <CHILD_HISTORY_RULE>
+      previous_evaluations:
+        - <CHILD_PREVIOUS_EVALS_RULE>
+
+lexicon:
+  preferred_verbs:
+    - <PREFERRED_VERB>
+  preferred_frames:
+    - <PREFERRED_FRAME>
+  preferred_transitions:
+    - <PREFERRED_TRANSITION>
+  hedging_phrases:
+    - <HEDGING_PHRASE>
+  certainty_phrases:
+    - <CERTAINTY_PHRASE>
+  avoid:
+    - <AVOID_PHRASE>
+
+sentence_style:
+  average_length: <AVERAGE_LENGTH>
+  complexity: <COMPLEXITY>
+  punctuation_preferences:
+    - <PUNCTUATION_PREFERENCE>
+  opener_patterns:
+    - <OPENER_PATTERN>
+  cadence_notes:
+    - <CADENCE_NOTE>
+
+paragraph_style:
+  average_length: <PARAGRAPH_LENGTH>
+  default_shapes:
+    - <PARAGRAPH_SHAPE>
+  example_density: <EXAMPLE_DENSITY>
+  opening_patterns:
+    - <PARAGRAPH_OPENING_PATTERN>
+  closing_patterns:
+    - <PARAGRAPH_CLOSING_PATTERN>
+
+attribution:
+  explicit_when:
+    - <EXPLICIT_ATTRIBUTION_CASE>
+  implicit_when_ok:
+    - <IMPLICIT_ATTRIBUTION_CASE>
+  source_intro_patterns:
+    - <SOURCE_INTRO_PATTERN>
+  conflict_handling:
+    - <CONFLICT_HANDLING_RULE>
+
+guardrails:
+  preserve:
+    - facts
+    - attribution
+    - uncertainty
+    - section meaning
+    - age branch
+  do_not:
+    - add facts
+    - add diagnoses
+    - strengthen certainty
+    - remove needed attribution
+    - flatten source conflicts
+    - introduce new interpretation
