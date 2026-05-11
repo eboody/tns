@@ -4,6 +4,7 @@
     "resources": {
       "../ml/ner/model.onnx": "ner/model.onnx",
       "../ml/ner/tokenizer.json": "ner/tokenizer.json",
+      "../ml/ner/config.json": "ner/config.json",
       "../ml/ner/site/onnxruntime/capi/libonnxruntime.so.1.25.1": "ner/site/onnxruntime/capi/libonnxruntime.so.1.25.1",
       "../ml/ner/site/onnxruntime/capi/libonnxruntime_providers_shared.so": "ner/site/onnxruntime/capi/libonnxruntime_providers_shared.so"
     }

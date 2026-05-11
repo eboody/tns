@@ -8,24 +8,36 @@ All platforms need these bundled resources:
 
 - `ml/ner/model.onnx`
 - `ml/ner/tokenizer.json`
+- `ml/ner/config.json`
 
 Each platform also needs the matching ONNX Runtime shared libraries under `ml/ner/site/onnxruntime/capi/`.
 
 The runtime libraries are staged automatically from the official ONNX Runtime GitHub releases by `scripts/stage-ort-runtime.mjs`.
 
-The large NER model is intentionally not committed to git. Stage it by setting `TNS_NER_MODEL_SOURCE` to either:
+The large NER model is intentionally not committed to git. From a fresh clone, download the default NER model, tokenizer, config, and host ONNX Runtime with:
+
+```bash
+npm run setup:ml
+```
+
+To download only the default NER model directory (`ml/ner/model.onnx`, `tokenizer.json`, and `config.json`):
+
+```bash
+npm run ner:download
+```
+
+By default this uses Hugging Face's `dslim/bert-base-NER` ONNX export. To stage a different model, set `TNS_NER_MODEL_SOURCE` to either:
 
 - a local `model.onnx` path, or
 - a direct download URL for the model artifact
 
-If `ml/ner/tokenizer.json` is missing, the same script downloads the default tokenizer automatically, or you can override it with `TNS_NER_TOKENIZER_SOURCE`.
+If `ml/ner/tokenizer.json` or `ml/ner/config.json` is missing, the same script downloads the default artifacts automatically. You can override them with `TNS_NER_TOKENIZER_SOURCE` and `TNS_NER_CONFIG_SOURCE`.
 
 ## Automatic runtime staging
 
 Stage runtime files for the current host platform:
 
 ```bash
-export TNS_NER_MODEL_SOURCE=/absolute/path/to/model.onnx
 npm run stage:runtime
 ```
 

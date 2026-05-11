@@ -4,6 +4,7 @@
     "resources": {
       "../ml/ner/model.onnx": "ner/model.onnx",
       "../ml/ner/tokenizer.json": "ner/tokenizer.json",
+      "../ml/ner/config.json": "ner/config.json",
       "../ml/ner/site/onnxruntime/capi/onnxruntime.dll": "ner/site/onnxruntime/capi/onnxruntime.dll",
       "../ml/ner/site/onnxruntime/capi/onnxruntime_providers_shared.dll": "ner/site/onnxruntime/capi/onnxruntime_providers_shared.dll"
     },

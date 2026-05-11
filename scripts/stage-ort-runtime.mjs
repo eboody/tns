@@ -1,5 +1,5 @@
 import { createWriteStream } from 'node:fs'
-import { mkdir, mkdtemp, readdir, rm, stat, copyFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm, stat, copyFile, rename } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -14,13 +14,17 @@ const execFileAsync = promisify(execFile)
 
 const ORT_VERSION = '1.25.1'
 const GITHUB_BASE = `https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}`
-const DEFAULT_TOKENIZER_URL = 'https://huggingface.co/dslim/bert-base-NER/resolve/main/tokenizer.json'
+const DEFAULT_NER_BASE = 'https://huggingface.co/dslim/bert-base-NER/resolve/main/onnx'
+const DEFAULT_MODEL_URL = `${DEFAULT_NER_BASE}/model.onnx`
+const DEFAULT_TOKENIZER_URL = `${DEFAULT_NER_BASE}/tokenizer.json`
+const DEFAULT_CONFIG_URL = `${DEFAULT_NER_BASE}/config.json`
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const repoRoot = path.resolve(__dirname, '..')
 const modelDir = path.join(repoRoot, 'ml', 'ner')
 const modelPath = path.join(modelDir, 'model.onnx')
 const tokenizerPath = path.join(modelDir, 'tokenizer.json')
+const configPath = path.join(modelDir, 'config.json')
 const capiDir = path.join(repoRoot, 'ml', 'ner', 'site', 'onnxruntime', 'capi')
 
 const TARGETS = {
@@ -75,6 +79,12 @@ const STAGED_RUNTIME_FILES = [
 ]
 
 async function main() {
+  if (process.argv.slice(2).includes('--model-only')) {
+    await mkdir(modelDir, { recursive: true })
+    await stageModelArtifacts()
+    return
+  }
+
   const target = parseTarget(process.argv.slice(2))
   const spec = TARGETS[target]
   if (!spec) {
@@ -112,30 +122,44 @@ async function main() {
 async function stageModelArtifacts() {
   const modelSource = process.env.TNS_NER_MODEL_SOURCE?.trim()
   const tokenizerSource = process.env.TNS_NER_TOKENIZER_SOURCE?.trim()
+  const configSource = process.env.TNS_NER_CONFIG_SOURCE?.trim()
 
   if (modelSource) {
     await stageArtifact(modelSource, modelPath)
     console.log(`staged model.onnx from ${describeSource(modelSource)}`)
   } else {
-    await assertExistsWithHint(
-      modelPath,
-      'missing ml/ner/model.onnx. Set TNS_NER_MODEL_SOURCE to a local model path or download URL before running this script.'
-    )
+    await stageDefaultArtifact(modelPath, DEFAULT_MODEL_URL, 'model.onnx')
   }
 
   if (tokenizerSource) {
     await stageArtifact(tokenizerSource, tokenizerPath)
     console.log(`staged tokenizer.json from ${describeSource(tokenizerSource)}`)
-    return
+  } else {
+    await stageDefaultArtifact(tokenizerPath, DEFAULT_TOKENIZER_URL, 'tokenizer.json')
   }
 
-  try {
-    await stat(tokenizerPath)
-    console.log('using existing tokenizer.json')
-  } catch {
-    await download(DEFAULT_TOKENIZER_URL, tokenizerPath)
-    console.log(`downloaded tokenizer.json from ${DEFAULT_TOKENIZER_URL}`)
+  if (configSource) {
+    await stageArtifact(configSource, configPath)
+    console.log(`staged config.json from ${describeSource(configSource)}`)
+  } else {
+    await stageDefaultArtifact(configPath, DEFAULT_CONFIG_URL, 'config.json')
   }
+}
+
+async function stageDefaultArtifact(destination, url, name) {
+  try {
+    await stat(destination)
+    console.log(`using existing ${name}`)
+    return
+  } catch {
+    // Missing artifact: fall through to download.
+  }
+
+  const tempPath = `${destination}.download`
+  await rm(tempPath, { force: true })
+  await download(url, tempPath)
+  await rename(tempPath, destination)
+  console.log(`downloaded ${name} from ${url}`)
 }
 
 function parseTarget(argv) {
