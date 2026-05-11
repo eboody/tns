@@ -6,6 +6,7 @@ const ATTRIBUTE_PATTERN = /([\w:-]+)="([^"]*)"/g
 
 export function createPreviewDraftState({ redactionSidebar }) {
   let nextPendingOperationId = 1
+  let syncedWorkspaceKey = null
   const committedPreviews = signal([])
   const selectedPreviewPath = signal(null)
   const processingInFlight = signal(false)
@@ -16,6 +17,11 @@ export function createPreviewDraftState({ redactionSidebar }) {
     pendingOperations.value,
     redactionSidebar.pendingEdits.value
   ))
+  const baseDraftTermsByPath = computed(() => buildDraftTermsByPath(
+    committedPreviews.value,
+    pendingOperations.value,
+    []
+  ))
   const draftTermsByPath = computed(() => buildDraftTermsByPath(
     committedPreviews.value,
     pendingOperations.value,
@@ -24,6 +30,7 @@ export function createPreviewDraftState({ redactionSidebar }) {
 
   const selectedPreview = computed(() => committedPreviews.value.find((preview) => (preview.path ?? '') === selectedPreviewPath.value) ?? null)
   const draftPreview = computed(() => draftPreviewByPath.value.get(selectedPreviewPath.value ?? '') ?? buildDraftPreview(null))
+  const selectedBaseDraftTerms = computed(() => baseDraftTermsByPath.value.get(selectedPreviewPath.value ?? '') ?? [])
   const selectedDraftTerms = computed(() => draftTermsByPath.value.get(selectedPreviewPath.value ?? '') ?? [])
   const selectedDraftStatus = computed(() => {
     const preview = selectedPreview.value
@@ -33,7 +40,11 @@ export function createPreviewDraftState({ redactionSidebar }) {
 
     return buildDraftStatus(preview, draftPreviewByPath.value.get(preview.path ?? ''))
   })
-  const hasPendingChanges = computed(() => redactionSidebar.hasPendingEdits.value || pendingOperations.value.length > 0)
+  const hasPendingChanges = computed(() => {
+    redactionSidebar.hasPendingEdits.value
+    pendingOperations.value
+    return Array.from(draftPreviewByPath.value.values()).some((preview) => preview.hasDraftChanges)
+  })
   const saveButtonEnabled = computed(() => {
     if (saveInFlight.value || processingInFlight.value) {
       return false
@@ -47,6 +58,8 @@ export function createPreviewDraftState({ redactionSidebar }) {
     pendingOperations,
     draftPreview,
     draftPreviewByPath,
+    baseDraftTermsByPath,
+    selectedBaseDraftTerms,
     draftTermsByPath,
     selectedDraftTerms,
     draftBeforeHtml: computed(() => draftPreview.value.beforeHtml),
@@ -64,7 +77,12 @@ export function createPreviewDraftState({ redactionSidebar }) {
       return buildDraftStatus(preview, draftPreviewByPath.peek().get(path ?? ''))
     },
     syncWorkspace(workspace) {
+      const nextWorkspaceKey = workspaceDraftScopeKey(workspace)
       batch(() => {
+        if (syncedWorkspaceKey !== null && syncedWorkspaceKey !== nextWorkspaceKey) {
+          pendingOperations.value = []
+        }
+        syncedWorkspaceKey = nextWorkspaceKey
         committedPreviews.value = Array.isArray(workspace?.filePreviews) ? workspace.filePreviews : []
         selectedPreviewPath.value = workspace?.selectedPreviewPath ?? null
         processingInFlight.value = Boolean(workspace?.processingInFlight)
@@ -87,6 +105,24 @@ export function createPreviewDraftState({ redactionSidebar }) {
       }
 
       pendingOperations.value = [...operations, ...pendingOperations.peek()]
+    },
+    upsertPendingOperation(operationId, operation) {
+      if (!operationId) {
+        return
+      }
+
+      const existingOperations = pendingOperations.peek()
+        .filter((candidate) => candidate.operationId !== operationId)
+
+      if (!operation) {
+        pendingOperations.value = existingOperations
+        return
+      }
+
+      pendingOperations.value = [...existingOperations, {
+        ...operation,
+        operationId
+      }]
     },
     removePendingOperation(operationId) {
       pendingOperations.value = pendingOperations.peek().filter((operation) => operation.operationId !== operationId)
@@ -116,12 +152,22 @@ export function createPreviewDraftState({ redactionSidebar }) {
   }
 }
 
+function workspaceDraftScopeKey(workspace) {
+  const inputPath = typeof workspace?.inputPath === 'string' ? workspace.inputPath : ''
+  const previewPaths = (Array.isArray(workspace?.filePreviews) ? workspace.filePreviews : [])
+    .map((preview) => preview?.path ?? '')
+    .join('\u0000')
+
+  return `${inputPath}\u0001${previewPaths}`
+}
+
 export function buildDraftPreview(preview, pendingOperations, pendingTermEdits = []) {
   if (!preview) {
     return {
       beforeHtml: 'Original content preview will appear here.',
       afterHtml: 'Redacted output preview will appear here.',
-      highlightCount: 0
+      highlightCount: 0,
+      hasDraftChanges: false
     }
   }
 
@@ -132,7 +178,8 @@ export function buildDraftPreview(preview, pendingOperations, pendingTermEdits =
     return {
       beforeHtml,
       afterHtml,
-      highlightCount: countMarks(beforeHtml) + countMarks(afterHtml)
+      highlightCount: countMarks(beforeHtml) + countMarks(afterHtml),
+      hasDraftChanges: false
     }
   }
 
@@ -151,7 +198,8 @@ export function buildDraftPreview(preview, pendingOperations, pendingTermEdits =
   return {
     beforeHtml,
     afterHtml,
-    highlightCount: countMarks(beforeHtml) + countMarks(afterHtml)
+    highlightCount: countMarks(beforeHtml) + countMarks(afterHtml),
+    hasDraftChanges: !sameRedactionRecords(committedRecords, draftRecords)
   }
 }
 
@@ -197,24 +245,41 @@ function buildDraftTerms(records) {
 
     const replacement = normalizeTerm(record.replacement)
     const key = `${matchedText.toLowerCase()}::${replacement}::MANUAL_REDACTION`
+    const identityKey = recordIdentityKey(record)
     const existing = entries.get(key)
     if (existing) {
       existing.occurrences += 1
+      existing.identityKeys.add(identityKey)
       continue
     }
 
     entries.set(key, {
       key,
+      identityKey,
       matchedText,
       replacement,
       entityType: 'MANUAL_REDACTION',
-      occurrences: 1
+      occurrences: 1,
+      identityKeys: new Set([identityKey])
     })
   }
 
-  return Array.from(entries.values()).sort((left, right) =>
-    right.occurrences - left.occurrences || left.matchedText.localeCompare(right.matchedText)
-  )
+  return Array.from(entries.values())
+    .map((term) => ({
+      ...term,
+      identityKey: Array.from(term.identityKeys).sort().join('|')
+    }))
+    .sort((left, right) =>
+      right.occurrences - left.occurrences || left.matchedText.localeCompare(right.matchedText)
+    )
+}
+
+function recordIdentityKey(record) {
+  if (record.committed) {
+    return `${record.committedStart}:${record.committedEnd}:${record.committedReplacement}`
+  }
+
+  return `${record.start}:${record.end}:${record.replacement}:${record.operationId ?? 'draft'}`
 }
 
 function buildDraftStatus(preview, draftPreview) {
@@ -227,8 +292,29 @@ function buildDraftStatus(preview, draftPreview) {
 
   return {
     replacements: countMarks(draftPreview.afterHtml),
-    hasDraftChanges: draftPreview.beforeHtml !== committedBeforeHtml || draftPreview.afterHtml !== committedAfterHtml
+    hasDraftChanges: typeof draftPreview.hasDraftChanges === 'boolean'
+      ? draftPreview.hasDraftChanges
+      : draftPreview.beforeHtml !== committedBeforeHtml || draftPreview.afterHtml !== committedAfterHtml
   }
+}
+
+function sameRedactionRecords(leftRecords, rightRecords) {
+  const left = normalizeRecordOrder(leftRecords).map(canonicalRecordSignature)
+  const right = normalizeRecordOrder(rightRecords).map(canonicalRecordSignature)
+  if (left.length !== right.length) {
+    return false
+  }
+
+  return left.every((signature, index) => signature === right[index])
+}
+
+function canonicalRecordSignature(record) {
+  return [
+    record.start,
+    record.end,
+    normalizeTerm(record.matchedText).toLowerCase(),
+    normalizeTerm(record.replacement)
+  ].join('::')
 }
 
 export function parseCommittedRedactionRecords(preview, originalText = preview?.originalText ?? '') {
@@ -351,34 +437,15 @@ function applyReplaceRedactionTermEffect(records, originalText, effect) {
     return records
   }
 
-  const matchingRecords = records.filter((record) => sameMatchText(record.matchedText, previousTerm))
   const remainingRecords = records.filter((record) => !sameMatchText(record.matchedText, previousTerm))
-  const occupied = remainingRecords.map(cloneRecord)
-  const updatedRecords = []
-  const preservedRecords = []
-
-  for (const record of matchingRecords) {
-    const updatedRecord = anchoredReplacementFromRecord(originalText, record, nextTerm)
-    if (!updatedRecord || overlapsExistingReplacement(occupied, updatedRecord.start, updatedRecord.end)) {
-      occupied.push(record)
-      preservedRecords.push(record)
-      continue
-    }
-
-    occupied.push(updatedRecord)
-    updatedRecords.push(updatedRecord)
-  }
-
   const propagatedRecords = buildExactMatchRedactions(originalText, [{
     matchedText: nextTerm,
     replacement: MANUAL_REDACTION_REPLACEMENT,
     label: 'Manual redaction'
-  }], occupied)
+  }], remainingRecords)
 
   return normalizeRecordOrder([
     ...remainingRecords,
-    ...preservedRecords,
-    ...updatedRecords,
     ...propagatedRecords
   ])
 }
@@ -840,20 +907,6 @@ function cloneRecord(record) {
 
 function countMarks(html) {
   return (html.match(/<mark\b/g) ?? []).length
-}
-
-function anchoredReplacementFromRecord(originalText, record, nextTerm) {
-  const end = record.start + utf8ByteLength(nextTerm)
-  const matchedText = sliceUtf8Bytes(originalText, record.start, end)
-  if (!matchedText || !sameMatchText(matchedText, nextTerm)) {
-    return null
-  }
-
-  return {
-    ...record,
-    end,
-    matchedText
-  }
 }
 
 function sameMatchText(left, right) {

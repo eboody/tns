@@ -114,8 +114,25 @@ test('draft preview applies pending term edits before queued operations', () => 
   )
 
   const matches = draft.afterHtml.match(/MANUAL_REDACTION_/g) ?? []
-  assert.equal(matches.length, 3)
+  assert.equal(matches.length, 1)
   assert.doesNotMatch(draft.afterHtml, /betamax<mark/)
+  assert.doesNotMatch(draft.afterHtml, /beta<mark/)
+})
+
+test('draft preview term edits use delete-and-refind semantics', () => {
+  const preview = {
+    path: '/tmp/a.md',
+    originalText: 'Historical Results\nSchool MEADOWS ELEMENTARY SCHOOL\nStudent Surina Shah\n',
+    originalHtml: 'Historical Results\nSchool MEADOWS ELEMENTARY SCHOOL\nStudent <mark title="Manual redaction 1" data-record-start="60" data-record-end="71" data-record-replacement="[MANUAL_REDACTION]" data-manual-number="1" data-record-label="Manual redaction 1">Surina Shah</mark>\n',
+    redactedHtml: 'Historical Results\nSchool MEADOWS ELEMENTARY SCHOOL\nStudent <mark title="Manual redaction 1" data-record-start="60" data-record-end="71" data-record-replacement="[MANUAL_REDACTION]" data-manual-number="1" data-record-label="Manual redaction 1">[MANUAL_REDACTION_1]</mark>\n'
+  }
+
+  const draft = buildDraftPreview(preview, [], [{ previousTerm: 'Surina Shah', nextTerm: 'Surina' }])
+
+  assert.equal(
+    draft.afterHtml,
+    'Historical Results\nSchool MEADOWS ELEMENTARY SCHOOL\nStudent <mark title="Manual redaction 1" data-record-start="60" data-record-end="66" data-record-replacement="[MANUAL_REDACTION]" data-record-label="Manual redaction 1" data-record-committed="false" data-record-matched-text="Surina" data-manual-number="1">[MANUAL_REDACTION_1]</mark> Shah\n'
+  )
 })
 
 test('draft preview deletes queued redaction terms across the preview', () => {
@@ -167,7 +184,7 @@ test('save button enablement is derived from draft-state signals', () => {
 
   assert.equal(state.saveButtonEnabled.value, false)
 
-  state.queuePendingOperation({ queuedMessage: 'queued', draftEffect: null })
+  state.queuePendingOperation({ queuedMessage: 'queued', draftEffect: { kind: 'find-and-redact-term', term: 'alpha' } })
   assert.equal(state.saveButtonEnabled.value, true)
 
   state.setSaveInFlight(true)
@@ -202,6 +219,27 @@ test('selected draft status exposes draft replacement count and pending flag', (
   })
 })
 
+test('selected draft status ignores harmless committed markup normalization', () => {
+  const redactionSidebar = { hasPendingEdits: signal(false), pendingEdits: signal([]) }
+  const state = createPreviewDraftState({ redactionSidebar })
+
+  state.syncWorkspace({
+    filePreviews: [{
+      path: '/tmp/a.md',
+      originalText: 'alpha beta gamma',
+      originalHtml: 'alpha <mark title="Manual redaction 1" data-record-start="6" data-record-end="10" data-record-replacement="[MANUAL_REDACTION]" data-manual-number="1" data-record-label="Manual redaction 1">beta</mark> gamma',
+      redactedHtml: 'alpha <mark title="Manual redaction 1" data-record-start="6" data-record-end="10" data-record-replacement="[MANUAL_REDACTION]" data-manual-number="1" data-record-label="Manual redaction 1">[MANUAL_REDACTION_1]</mark> gamma'
+    }],
+    selectedPreviewPath: '/tmp/a.md',
+    processingInFlight: false
+  })
+
+  assert.deepEqual(state.selectedDraftStatus.value, {
+    replacements: 1,
+    hasDraftChanges: false
+  })
+})
+
 test('selected draft terms are derived from pending preview operations', () => {
   const redactionSidebar = { hasPendingEdits: signal(false), pendingEdits: signal([]) }
   const state = createPreviewDraftState({ redactionSidebar })
@@ -232,6 +270,121 @@ test('selected draft terms are derived from pending preview operations', () => {
     matchedText: term.matchedText,
     occurrences: term.occurrences
   })), [{ matchedText: 'beta', occurrences: 1 }])
+})
+
+test('pending operations can be upserted for reactive textbox matching', () => {
+  const redactionSidebar = { hasPendingEdits: signal(false), pendingEdits: signal([]) }
+  const state = createPreviewDraftState({ redactionSidebar })
+
+  state.syncWorkspace({
+    filePreviews: [{
+      path: '/tmp/a.md',
+      originalText: 'John J. Doe met John Doe.',
+      originalHtml: 'John J. Doe met John Doe.',
+      redactedHtml: 'John J. Doe met John Doe.'
+    }],
+    selectedPreviewPath: '/tmp/a.md',
+    processingInFlight: false
+  })
+
+  state.upsertPendingOperation('live-find', {
+    draftEffect: {
+      kind: 'find-and-redact-term',
+      term: 'John J. Doe'
+    }
+  })
+
+  assert.deepEqual(state.selectedDraftTerms.value.map((term) => ({
+    matchedText: term.matchedText,
+    occurrences: term.occurrences
+  })), [{ matchedText: 'John J. Doe', occurrences: 1 }])
+  assert.match(state.draftAfterHtml.value, /<mark[^>]*>\[MANUAL_REDACTION_1\]<\/mark> met John Doe\./)
+  assert.equal(state.saveButtonEnabled.value, true)
+
+  state.upsertPendingOperation('live-find', {
+    draftEffect: {
+      kind: 'find-and-redact-term',
+      term: 'John Doe'
+    }
+  })
+
+  assert.deepEqual(state.selectedDraftTerms.value.map((term) => ({
+    matchedText: term.matchedText,
+    occurrences: term.occurrences
+  })), [{ matchedText: 'John Doe', occurrences: 1 }])
+  assert.match(state.draftAfterHtml.value, /John J\. Doe met <mark[^>]*>\[MANUAL_REDACTION_1\]<\/mark>\./)
+
+  state.upsertPendingOperation('live-find', null)
+
+  assert.deepEqual(state.selectedDraftTerms.value, [])
+  assert.equal(state.draftAfterHtml.value, 'John J. Doe met John Doe.')
+  assert.equal(state.saveButtonEnabled.value, false)
+})
+
+test('reactive find text that does not match does not enable save', () => {
+  const redactionSidebar = { hasPendingEdits: signal(false), pendingEdits: signal([]) }
+  const state = createPreviewDraftState({ redactionSidebar })
+
+  state.syncWorkspace({
+    filePreviews: [{
+      path: '/tmp/a.md',
+      originalText: 'John J. Doe met John Doe.',
+      originalHtml: 'John J. Doe met John Doe.',
+      redactedHtml: 'John J. Doe met John Doe.'
+    }],
+    selectedPreviewPath: '/tmp/a.md',
+    processingInFlight: false
+  })
+
+  state.upsertPendingOperation('live-find', {
+    draftEffect: {
+      kind: 'find-and-redact-term',
+      term: 'John J. Do'
+    }
+  })
+
+  assert.equal(state.draftAfterHtml.value, 'John J. Doe met John Doe.')
+  assert.equal(state.saveButtonEnabled.value, false)
+})
+
+test('pending operations are cleared when the workspace draft scope changes', () => {
+  const redactionSidebar = { hasPendingEdits: signal(false), pendingEdits: signal([]) }
+  const state = createPreviewDraftState({ redactionSidebar })
+
+  state.syncWorkspace({
+    inputPath: '/tmp/first.txt',
+    filePreviews: [{
+      path: '/tmp/a.md',
+      originalText: 'alpha beta',
+      originalHtml: 'alpha beta',
+      redactedHtml: 'alpha beta'
+    }],
+    selectedPreviewPath: '/tmp/a.md',
+    processingInFlight: false
+  })
+  state.upsertPendingOperation('live-find', {
+    draftEffect: {
+      kind: 'find-and-redact-term',
+      term: 'beta'
+    }
+  })
+  assert.equal(state.saveButtonEnabled.value, true)
+
+  state.syncWorkspace({
+    inputPath: '/tmp/second.txt',
+    filePreviews: [{
+      path: '/tmp/b.md',
+      originalText: 'beta gamma',
+      originalHtml: 'beta gamma',
+      redactedHtml: 'beta gamma'
+    }],
+    selectedPreviewPath: '/tmp/b.md',
+    processingInFlight: false
+  })
+
+  assert.equal(state.pendingOperations.value.length, 0)
+  assert.equal(state.draftAfterHtml.value, 'beta gamma')
+  assert.equal(state.saveButtonEnabled.value, false)
 })
 
 test('draft status by path stays committed when a preview has no pending changes', () => {

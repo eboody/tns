@@ -140,3 +140,27 @@ test('sidebar state preserves drafts for surviving term ids across draft-state s
   assert.equal(state.draftValueFor(alphaId), 'alpha revised')
   assert.equal(state.sourceTerms.value.some((term) => term.matchedText === 'beta'), false)
 })
+
+test('sidebar state clears stale drafts when the workspace draft scope changes', () => {
+  const state = createRedactionSidebarState()
+
+  state.syncFromDraftState({
+    filePreviews: [{ inputPath: '/tmp/first.txt', path: '/tmp/first.txt', originalText: 'John Doe' }],
+    terms: [
+      { key: 'john doe::[MANUAL_REDACTION]::MANUAL_REDACTION', identityKey: '0:8:[MANUAL_REDACTION]', matchedText: 'John Doe', replacement: '[MANUAL_REDACTION]', entityType: 'MANUAL_REDACTION', occurrences: 1 }
+    ]
+  })
+
+  const firstId = state.sourceTerms.value[0].id
+  state.setDraft(firstId, 'John')
+
+  state.syncFromDraftState({
+    filePreviews: [{ inputPath: '/tmp/second.txt', path: '/tmp/second.txt', originalText: 'John Doe' }],
+    terms: [
+      { key: 'john doe::[MANUAL_REDACTION]::MANUAL_REDACTION', identityKey: '0:8:[MANUAL_REDACTION]', matchedText: 'John Doe', replacement: '[MANUAL_REDACTION]', entityType: 'MANUAL_REDACTION', occurrences: 1 }
+    ]
+  })
+
+  const nextId = state.sourceTerms.value[0].id
+  assert.equal(state.draftValueFor(nextId), 'John Doe')
+})

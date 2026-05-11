@@ -8,6 +8,7 @@ import {
 
 export function createRedactionSidebarState() {
   let nextWorkspaceTermId = 1
+  let syncedWorkspaceKey = null
   const sourcePreviews = signal([])
   const workspaceTerms = signal([])
   const persistedTerms = signal([])
@@ -55,20 +56,34 @@ export function createRedactionSidebarState() {
     hasPendingEdits,
     relatedSuggestions,
     syncFromDraftState({ filePreviews, terms }) {
+      const nextWorkspaceKey = sidebarDraftScopeKey(filePreviews)
+      const preserveDrafts = syncedWorkspaceKey === null || syncedWorkspaceKey === nextWorkspaceKey
       const existingIdsByKey = new Map(
-        workspaceTerms.peek().map((term) => [term.key, term.id])
+        workspaceTerms.peek().map((term) => [term.identityKey ?? term.key, term.id])
+      )
+      const existingDraftsByIdentityKey = new Map(
+        (preserveDrafts ? workspaceTerms.peek() : [])
+          .map((term) => {
+            const draft = termDrafts.peek().get(term.id)
+            return draft === undefined
+              ? null
+              : [term.identityKey ?? term.key, draft]
+          })
+          .filter(Boolean)
       )
 
       batch(() => {
+        syncedWorkspaceKey = nextWorkspaceKey
         sourcePreviews.value = Array.isArray(filePreviews) ? filePreviews : []
         workspaceTerms.value = (Array.isArray(terms) ? terms : collectWorkspaceRedactionTerms(filePreviews)).map((term) => ({
           ...term,
-          id: existingIdsByKey.get(term.key) ?? `workspace-term-${nextWorkspaceTermId++}`
+          id: existingIdsByKey.get(term.identityKey ?? term.key) ?? `workspace-term-${nextWorkspaceTermId++}`
         }))
         termDrafts.value = new Map(
-          Array.from(termDrafts.peek().entries()).filter(([id]) =>
-            workspaceTerms.value.some((term) => term.id === id)
-          )
+          workspaceTerms.value.flatMap((term) => {
+            const draft = existingDraftsByIdentityKey.get(term.identityKey ?? term.key)
+            return draft === undefined ? [] : [[term.id, draft]]
+          })
         )
       })
     },
@@ -143,6 +158,12 @@ export function createRedactionSidebarState() {
 
 function normalizeDraft(value) {
   return typeof value === 'string' ? value.trim() : ''
+}
+
+function sidebarDraftScopeKey(filePreviews) {
+  return (Array.isArray(filePreviews) ? filePreviews : [])
+    .map((preview) => `${preview?.inputPath ?? preview?.input_path ?? ''}\u0000${preview?.path ?? ''}`)
+    .join('\u0001')
 }
 
 function normalizePersistedEntry(term) {

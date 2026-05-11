@@ -160,8 +160,15 @@ function createEditableTermListItem({
   deleteButton.textContent = '×'
   deleteButton.setAttribute('aria-label', `Delete redaction term ${term.matchedText}`)
   deleteButton.title = `Delete ${term.matchedText}`
+  deleteButton.addEventListener('mousedown', (event) => {
+    event.preventDefault()
+  })
   deleteButton.addEventListener('click', async () => {
-    await onDeleteTermRequested(term)
+    await onDeleteTermRequested({
+      termId: term.id,
+      committedTerm: redactionSidebar.committedValueFor(term.id),
+      displayedTerm: redactionSidebar.draftValueFor(term.id)
+    })
   })
 
   actions.append(deleteButton)

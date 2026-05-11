@@ -55,6 +55,7 @@ const openAudit = document.getElementById('openAudit')
 const loadingOverlay = document.getElementById('loadingOverlay')
 const loadingTitle = document.getElementById('loadingTitle')
 const loadingMessage = document.getElementById('loadingMessage')
+const LIVE_FIND_AND_REDACT_OPERATION_ID = 'live-find-and-redact-term'
 
 const workspace = signal(createWorkspaceState(
   'Desktop shell loaded. Choose a file or folder to start local processing automatically.'
@@ -70,6 +71,7 @@ let saveRedactionEditsInFlight = false
 let recentSelectionIntentUntil = 0
 let lastSidebarPreviewSet = null
 let lastSidebarPreviewPath = null
+let lastSidebarTermsSignature = ''
 const activeRedactionTermId = signal(null)
 let debugInputSequence = 0
 const debugEvents = []
@@ -119,17 +121,22 @@ toggleHighlights.addEventListener('click', () => {
 function syncRedactionSidebar(state, force = false) {
   const sidebarPreviews = getSidebarScopedPreviews(state)
   const sidebarPreviewPath = sidebarPreviews[0]?.path ?? null
-  const sidebarTerms = draftPreviewState.selectedDraftTerms.value
+  const sidebarTerms = draftPreviewState.selectedBaseDraftTerms.value
+  const sidebarTermsSignature = sidebarTerms
+    .map((term) => `${term.key}:${term.occurrences}`)
+    .join('|')
 
   if (!force && (activeRedactionTermId.value !== null || (
     state.filePreviews === lastSidebarPreviewSet
     && sidebarPreviewPath === lastSidebarPreviewPath
+    && sidebarTermsSignature === lastSidebarTermsSignature
   ))) {
     recordDebugEvent('skip-sidebar-sync', {
       force,
       activeRedactionTermId: activeRedactionTermId.value,
       samePreviewSet: state.filePreviews === lastSidebarPreviewSet,
       samePreviewPath: sidebarPreviewPath === lastSidebarPreviewPath,
+      sameTerms: sidebarTermsSignature === lastSidebarTermsSignature,
       sidebarPreviewPath
     })
     return
@@ -141,6 +148,7 @@ function syncRedactionSidebar(state, force = false) {
   })
   lastSidebarPreviewSet = state.filePreviews
   lastSidebarPreviewPath = sidebarPreviewPath
+  lastSidebarTermsSignature = sidebarTermsSignature
   recordDebugEvent('sync-sidebar', {
     force,
     sidebarPreviewPath,
@@ -270,19 +278,21 @@ const redactionSidebarController = createRedactionSidebarController({
   onSuggestionSelected: async () => {
     await handleFindAndRedact()
   },
-  onDeleteTermRequested: async (term) => {
-    if (!window.confirm(`Remove redaction term "${term.matchedText}" everywhere in this workspace?`)) {
+  onDeleteTermRequested: async ({ termId, committedTerm, displayedTerm }) => {
+    const visibleTerm = displayedTerm || committedTerm
+    if (!window.confirm(`Remove redaction term "${visibleTerm}" everywhere in this workspace?`)) {
       return
     }
 
     activeRedactionTermId.value = null
+    redactionSidebar.resetDraft(termId)
     queuePendingRedactionOperation({
-      queuedMessage: `Queued deletion of redaction term "${term.matchedText}". Press Save to apply it.`,
+      queuedMessage: `Queued deletion of redaction term "${visibleTerm}". Press Save to apply it.`,
       draftEffect: {
         kind: 'delete-redaction-term',
-        term: term.matchedText
+        term: committedTerm
       },
-      run: async () => await deleteRedactionTermById(term.id, term.matchedText)
+      run: async () => await deleteRedactionTermById(termId, committedTerm)
     })
   },
   nextDebugInputId: () => `redaction-input-${++debugInputSequence}`
@@ -318,7 +328,7 @@ effect(() => {
 effect(() => {
   const state = workspace.value
   draftPreviewState.syncWorkspace(state)
-  draftPreviewState.selectedDraftTerms.value
+  draftPreviewState.selectedBaseDraftTerms.value
   syncRedactionSidebar(state)
 })
 
@@ -423,6 +433,14 @@ function queuePendingRedactionOperation(operation) {
   appendSummary(operation.queuedMessage)
 }
 
+function syncLiveFindAndRedactDraft() {
+  const term = redactionTermInput.value.trim()
+  draftPreviewState.upsertPendingOperation(
+    LIVE_FIND_AND_REDACT_OPERATION_ID,
+    term ? createFindAndRedactOperation(term, { operationId: LIVE_FIND_AND_REDACT_OPERATION_ID }) : null
+  )
+}
+
 async function savePendingRedactionEdits() {
   const pendingEdits = redactionSidebar.pendingEdits.value
   const state = workspace.peek()
@@ -482,7 +500,13 @@ async function handleFindAndRedact() {
     return
   }
 
-  queuePendingRedactionOperation({
+  syncLiveFindAndRedactDraft()
+  appendSummary(`Draft find and redact for "${term}" is matching reactively. Press Save to apply it.`)
+}
+
+function createFindAndRedactOperation(term, { operationId } = {}) {
+  return {
+    operationId,
     queuedMessage: `Queued find and redact for "${term}". Press Save to apply it.`,
     draftEffect: {
       kind: 'find-and-redact-term',
@@ -502,15 +526,16 @@ async function handleFindAndRedact() {
           `Find and redact applied \"${term}\" across ${result.updatedTargets ?? 0} file(s). `
           + `${result.unchangedTargets ?? 0} file(s) already matched.`
         )
+        if (redactionTermInput.value.trim() === term) {
+          redactionTermInput.value = ''
+        }
         return true
       } catch (error) {
         appendSummary(`Find and redact error: ${String(error)}`)
         return false
       }
     }
-  })
-
-  redactionTermInput.value = ''
+  }
 }
 
 async function deleteRedactionTerm(term) {
@@ -795,6 +820,7 @@ function buildCrossFileDraftEffect(kind, preview, redactionIdentity) {
 
 findAndRedactButton.addEventListener('click', handleFindAndRedact)
 saveRedactionEditsButton.addEventListener('click', savePendingRedactionEdits)
+redactionTermInput.addEventListener('input', syncLiveFindAndRedactDraft)
 redactionTermInput.addEventListener('keydown', async (event) => {
   if (event.key === 'Enter') {
     event.preventDefault()
