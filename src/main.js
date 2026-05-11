@@ -55,8 +55,6 @@ const openAudit = document.getElementById('openAudit')
 const loadingOverlay = document.getElementById('loadingOverlay')
 const loadingTitle = document.getElementById('loadingTitle')
 const loadingMessage = document.getElementById('loadingMessage')
-const LIVE_FIND_AND_REDACT_OPERATION_ID = 'live-find-and-redact-term'
-
 const workspace = signal(createWorkspaceState(
   'Desktop shell loaded. Choose a file or folder to start local processing automatically.'
 ))
@@ -73,6 +71,7 @@ let lastSidebarPreviewSet = null
 let lastSidebarPreviewPath = null
 let lastSidebarTermsSignature = ''
 const activeRedactionTermId = signal(null)
+const liveFindTerm = signal('')
 let debugInputSequence = 0
 const debugEvents = []
 
@@ -433,14 +432,6 @@ function queuePendingRedactionOperation(operation) {
   appendSummary(operation.queuedMessage)
 }
 
-function syncLiveFindAndRedactDraft() {
-  const term = redactionTermInput.value.trim()
-  draftPreviewState.upsertPendingOperation(
-    LIVE_FIND_AND_REDACT_OPERATION_ID,
-    term ? createFindAndRedactOperation(term, { operationId: LIVE_FIND_AND_REDACT_OPERATION_ID }) : null
-  )
-}
-
 async function savePendingRedactionEdits() {
   const pendingEdits = redactionSidebar.pendingEdits.value
   const state = workspace.peek()
@@ -500,13 +491,13 @@ async function handleFindAndRedact() {
     return
   }
 
-  syncLiveFindAndRedactDraft()
-  appendSummary(`Draft find and redact for "${term}" is matching reactively. Press Save to apply it.`)
+  queuePendingRedactionOperation(createFindAndRedactOperation(term))
+  liveFindTerm.value = ''
+  redactionTermInput.value = ''
 }
 
-function createFindAndRedactOperation(term, { operationId } = {}) {
+function createFindAndRedactOperation(term) {
   return {
-    operationId,
     queuedMessage: `Queued find and redact for "${term}". Press Save to apply it.`,
     draftEffect: {
       kind: 'find-and-redact-term',
@@ -662,14 +653,85 @@ function renderPreview(preview) {
   previewInteractions.hidePreviewActionTooltip()
   previewTitle.textContent = preview.path ?? ''
   const note = buildReviewNotice(preview.review)
-  const beforeHtml = draftPreviewState.draftBeforeHtml.value
-  const afterHtml = draftPreviewState.draftAfterHtml.value
+  const liveTerm = liveFindTerm.value
+  const beforeHtml = applyLiveFindHighlight(draftPreviewState.draftBeforeHtml.value, liveTerm)
+  const afterHtml = applyLiveFindHighlight(draftPreviewState.draftAfterHtml.value, liveTerm)
 
   previewNote.hidden = !note
   previewNote.textContent = note
   beforePreview.innerHTML = beforeHtml
   afterPreview.innerHTML = afterHtml
   previewHighlightCount.textContent = `${draftPreviewState.draftHighlightCount.value} highlighted spans`
+}
+
+function applyLiveFindHighlight(html, term) {
+  const normalizedTerm = typeof term === 'string' ? term.trim() : ''
+  if (!normalizedTerm) {
+    return html
+  }
+
+  const template = document.createElement('template')
+  template.innerHTML = html
+  const textNodes = []
+  const walker = document.createTreeWalker(template.content, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      if (!node.nodeValue || !literalCaseInsensitiveMatcher(normalizedTerm).test(node.nodeValue)) {
+        return NodeFilter.FILTER_REJECT
+      }
+
+      if (node.parentElement?.closest('.pending-redaction-highlight')) {
+        return NodeFilter.FILTER_REJECT
+      }
+
+      return NodeFilter.FILTER_ACCEPT
+    }
+  })
+
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    textNodes.push(node)
+  }
+
+  for (const textNode of textNodes) {
+    highlightLiveFindTextNode(textNode, normalizedTerm)
+  }
+
+  return template.innerHTML
+}
+
+function highlightLiveFindTextNode(textNode, term) {
+  const text = textNode.nodeValue ?? ''
+  const matcher = literalCaseInsensitiveMatcher(term)
+  const fragment = document.createDocumentFragment()
+  let cursor = 0
+
+  for (const match of text.matchAll(matcher)) {
+    const matchedText = match[0] ?? ''
+    const start = match.index ?? 0
+    const end = start + matchedText.length
+    if (start > cursor) {
+      fragment.append(document.createTextNode(text.slice(cursor, start)))
+    }
+
+    const highlight = document.createElement('span')
+    highlight.className = 'pending-redaction-highlight'
+    highlight.textContent = matchedText
+    fragment.append(highlight)
+    cursor = end
+  }
+
+  if (cursor < text.length) {
+    fragment.append(document.createTextNode(text.slice(cursor)))
+  }
+
+  textNode.replaceWith(fragment)
+}
+
+function literalCaseInsensitiveMatcher(term) {
+  return new RegExp(escapeRegex(term), 'giu')
+}
+
+function escapeRegex(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 function schedulePreviewScrollSync(source, target) {
@@ -820,7 +882,9 @@ function buildCrossFileDraftEffect(kind, preview, redactionIdentity) {
 
 findAndRedactButton.addEventListener('click', handleFindAndRedact)
 saveRedactionEditsButton.addEventListener('click', savePendingRedactionEdits)
-redactionTermInput.addEventListener('input', syncLiveFindAndRedactDraft)
+redactionTermInput.addEventListener('input', () => {
+  liveFindTerm.value = redactionTermInput.value
+})
 redactionTermInput.addEventListener('keydown', async (event) => {
   if (event.key === 'Enter') {
     event.preventDefault()

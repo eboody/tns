@@ -385,7 +385,7 @@ function applyDraftOperations({ preview, originalText, committedRecords, pending
     }
 
     if (effect.kind === 'merge-manual-redaction') {
-      records = applyMergeManualRedactionEffect(records, originalText, effect)
+      records = applyMergeManualRedactionEffect(records, originalText, effect, operation.operationId)
       continue
     }
 
@@ -482,7 +482,7 @@ function applyManualRedactionEffect(records, originalText, effect, operationId) 
   })])
 }
 
-function applyMergeManualRedactionEffect(records, originalText, effect) {
+function applyMergeManualRedactionEffect(records, originalText, effect, operationId) {
   const mapped = mapSelectionToOriginalRangeForMerge(originalText, records, effect.sourcePreview, effect.selectionStart, effect.selectionEnd)
   if (!mapped) {
     return records
@@ -500,7 +500,11 @@ function applyMergeManualRedactionEffect(records, originalText, effect) {
 
   return normalizeRecordOrder([
     ...records.filter((record) => !(overlap.start < record.end && overlap.end > record.start)),
-    createRecord(overlap.start, overlap.end, MANUAL_REDACTION_REPLACEMENT, 'Manual redaction', matchedText)
+    createRecord(overlap.start, overlap.end, MANUAL_REDACTION_REPLACEMENT, 'Manual redaction', matchedText, {
+      operationId,
+      sourceKind: 'merge-manual-redaction',
+      sourceMode: 'single_occurrence'
+    })
   ])
 }
 

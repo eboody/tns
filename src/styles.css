@@ -1004,7 +1004,8 @@ button:disabled {
   background: rgba(245, 249, 255, 0.92);
 }
 
-.highlights-hidden .preview-text mark {
+.highlights-hidden .preview-text mark,
+.highlights-hidden .preview-text .pending-redaction-highlight {
   background: transparent;
   box-shadow: none;
 }
