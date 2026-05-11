@@ -68,6 +68,12 @@ pub struct Encoding {
     pub attention_mask: Vec<u32>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TextChunkRange {
+    pub start: usize,
+    pub end: usize,
+}
+
 impl Encoding {
     /// Pad or truncate to a specific length
     pub fn pad_to_length(&mut self, max_length: usize, pad_id: u32) {
@@ -97,6 +103,57 @@ impl Encoding {
     }
 }
 
+impl TokenizerWrapper {
+    pub fn chunk_text_ranges(
+        &self,
+        text: &str,
+        max_content_tokens: usize,
+        overlap_tokens: usize,
+    ) -> Result<Vec<TextChunkRange>> {
+        if text.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let max_content_tokens = max_content_tokens.max(1);
+        let overlap_tokens = overlap_tokens.min(max_content_tokens.saturating_sub(1));
+        let encoding = self.encode(text, false)?;
+        let token_offsets = encoding
+            .offsets
+            .into_iter()
+            .filter(|(start, end)| end > start)
+            .collect::<Vec<_>>();
+
+        if token_offsets.is_empty() || token_offsets.len() <= max_content_tokens {
+            return Ok(vec![TextChunkRange {
+                start: 0,
+                end: text.len(),
+            }]);
+        }
+
+        let mut ranges = Vec::new();
+        let mut start_index = 0usize;
+
+        while start_index < token_offsets.len() {
+            let end_index = (start_index + max_content_tokens).min(token_offsets.len());
+            let start = token_offsets[start_index].0;
+            let end = token_offsets[end_index - 1].1;
+
+            if end > start {
+                ranges.push(TextChunkRange { start, end });
+            }
+
+            if end_index == token_offsets.len() {
+                break;
+            }
+
+            let next_start = end_index.saturating_sub(overlap_tokens);
+            start_index = next_start.max(start_index + 1);
+        }
+
+        Ok(ranges)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -122,5 +179,17 @@ mod tests {
         encoding.pad_to_length(2, 0);
         assert_eq!(encoding.ids.len(), 2);
         assert_eq!(encoding.real_length(), 2);
+    }
+
+    #[test]
+    fn chunk_text_ranges_handles_empty_text_without_tokenizer() {
+        let wrapper = TokenizerWrapper {
+            tokenizer: Tokenizer::new(tokenizers::models::bpe::BPE::default()),
+        };
+
+        assert_eq!(
+            wrapper.chunk_text_ranges("", 10, 2).unwrap(),
+            Vec::<TextChunkRange>::new()
+        );
     }
 }

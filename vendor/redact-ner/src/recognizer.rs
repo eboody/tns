@@ -14,7 +14,7 @@ use std::path::Path;
 use std::sync::Mutex;
 use tracing::{debug, info, warn};
 
-use crate::tokenizer_wrapper::TokenizerWrapper;
+use crate::tokenizer_wrapper::{TextChunkRange, TokenizerWrapper};
 
 /// Configuration for NER recognizer
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,6 +34,22 @@ pub struct NerConfig {
     #[serde(default = "default_max_length")]
     pub max_seq_length: usize,
 
+    /// Overlap between adjacent inference chunks
+    #[serde(default = "default_chunk_overlap")]
+    pub chunk_overlap_tokens: usize,
+
+    /// Person-specific threshold
+    #[serde(default = "default_person_confidence")]
+    pub min_person_confidence: f32,
+
+    /// Organization-specific threshold
+    #[serde(default = "default_organization_confidence")]
+    pub min_organization_confidence: f32,
+
+    /// Location-specific threshold
+    #[serde(default = "default_location_confidence")]
+    pub min_location_confidence: f32,
+
     /// Entity type mappings from NER labels
     #[serde(default)]
     pub label_mappings: HashMap<String, EntityType>,
@@ -51,6 +67,22 @@ fn default_max_length() -> usize {
     512
 }
 
+fn default_chunk_overlap() -> usize {
+    64
+}
+
+fn default_person_confidence() -> f32 {
+    0.62
+}
+
+fn default_organization_confidence() -> f32 {
+    0.82
+}
+
+fn default_location_confidence() -> f32 {
+    0.88
+}
+
 impl Default for NerConfig {
     fn default() -> Self {
         let mut label_mappings = HashMap::new();
@@ -63,11 +95,6 @@ impl Default for NerConfig {
         label_mappings.insert("I-ORG".to_string(), EntityType::Organization);
         label_mappings.insert("B-LOC".to_string(), EntityType::Location);
         label_mappings.insert("I-LOC".to_string(), EntityType::Location);
-        label_mappings.insert("B-DATE".to_string(), EntityType::DateTime);
-        label_mappings.insert("I-DATE".to_string(), EntityType::DateTime);
-        label_mappings.insert("B-TIME".to_string(), EntityType::DateTime);
-        label_mappings.insert("I-TIME".to_string(), EntityType::DateTime);
-
         // Default id2label for CoNLL-2003 style models
         id2label.insert(0, "O".to_string());
         id2label.insert(1, "B-PER".to_string());
@@ -84,6 +111,10 @@ impl Default for NerConfig {
             tokenizer_path: None,
             min_confidence: default_confidence(),
             max_seq_length: default_max_length(),
+            chunk_overlap_tokens: default_chunk_overlap(),
+            min_person_confidence: default_person_confidence(),
+            min_organization_confidence: default_organization_confidence(),
+            min_location_confidence: default_location_confidence(),
             label_mappings,
             id2label,
         }
@@ -250,6 +281,30 @@ impl NerRecognizer {
             .map(|v| v as usize)
             .unwrap_or(defaults.max_seq_length);
 
+        let chunk_overlap_tokens = raw
+            .get("chunk_overlap_tokens")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as usize)
+            .unwrap_or(defaults.chunk_overlap_tokens);
+
+        let min_person_confidence = raw
+            .get("min_person_confidence")
+            .and_then(|v| v.as_f64())
+            .map(|v| v as f32)
+            .unwrap_or(defaults.min_person_confidence);
+
+        let min_organization_confidence = raw
+            .get("min_organization_confidence")
+            .and_then(|v| v.as_f64())
+            .map(|v| v as f32)
+            .unwrap_or(defaults.min_organization_confidence);
+
+        let min_location_confidence = raw
+            .get("min_location_confidence")
+            .and_then(|v| v.as_f64())
+            .map(|v| v as f32)
+            .unwrap_or(defaults.min_location_confidence);
+
         // Intentionally ignore tokenizer_path from config.json: the export script
         // writes a build-time path (e.g. /out/models/tokenizer.json) that won't exist
         // at runtime. from_config() auto-discovers tokenizer.json from the model directory.
@@ -267,6 +322,10 @@ impl NerRecognizer {
             tokenizer_path,
             min_confidence,
             max_seq_length,
+            chunk_overlap_tokens,
+            min_person_confidence,
+            min_organization_confidence,
+            min_location_confidence,
             label_mappings,
             id2label,
         })
@@ -435,7 +494,53 @@ impl NerRecognizer {
 
     /// Map NER label to entity type
     fn map_label_to_entity(&self, label: &str) -> Option<EntityType> {
-        self.config.label_mappings.get(label).cloned()
+        self.config
+            .label_mappings
+            .get(label)
+            .cloned()
+            .filter(|entity| *entity != EntityType::DateTime)
+    }
+
+    fn threshold_for_entity(&self, entity: &EntityType) -> f32 {
+        match entity {
+            EntityType::Person => self.config.min_person_confidence,
+            EntityType::Organization => self.config.min_organization_confidence,
+            EntityType::Location => self.config.min_location_confidence,
+            _ => self.config.min_confidence,
+        }
+    }
+
+    fn keep_span(&self, entity: &EntityType, text: &str, start: usize, end: usize) -> bool {
+        let Some(span) = text.get(start..end).map(str::trim) else {
+            return false;
+        };
+
+        if span.len() < 3 {
+            return false;
+        }
+
+        if !span.chars().any(|ch| ch.is_alphabetic()) {
+            return false;
+        }
+
+        if !span.chars().any(|ch| ch.is_uppercase()) {
+            return false;
+        }
+
+        let normalized = span.to_ascii_lowercase();
+        let blocked = match entity {
+            EntityType::Person | EntityType::Organization => [
+                "client", "patient", "provider", "name", "date", "time", "phone", "email",
+                "address", "dob", "signature",
+            ],
+            EntityType::Location => [
+                "address", "city", "state", "zip", "country", "location", "date", "time",
+                "phone", "email", "provider",
+            ],
+            _ => ["", "", "", "", "", "", "", "", "", "", ""],
+        };
+
+        !blocked.iter().any(|value| *value == normalized)
     }
 
     /// Run inference on tokenized input
@@ -519,7 +624,7 @@ impl NerRecognizer {
     /// Parse BIO tags and extract entity spans
     fn parse_bio_tags(
         &self,
-        _text: &str,
+        text: &str,
         predictions: &[usize],
         probabilities: &[f32],
         offsets: &[(usize, usize)],
@@ -544,7 +649,9 @@ impl NerRecognizer {
                 // Begin new entity - save previous if exists
                 if let Some((entity_type, start, end, probs)) = current_entity.take() {
                     let avg_confidence = probs.iter().sum::<f32>() / probs.len() as f32;
-                    if avg_confidence >= self.config.min_confidence {
+                    if avg_confidence >= self.threshold_for_entity(&entity_type)
+                        && self.keep_span(&entity_type, text, start, end)
+                    {
                         results.push(RecognizerResult::new(
                             entity_type,
                             start,
@@ -572,7 +679,9 @@ impl NerRecognizer {
                         } else {
                             // Different entity type - save current and start new
                             let avg_confidence = probs.iter().sum::<f32>() / probs.len() as f32;
-                            if avg_confidence >= self.config.min_confidence {
+                            if avg_confidence >= self.threshold_for_entity(entity_type)
+                                && self.keep_span(entity_type, text, start, *end)
+                            {
                                 results.push(RecognizerResult::new(
                                     entity_type.clone(),
                                     start,
@@ -589,7 +698,9 @@ impl NerRecognizer {
                 // "O" tag or unknown - end current entity
                 if let Some((entity_type, start, end, probs)) = current_entity.take() {
                     let avg_confidence = probs.iter().sum::<f32>() / probs.len() as f32;
-                    if avg_confidence >= self.config.min_confidence {
+                    if avg_confidence >= self.threshold_for_entity(&entity_type)
+                        && self.keep_span(&entity_type, text, start, end)
+                    {
                         results.push(RecognizerResult::new(
                             entity_type,
                             start,
@@ -605,7 +716,9 @@ impl NerRecognizer {
         // Don't forget the last entity
         if let Some((entity_type, start, end, probs)) = current_entity {
             let avg_confidence = probs.iter().sum::<f32>() / probs.len() as f32;
-            if avg_confidence >= self.config.min_confidence {
+            if avg_confidence >= self.threshold_for_entity(&entity_type)
+                && self.keep_span(&entity_type, text, start, end)
+            {
                 results.push(RecognizerResult::new(
                     entity_type,
                     start,
@@ -630,7 +743,6 @@ impl Recognizer for NerRecognizer {
             EntityType::Person,
             EntityType::Organization,
             EntityType::Location,
-            EntityType::DateTime,
         ]
     }
 
@@ -646,41 +758,72 @@ impl Recognizer for NerRecognizer {
 
         let tokenizer = self.tokenizer.as_ref().unwrap();
 
-        // Tokenize input
-        let mut encoding = tokenizer.encode(text, true)?;
-        if Self::debug_enabled() {
-            eprintln!("[ner] tokenized: {} tokens before pad", encoding.ids.len());
+        let chunk_ranges = tokenizer.chunk_text_ranges(
+            text,
+            self.config.max_seq_length.saturating_sub(2),
+            self.config.chunk_overlap_tokens,
+        )?;
+        let mut results = Vec::new();
+
+        for TextChunkRange { start, end } in chunk_ranges {
+            let chunk_text = &text[start..end];
+            let mut encoding = tokenizer.encode(chunk_text, true)?;
+            if Self::debug_enabled() {
+                eprintln!("[ner] tokenized chunk {start}..{end}: {} tokens before pad", encoding.ids.len());
+            }
+
+            let pad_id = tokenizer.get_padding_id().unwrap_or(0);
+            encoding.pad_to_length(self.config.max_seq_length, pad_id);
+
+            let logits = self.infer(&encoding.ids, &encoding.attention_mask)?;
+            if Self::debug_enabled() {
+                eprintln!("[ner] logits returned for chunk {start}..{end}: {} token rows", logits.len());
+            }
+
+            let mut predictions = Vec::new();
+            let mut probabilities = Vec::new();
+
+            for token_logits in &logits {
+                let probs = Self::softmax(token_logits);
+                let (pred_id, &max_prob) = probs
+                    .iter()
+                    .enumerate()
+                    .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                    .unwrap();
+                predictions.push(pred_id);
+                probabilities.push(max_prob);
+            }
+
+            let mut chunk_results = self.parse_bio_tags(
+                chunk_text,
+                &predictions,
+                &probabilities,
+                &encoding.offsets,
+            );
+            for result in &mut chunk_results {
+                result.start += start;
+                result.end += start;
+            }
+            results.extend(chunk_results);
         }
 
-        // Get padding token ID
-        let pad_id = tokenizer.get_padding_id().unwrap_or(0);
-
-        // Pad/truncate to max sequence length
-        encoding.pad_to_length(self.config.max_seq_length, pad_id);
-
-        // Run inference
-        let logits = self.infer(&encoding.ids, &encoding.attention_mask)?;
-        if Self::debug_enabled() {
-            eprintln!("[ner] logits returned: {} token rows", logits.len());
-        }
-
-        // Convert logits to predictions
-        let mut predictions = Vec::new();
-        let mut probabilities = Vec::new();
-
-        for token_logits in &logits {
-            let probs = Self::softmax(token_logits);
-            let (pred_id, &max_prob) = probs
-                .iter()
-                .enumerate()
-                .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-                .unwrap();
-            predictions.push(pred_id);
-            probabilities.push(max_prob);
-        }
-
-        // Parse BIO tags to extract entities
-        let results = self.parse_bio_tags(text, &predictions, &probabilities, &encoding.offsets);
+        results.sort_by(|left, right| {
+            left.start
+                .cmp(&right.start)
+                .then_with(|| left.end.cmp(&right.end))
+                .then_with(|| format!("{:?}", left.entity_type).cmp(&format!("{:?}", right.entity_type)))
+                .then_with(|| {
+                    right
+                        .score
+                        .partial_cmp(&left.score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+        });
+        results.dedup_by(|left, right| {
+            left.start == right.start
+                && left.end == right.end
+                && left.entity_type == right.entity_type
+        });
         if Self::debug_enabled() {
             eprintln!("[ner] parse_bio_tags finished: {} entities", results.len());
         }
@@ -707,7 +850,12 @@ mod tests {
         let config = NerConfig::default();
         assert_eq!(config.min_confidence, 0.7);
         assert_eq!(config.max_seq_length, 512);
+        assert_eq!(config.chunk_overlap_tokens, 64);
+        assert_eq!(config.min_person_confidence, 0.62);
+        assert_eq!(config.min_organization_confidence, 0.82);
+        assert_eq!(config.min_location_confidence, 0.88);
         assert!(!config.label_mappings.is_empty());
+        assert!(!config.label_mappings.contains_key("B-DATE"));
     }
 
     #[test]
@@ -760,6 +908,7 @@ mod tests {
 
     #[test]
     fn test_load_config_valid_with_both_id2label_and_label_mappings() {
+        let defaults = NerConfig::default();
         let json = r#"{
             "id2label": {
                 "0": "O",
@@ -802,6 +951,7 @@ mod tests {
         // Scalars honoured
         assert_eq!(cfg.min_confidence, 0.8);
         assert_eq!(cfg.max_seq_length, 256);
+        assert_eq!(cfg.chunk_overlap_tokens, defaults.chunk_overlap_tokens);
 
         // model_path overridden to runtime value
         assert_eq!(cfg.model_path, "/runtime/model.onnx");
@@ -881,5 +1031,23 @@ mod tests {
         assert_eq!(cfg.max_seq_length, defaults.max_seq_length);
         // id2label falls back to defaults (no "id2label" key in JSON)
         assert_eq!(cfg.id2label.len(), defaults.id2label.len());
+    }
+
+    #[test]
+    fn test_keep_span_filters_common_false_positive_labels() {
+        let recognizer = NerRecognizer::from_config(NerConfig::default()).unwrap();
+
+        assert!(!recognizer.keep_span(&EntityType::Person, "Client met John", 0, 6));
+        assert!(recognizer.keep_span(&EntityType::Person, "Client met John", 11, 15));
+        assert!(!recognizer.keep_span(&EntityType::Location, "address", 0, 7));
+    }
+
+    #[test]
+    fn test_threshold_for_entity_uses_entity_specific_values() {
+        let recognizer = NerRecognizer::from_config(NerConfig::default()).unwrap();
+
+        assert_eq!(recognizer.threshold_for_entity(&EntityType::Person), 0.62);
+        assert_eq!(recognizer.threshold_for_entity(&EntityType::Organization), 0.82);
+        assert_eq!(recognizer.threshold_for_entity(&EntityType::Location), 0.88);
     }
 }
