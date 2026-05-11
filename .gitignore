@@ -8,3 +8,6 @@ node_modules
 ralph
 .playwright-mcp/
 .sandcastle/history-report/cases/
+graphify-out/
+**/graphify-out/
+tns.mmd
