@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { signal } from '@preact/signals-core'
 
 import { buildDraftPreview, createPreviewDraftState } from './preview-draft-state.js'
+import { createRedactionSidebarState } from './redaction-sidebar-state.js'
 
 test('draft preview renders a queued manual redaction from draft state', () => {
   const preview = {
@@ -133,6 +134,75 @@ test('draft preview term edits use delete-and-refind semantics', () => {
     draft.afterHtml,
     'Historical Results\nSchool MEADOWS ELEMENTARY SCHOOL\nStudent <mark title="Manual redaction 1" data-record-start="60" data-record-end="66" data-record-replacement="[MANUAL_REDACTION]" data-record-label="Manual redaction 1" data-record-committed="false" data-record-matched-text="Surina" data-manual-number="1">[MANUAL_REDACTION_1]</mark> Shah\n'
   )
+})
+
+test('draft preview follows current-term textbox edits through sidebar signals', () => {
+  const redactionSidebar = createRedactionSidebarState()
+  const state = createPreviewDraftState({ redactionSidebar })
+  const preview = {
+    path: '/tmp/a.md',
+    inputPath: '/tmp/a.md',
+    originalText: 'John Doe met Jane.',
+    originalHtml: 'J<mark data-record-start="1" data-record-end="8" data-record-replacement="[MANUAL_REDACTION]">ohn Doe</mark> met Jane.',
+    redactedHtml: 'J<mark data-record-start="1" data-record-end="8" data-record-replacement="[MANUAL_REDACTION]">[MANUAL_REDACTION_1]</mark> met Jane.',
+    redactionTerms: [{
+      matchedText: 'ohn Doe',
+      replacement: '[MANUAL_REDACTION]',
+      entityType: 'MANUAL_REDACTION',
+      occurrences: 1
+    }]
+  }
+
+  state.syncWorkspace({
+    filePreviews: [preview],
+    selectedPreviewPath: '/tmp/a.md',
+    processingInFlight: false
+  })
+  redactionSidebar.syncFromDraftState({
+    filePreviews: [preview],
+    terms: state.selectedBaseDraftTerms.value
+  })
+
+  const termId = redactionSidebar.sourceTerms.value[0].id
+  redactionSidebar.setDraft(termId, 'John Doe')
+
+  assert.match(state.draftBeforeHtml.value, /^<mark[^>]*>John Doe<\/mark> met Jane\.$/)
+  assert.match(state.draftAfterHtml.value, /^<mark[^>]*>\[MANUAL_REDACTION_1\]<\/mark> met Jane\.$/)
+  assert.equal(state.saveButtonEnabled.value, true)
+})
+
+test('current-term textbox edits preserve the existing replacement kind', () => {
+  const draft = buildDraftPreview({
+    originalText: 'John Doe met Jane. John Doe stayed.',
+    redactedHtml: 'John <mark data-record-start="5" data-record-end="8" data-record-replacement="[NAME]" data-record-label="Name">[NAME]</mark> met Jane.'
+      + ' John Doe stayed.'
+  }, [], [{ previousTerm: 'Doe', nextTerm: 'John Doe' }])
+
+  assert.match(draft.beforeHtml, /^<mark[^>]*data-record-replacement="\[NAME\]"[^>]*>John Doe<\/mark> met Jane\./)
+  assert.match(draft.beforeHtml, /<mark[^>]*data-record-replacement="\[NAME\]"[^>]*>John Doe<\/mark> stayed\.$/)
+  assert.match(draft.afterHtml, /^<mark[^>]*data-record-replacement="\[NAME\]"[^>]*>\[NAME\]<\/mark> met Jane\./)
+  assert.match(draft.afterHtml, /<mark[^>]*data-record-replacement="\[NAME\]"[^>]*>\[NAME\]<\/mark> stayed\.$/)
+  assert.doesNotMatch(draft.afterHtml, /MANUAL_REDACTION/)
+})
+
+test('large current-term edits defer full live preview rebuild', () => {
+  const originalText = `${'clinical note '.repeat(30_000)}: Jane Doe`
+  const redactedHtml = originalText.replace(
+    'Jane Doe',
+    '<mark data-record-start="420002" data-record-end="420010" data-record-replacement="[NAME]" data-record-label="Name">[NAME]</mark>'
+  )
+
+  const draft = buildDraftPreview({
+    originalText,
+    originalHtml: redactedHtml.replace('[NAME]</mark>', 'Jane Doe</mark>'),
+    redactedHtml
+  }, [], [{ previousTerm: 'Jane Doe', nextTerm: ': Jane Doe' }])
+
+  assert.equal(draft.livePreviewDeferred, true)
+  assert.equal(draft.hasDraftChanges, true)
+  assert.match(draft.beforeHtml, /<mark[^>]*>: Jane Doe<\/mark>/)
+  assert.match(draft.afterHtml, /<mark[^>]*>\[NAME\]<\/mark>/)
+  assert.ok(draft.afterHtml.length < 1_500)
 })
 
 test('draft preview deletes queued redaction terms across the preview', () => {
@@ -321,7 +391,7 @@ test('pending operations can be upserted for reactive textbox matching', () => {
   assert.equal(state.saveButtonEnabled.value, false)
 })
 
-test('reactive find text that does not match does not enable save', () => {
+test('find redaction terms can match partial words', () => {
   const redactionSidebar = { hasPendingEdits: signal(false), pendingEdits: signal([]) }
   const state = createPreviewDraftState({ redactionSidebar })
 
@@ -343,8 +413,122 @@ test('reactive find text that does not match does not enable save', () => {
     }
   })
 
-  assert.equal(state.draftAfterHtml.value, 'John J. Doe met John Doe.')
-  assert.equal(state.saveButtonEnabled.value, false)
+  assert.match(state.draftAfterHtml.value, /<mark[^>]*>\[MANUAL_REDACTION_1\]<\/mark>e met John Doe\./)
+  assert.equal(state.saveButtonEnabled.value, true)
+})
+
+test('draft merge can absorb text adjacent to an existing redaction', () => {
+  const preview = {
+    originalText: 'alpha beta gamma',
+    redactedHtml: 'alpha <mark data-record-start="6" data-record-end="10" data-record-replacement="[MANUAL_REDACTION]">[MANUAL_REDACTION_1]</mark> gamma'
+  }
+
+  const draft = buildDraftPreview(preview, [{
+    draftEffect: {
+      kind: 'merge-manual-redaction',
+      sourcePreview: 'original',
+      selectionStart: byteLength('alpha beta'),
+      selectionEnd: byteLength('alpha beta gamma')
+    }
+  }])
+
+  assert.match(draft.beforeHtml, /<mark[^>]*>beta gamma<\/mark>/)
+  assert.equal(draft.hasDraftChanges, true)
+})
+
+test('draft merge expands partial-word selections to whole words', () => {
+  const preview = {
+    originalText: 'alpha beta gamma',
+    redactedHtml: 'alpha <mark data-record-start="6" data-record-end="10" data-record-replacement="[MANUAL_REDACTION]">[MANUAL_REDACTION_1]</mark> gamma'
+  }
+
+  const draft = buildDraftPreview(preview, [{
+    draftEffect: {
+      kind: 'merge-manual-redaction',
+      sourcePreview: 'original',
+      selectionStart: byteLength('alpha beta'),
+      selectionEnd: byteLength('alpha beta ga')
+    }
+  }])
+
+  assert.match(draft.beforeHtml, /<mark[^>]*>beta gamma<\/mark>/)
+  assert.equal(draft.hasDraftChanges, true)
+})
+
+test('removing a draft merged redaction restores the redaction it subsumed', () => {
+  const preview = {
+    originalText: 'alpha beta gamma',
+    redactedHtml: 'alpha <mark data-record-start="6" data-record-end="10" data-record-replacement="[MANUAL_REDACTION]">[MANUAL_REDACTION_1]</mark> gamma'
+  }
+
+  const draft = buildDraftPreview(preview, [
+    {
+      operationId: 'merge-beta-gamma',
+      draftEffect: {
+        kind: 'merge-manual-redaction',
+        sourcePreview: 'original',
+        selectionStart: byteLength('alpha beta'),
+        selectionEnd: byteLength('alpha beta gamma')
+      }
+    },
+    {
+      draftEffect: {
+        kind: 'remove-redaction',
+        start: byteLength('alpha '),
+        end: byteLength('alpha beta gamma'),
+        replacement: '[MANUAL_REDACTION]'
+      }
+    }
+  ])
+
+  assert.match(draft.beforeHtml, /^alpha <mark[^>]*>beta<\/mark> gamma$/)
+  assert.match(draft.afterHtml, /^alpha <mark[^>]*>\[MANUAL_REDACTION_1\]<\/mark> gamma$/)
+})
+
+test('removing an expanded current-term redaction restores its original inner redaction', () => {
+  const expandedText = 'Jane Doe demonstrated anxious-like behaviors related to her performance and a desire to do well'
+  const preview = {
+    originalText: `${expandedText}.`,
+    redactedHtml: '<mark data-record-start="0" data-record-end="8" data-record-replacement="[NAME]" data-record-label="Name">[NAME]</mark>'
+      + ' demonstrated anxious-like behaviors related to her performance and a desire to do well.'
+  }
+
+  const draft = buildDraftPreview(preview, [{
+    draftEffect: {
+      kind: 'remove-redaction',
+      start: 0,
+      end: byteLength(expandedText),
+      replacement: '[NAME]'
+    }
+  }], [{ previousTerm: 'Jane Doe', nextTerm: expandedText }])
+
+  assert.match(draft.beforeHtml, /^<mark[^>]*>Jane Doe<\/mark> demonstrated anxious-like behaviors/)
+  assert.match(draft.afterHtml, /^<mark[^>]*>\[NAME\]<\/mark> demonstrated anxious-like behaviors/)
+})
+
+test('removing a large redaction reapplies other visible redaction terms inside its text', () => {
+  const largeText = 'Jane Doe demonstrated anxious-like behaviors related to her performance and a desire to do well'
+  const fullText = `${largeText}. Later Jane Doe returned.`
+  const laterStart = byteLength(`${largeText}. Later `)
+  const laterEnd = laterStart + byteLength('Jane Doe')
+  const preview = {
+    originalText: fullText,
+    redactedHtml: `<mark data-record-start="0" data-record-end="${byteLength(largeText)}" data-record-replacement="[NAME]" data-record-label="Name">[NAME]</mark>`
+      + `. Later <mark data-record-start="${laterStart}" data-record-end="${laterEnd}" data-record-replacement="[NAME]" data-record-label="Name">[NAME]</mark> returned.`
+  }
+
+  const draft = buildDraftPreview(preview, [{
+    draftEffect: {
+      kind: 'remove-redaction',
+      start: 0,
+      end: byteLength(largeText),
+      replacement: '[NAME]'
+    }
+  }])
+
+  assert.match(draft.beforeHtml, /^<mark[^>]*>Jane Doe<\/mark> demonstrated anxious-like behaviors/)
+  assert.match(draft.afterHtml, /^<mark[^>]*>\[NAME\]<\/mark> demonstrated anxious-like behaviors/)
+  assert.equal((draft.afterHtml.match(/<mark[^>]*>\[NAME\]<\/mark>/g) ?? []).length, 2)
 })
 
 test('pending operations are cleared when the workspace draft scope changes', () => {

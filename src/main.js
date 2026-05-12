@@ -59,7 +59,7 @@ const workspace = signal(createWorkspaceState(
   'Desktop shell loaded. Choose a file or folder to start local processing automatically.'
 ))
 let savedRedactionTerms = loadSavedRedactionTerms()
-const redactionSidebar = createRedactionSidebarState()
+const redactionSidebar = createRedactionSidebarState({ draftPreviewDelayMs: 140 })
 const draftPreviewState = createPreviewDraftState({ redactionSidebar })
 const previewInteractionState = createPreviewInteractionState()
 redactionSidebar.setPersistedTerms(savedRedactionTerms)
@@ -656,9 +656,12 @@ function renderPreview(preview) {
   const liveTerm = liveFindTerm.value
   const beforeHtml = applyLiveFindHighlight(draftPreviewState.draftBeforeHtml.value, liveTerm)
   const afterHtml = applyLiveFindHighlight(draftPreviewState.draftAfterHtml.value, liveTerm)
+  const previewDeferredNote = draftPreviewState.livePreviewDeferred.value
+    ? 'Showing a focused first-match preview for this large file while editing current terms. Save applies the textbox change across the document.'
+    : null
 
-  previewNote.hidden = !note
-  previewNote.textContent = note
+  previewNote.hidden = !(note || previewDeferredNote)
+  previewNote.textContent = [note, previewDeferredNote].filter(Boolean).join(' ')
   beforePreview.innerHTML = beforeHtml
   afterPreview.innerHTML = afterHtml
   previewHighlightCount.textContent = `${draftPreviewState.draftHighlightCount.value} highlighted spans`

@@ -3,6 +3,8 @@ import { batch, computed, signal } from '@preact/signals-core'
 const MANUAL_REDACTION_REPLACEMENT = '[MANUAL_REDACTION]'
 const MARK_TAG_PATTERN = /<mark\b([^>]*)>([\s\S]*?)<\/mark>/g
 const ATTRIBUTE_PATTERN = /([\w:-]+)="([^"]*)"/g
+const LARGE_LIVE_TERM_EDIT_PREVIEW_LIMIT = 300_000
+const FOCUSED_PREVIEW_CONTEXT_CHARS = 320
 
 export function createPreviewDraftState({ redactionSidebar }) {
   let nextPendingOperationId = 1
@@ -12,10 +14,11 @@ export function createPreviewDraftState({ redactionSidebar }) {
   const processingInFlight = signal(false)
   const saveInFlight = signal(false)
   const pendingOperations = signal([])
+  const previewPendingEdits = computed(() => redactionSidebar.previewPendingEdits?.value ?? redactionSidebar.pendingEdits.value)
   const draftPreviewByPath = computed(() => buildDraftPreviewMap(
     committedPreviews.value,
     pendingOperations.value,
-    redactionSidebar.pendingEdits.value
+    previewPendingEdits.value
   ))
   const baseDraftTermsByPath = computed(() => buildDraftTermsByPath(
     committedPreviews.value,
@@ -25,7 +28,7 @@ export function createPreviewDraftState({ redactionSidebar }) {
   const draftTermsByPath = computed(() => buildDraftTermsByPath(
     committedPreviews.value,
     pendingOperations.value,
-    redactionSidebar.pendingEdits.value
+    previewPendingEdits.value
   ))
 
   const selectedPreview = computed(() => committedPreviews.value.find((preview) => (preview.path ?? '') === selectedPreviewPath.value) ?? null)
@@ -41,8 +44,10 @@ export function createPreviewDraftState({ redactionSidebar }) {
     return buildDraftStatus(preview, draftPreviewByPath.value.get(preview.path ?? ''))
   })
   const hasPendingChanges = computed(() => {
-    redactionSidebar.hasPendingEdits.value
-    pendingOperations.value
+    if (redactionSidebar.hasPendingEdits.value || pendingOperations.value.length > 0) {
+      return true
+    }
+
     return Array.from(draftPreviewByPath.value.values()).some((preview) => preview.hasDraftChanges)
   })
   const saveButtonEnabled = computed(() => {
@@ -65,6 +70,7 @@ export function createPreviewDraftState({ redactionSidebar }) {
     draftBeforeHtml: computed(() => draftPreview.value.beforeHtml),
     draftAfterHtml: computed(() => draftPreview.value.afterHtml),
     draftHighlightCount: computed(() => draftPreview.value.highlightCount),
+    livePreviewDeferred: computed(() => Boolean(draftPreview.value.livePreviewDeferred)),
     selectedDraftStatus,
     hasPendingChanges,
     saveButtonEnabled,
@@ -167,7 +173,8 @@ export function buildDraftPreview(preview, pendingOperations, pendingTermEdits =
       beforeHtml: 'Original content preview will appear here.',
       afterHtml: 'Redacted output preview will appear here.',
       highlightCount: 0,
-      hasDraftChanges: false
+      hasDraftChanges: false,
+      livePreviewDeferred: false
     }
   }
 
@@ -179,7 +186,15 @@ export function buildDraftPreview(preview, pendingOperations, pendingTermEdits =
       beforeHtml,
       afterHtml,
       highlightCount: countMarks(beforeHtml) + countMarks(afterHtml),
-      hasDraftChanges: false
+      hasDraftChanges: false,
+      livePreviewDeferred: false
+    }
+  }
+
+  if (shouldDeferLargeLiveTermPreview(originalText, pendingOperations, pendingTermEdits)) {
+    const focusedPreview = buildFocusedLargeTermEditPreview(preview, originalText, pendingTermEdits)
+    if (focusedPreview) {
+      return focusedPreview
     }
   }
 
@@ -199,7 +214,99 @@ export function buildDraftPreview(preview, pendingOperations, pendingTermEdits =
     beforeHtml,
     afterHtml,
     highlightCount: countMarks(beforeHtml) + countMarks(afterHtml),
-    hasDraftChanges: !sameRedactionRecords(committedRecords, draftRecords)
+    hasDraftChanges: !sameRedactionRecords(committedRecords, draftRecords),
+    livePreviewDeferred: false
+  }
+}
+
+function shouldDeferLargeLiveTermPreview(originalText, pendingOperations, pendingTermEdits) {
+  return originalText.length > LARGE_LIVE_TERM_EDIT_PREVIEW_LIMIT
+    && Array.isArray(pendingTermEdits)
+    && pendingTermEdits.length > 0
+    && (!Array.isArray(pendingOperations) || pendingOperations.length === 0)
+}
+
+function buildFocusedLargeTermEditPreview(preview, originalText, pendingTermEdits) {
+  const committedRecords = parseCommittedRedactionRecords(preview, originalText)
+  const edit = pendingTermEdits.find((candidate) => normalizeTerm(candidate?.previousTerm) && normalizeTerm(candidate?.nextTerm))
+  if (!edit) {
+    return null
+  }
+
+  const previousTerm = normalizeTerm(edit.previousTerm)
+  const nextTerm = normalizeTerm(edit.nextTerm)
+  const sourceRecord = committedRecords.find((record) => sameMatchText(record.matchedText, previousTerm))
+  if (!sourceRecord) {
+    return null
+  }
+
+  const focusedRecord = anchoredReplacementFromRecord(originalText, sourceRecord, nextTerm) ?? {
+    ...sourceRecord,
+    matchedText: sourceRecord.matchedText
+  }
+  const focused = renderFocusedPreviewExcerpt(originalText, focusedRecord)
+
+  return {
+    beforeHtml: focused.beforeHtml,
+    afterHtml: focused.afterHtml,
+    highlightCount: 2,
+    hasDraftChanges: true,
+    livePreviewDeferred: true,
+    focusedPreview: true
+  }
+}
+
+function anchoredReplacementFromRecord(originalText, record, nextTerm) {
+  const offsets = createUtf8OffsetMapper(originalText)
+  const recordStart = offsets.codeUnitOffset(record.start)
+  const recordEnd = offsets.codeUnitOffset(record.end)
+  const context = Math.max(nextTerm.length + FOCUSED_PREVIEW_CONTEXT_CHARS, FOCUSED_PREVIEW_CONTEXT_CHARS)
+  const searchStart = Math.max(0, recordStart - context)
+  const searchEnd = Math.min(originalText.length, recordEnd + context)
+  const searchText = originalText.slice(searchStart, searchEnd)
+  const matcher = new RegExp(nextTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'giu')
+
+  for (const match of searchText.matchAll(matcher)) {
+    const matchStart = searchStart + (match.index ?? 0)
+    const matchEnd = matchStart + (match[0] ?? '').length
+    if (matchStart < recordEnd && matchEnd > recordStart) {
+      return {
+        ...record,
+        start: offsets.byteOffsetForCodeUnit(matchStart),
+        end: offsets.byteOffsetForCodeUnit(matchEnd),
+        matchedText: originalText.slice(matchStart, matchEnd),
+        committed: false
+      }
+    }
+  }
+
+  return null
+}
+
+function renderFocusedPreviewExcerpt(originalText, record) {
+  const offsets = createUtf8OffsetMapper(originalText)
+  const startCodeUnits = offsets.codeUnitOffset(record.start)
+  const endCodeUnits = offsets.codeUnitOffset(record.end)
+  const excerptStart = Math.max(0, startCodeUnits - FOCUSED_PREVIEW_CONTEXT_CHARS)
+  const excerptEnd = Math.min(originalText.length, endCodeUnits + FOCUSED_PREVIEW_CONTEXT_CHARS)
+  const excerptText = originalText.slice(excerptStart, excerptEnd)
+  const localStart = utf8ByteLength(originalText.slice(excerptStart, startCodeUnits))
+  const localEnd = localStart + utf8ByteLength(originalText.slice(startCodeUnits, endCodeUnits))
+  const localRecord = {
+    ...record,
+    start: localStart,
+    end: localEnd,
+    committed: false,
+    committedStart: undefined,
+    committedEnd: undefined,
+    committedReplacement: undefined
+  }
+  const prefix = excerptStart > 0 ? '<span class="preview-excerpt-boundary">…</span>' : ''
+  const suffix = excerptEnd < originalText.length ? '<span class="preview-excerpt-boundary">…</span>' : ''
+
+  return {
+    beforeHtml: `${prefix}${renderOriginalPreviewHtml(excerptText, [localRecord])}${suffix}`,
+    afterHtml: `${prefix}${renderRedactedPreviewHtml(excerptText, [localRecord])}${suffix}`
   }
 }
 
@@ -320,6 +427,7 @@ function canonicalRecordSignature(record) {
 export function parseCommittedRedactionRecords(preview, originalText = preview?.originalText ?? '') {
   const records = []
   const redactedHtml = preview?.redactedHtml ?? ''
+  const offsets = createUtf8OffsetMapper(originalText)
 
   for (const match of redactedHtml.matchAll(MARK_TAG_PATTERN)) {
     const attrs = parseAttributes(match[1] ?? '')
@@ -336,7 +444,7 @@ export function parseCommittedRedactionRecords(preview, originalText = preview?.
       replacement,
       label: decodeHtml(attrs['data-record-label'] ?? attrs.title ?? replacement),
       displayText: decodeHtml(match[2] ?? ''),
-      matchedText: sliceUtf8Bytes(originalText, start, end),
+      matchedText: sliceUtf8BytesWithMapper(originalText, start, end, offsets),
       committed: true,
       committedStart: start,
       committedEnd: end,
@@ -375,7 +483,7 @@ function applyDraftOperations({ preview, originalText, committedRecords, pending
     }
 
     if (effect.kind === 'remove-redaction') {
-      records = records.filter((record) => !sameRecordIdentity(record, effect))
+      records = removeRecordAndRestoreSuppressed(records, effect, originalText)
       continue
     }
 
@@ -415,7 +523,8 @@ function applyFindAndRedactTermEffect(records, originalText, effect, operationId
     label: 'Manual redaction',
     operationId,
     sourceKind: 'find-and-redact-term',
-    sourceMode: 'exact_matches'
+    sourceMode: 'literal_matches',
+    matchMode: 'literal'
   }], remainingRecords, effect.excludedRecords)
 
   return normalizeRecordOrder([...remainingRecords, ...additions])
@@ -437,11 +546,17 @@ function applyReplaceRedactionTermEffect(records, originalText, effect) {
     return records
   }
 
+  const matchingRecords = records.filter((record) => sameMatchText(record.matchedText, previousTerm))
+  const replacementRecord = matchingRecords[0] ?? null
+  const replacement = replacementRecord?.replacement ?? MANUAL_REDACTION_REPLACEMENT
+  const label = replacementRecord?.label ?? 'Manual redaction'
   const remainingRecords = records.filter((record) => !sameMatchText(record.matchedText, previousTerm))
   const propagatedRecords = buildExactMatchRedactions(originalText, [{
     matchedText: nextTerm,
-    replacement: MANUAL_REDACTION_REPLACEMENT,
-    label: 'Manual redaction'
+    replacement,
+    label,
+    matchMode: 'literal',
+    suppressedRecords: matchingRecords
   }], remainingRecords)
 
   return normalizeRecordOrder([
@@ -493,19 +608,116 @@ function applyMergeManualRedactionEffect(records, originalText, effect, operatio
     return records
   }
 
-  const matchedText = sliceUtf8Bytes(originalText, overlap.start, overlap.end)
+  const wordBounds = expandRangeToWordBounds(originalText, overlap.start, overlap.end)
+  const matchedText = sliceUtf8Bytes(originalText, wordBounds.start, wordBounds.end)
   if (!matchedText.trim()) {
     return records
   }
 
+  const suppressedRecords = records.filter((record) => wordBounds.start < record.end && wordBounds.end > record.start)
+
   return normalizeRecordOrder([
-    ...records.filter((record) => !(overlap.start < record.end && overlap.end > record.start)),
-    createRecord(overlap.start, overlap.end, MANUAL_REDACTION_REPLACEMENT, 'Manual redaction', matchedText, {
+    ...records.filter((record) => !(wordBounds.start < record.end && wordBounds.end > record.start)),
+    createRecord(wordBounds.start, wordBounds.end, MANUAL_REDACTION_REPLACEMENT, 'Manual redaction', matchedText, {
       operationId,
       sourceKind: 'merge-manual-redaction',
-      sourceMode: 'single_occurrence'
+      sourceMode: 'single_occurrence',
+      suppressedRecords
     })
   ])
+}
+
+function removeRecordAndRestoreSuppressed(records, effect, originalText) {
+  const keptRecords = []
+  const suppressedRecords = []
+  const removedRecords = []
+
+  for (const record of records) {
+    if (sameRecordIdentity(record, effect)) {
+      removedRecords.push(record)
+      suppressedRecords.push(...(Array.isArray(record.suppressedRecords) ? record.suppressedRecords : []))
+      continue
+    }
+
+    keptRecords.push(record)
+  }
+
+  removedRecords.push(...suppressedRecords)
+  const restoredRecords = restoreSuppressedRecords(keptRecords, suppressedRecords)
+  return normalizeRecordOrder(reapplyVisibleTermsWithinRemovedRanges(originalText, restoredRecords, removedRecords))
+}
+
+function restoreSuppressedRecords(records, suppressedRecords) {
+  const restoredRecords = [...records]
+
+  for (const suppressedRecord of suppressedRecords) {
+    const nestedSuppressedRecords = Array.isArray(suppressedRecord.suppressedRecords)
+      ? suppressedRecord.suppressedRecords
+      : []
+    const visibleRecord = {
+      ...suppressedRecord,
+      suppressedRecords: []
+    }
+
+    if (!overlapsExistingReplacement(restoredRecords, visibleRecord.start, visibleRecord.end)) {
+      restoredRecords.push(visibleRecord)
+    }
+
+    for (const nested of restoreSuppressedRecords(restoredRecords, nestedSuppressedRecords)) {
+      if (!restoredRecords.some((existing) => sameRecordIdentity(existing, nested))) {
+        restoredRecords.push(nested)
+      }
+    }
+  }
+
+  return restoredRecords
+}
+
+function reapplyVisibleTermsWithinRemovedRanges(originalText, records, removedRecords) {
+  const rules = dedupeRedactionRules(records)
+  const additions = []
+  const occupied = [...records]
+
+  for (const removedRecord of removedRecords) {
+    for (const rule of rules) {
+      const matches = buildExactMatchRedactions(originalText, [{
+        ...rule,
+        matchMode: 'literal'
+      }], occupied)
+        .filter((record) => record.start >= removedRecord.start && record.end <= removedRecord.end)
+
+      for (const record of matches) {
+        if (overlapsExistingReplacement(occupied, record.start, record.end)) {
+          continue
+        }
+        occupied.push(record)
+        additions.push(record)
+      }
+    }
+  }
+
+  return [...records, ...additions]
+}
+
+function dedupeRedactionRules(records) {
+  const rules = new Map()
+  for (const record of records) {
+    const matchedText = normalizeTerm(record.matchedText)
+    const replacement = normalizeTerm(record.replacement)
+    if (!matchedText || !replacement) {
+      continue
+    }
+    const key = `${matchedText.toLowerCase()}::${replacement}`
+    if (!rules.has(key)) {
+      rules.set(key, {
+        matchedText,
+        replacement,
+        label: record.label ?? replacement
+      })
+    }
+  }
+
+  return [...rules.values()]
 }
 
 function applyApplyRedactionEverywhereEffect(records, originalText, effect, operationId) {
@@ -535,16 +747,29 @@ function applyRemoveRedactionEverywhereEffect(records, effect) {
     return records
   }
 
-  return records.filter((record) => !(sameMatchText(record.matchedText, matchedText) && record.replacement === replacement))
+  const keptRecords = []
+  const suppressedRecords = []
+
+  for (const record of records) {
+    if (sameMatchText(record.matchedText, matchedText) && record.replacement === replacement) {
+      suppressedRecords.push(...(Array.isArray(record.suppressedRecords) ? record.suppressedRecords : []))
+      continue
+    }
+
+    keptRecords.push(record)
+  }
+
+  return normalizeRecordOrder(restoreSuppressedRecords(keptRecords, suppressedRecords))
 }
 
 function renderOriginalPreviewHtml(originalText, records) {
   let html = ''
   let cursor = 0
+  const offsets = createUtf8OffsetMapper(originalText)
 
   for (const record of records) {
-    const start = utf8ByteOffsetToCodeUnitOffset(originalText, record.start)
-    const end = utf8ByteOffsetToCodeUnitOffset(originalText, record.end)
+    const start = offsets.codeUnitOffset(record.start)
+    const end = offsets.codeUnitOffset(record.end)
     if (start >= end) {
       continue
     }
@@ -567,10 +792,11 @@ function renderOriginalPreviewHtml(originalText, records) {
 function renderRedactedPreviewHtml(originalText, records) {
   let html = ''
   let cursor = 0
+  const offsets = createUtf8OffsetMapper(originalText)
 
   for (const record of records) {
-    const start = utf8ByteOffsetToCodeUnitOffset(originalText, record.start)
-    const end = utf8ByteOffsetToCodeUnitOffset(originalText, record.end)
+    const start = offsets.codeUnitOffset(record.start)
+    const end = offsets.codeUnitOffset(record.end)
     if (start >= end) {
       continue
     }
@@ -633,7 +859,7 @@ function buildExactMatchRedactions(originalText, rules, existingRecords, exclude
   for (const rule of [...rules].sort(compareExactMatchRules)) {
     for (const match of literalCaseInsensitiveMatches(originalText, rule.matchedText)) {
       const candidate = sliceUtf8Bytes(originalText, match.start, match.end)
-      if (!hasExactMatchBoundaries(originalText, match.start, match.end, candidate)) {
+      if (rule.matchMode !== 'literal' && !hasExactMatchBoundaries(originalText, match.start, match.end, candidate)) {
         continue
       }
 
@@ -644,7 +870,9 @@ function buildExactMatchRedactions(originalText, rules, existingRecords, exclude
       const record = createRecord(match.start, match.end, rule.replacement, rule.label, candidate, {
         operationId: rule.operationId ?? null,
         sourceKind: rule.sourceKind ?? null,
-        sourceMode: rule.sourceMode ?? null
+        sourceMode: rule.sourceMode ?? null,
+        suppressedRecords: (Array.isArray(rule.suppressedRecords) ? rule.suppressedRecords : [])
+          .filter((suppressedRecord) => match.start < suppressedRecord.end && match.end > suppressedRecord.start)
       })
       if (isExcludedDraftRecord(record, excludedRecords)) {
         continue
@@ -747,7 +975,7 @@ function mergedOverlapBounds(records, start, end) {
   let foundOverlap = false
 
   for (const record of records) {
-    if (mergeStart < record.end && mergeEnd > record.start) {
+    if (mergeStart <= record.end && mergeEnd >= record.start) {
       mergeStart = Math.min(mergeStart, record.start)
       mergeEnd = Math.max(mergeEnd, record.end)
       foundOverlap = true
@@ -765,6 +993,7 @@ function literalCaseInsensitiveMatches(text, candidate) {
   const escaped = candidate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const regex = new RegExp(escaped, 'giu')
   const matches = []
+  const offsets = createUtf8OffsetMapper(text)
 
   for (const match of text.matchAll(regex)) {
     const matchedText = match[0] ?? ''
@@ -772,8 +1001,8 @@ function literalCaseInsensitiveMatches(text, candidate) {
     const endCodeUnits = startCodeUnits + matchedText.length
 
     matches.push({
-      start: utf8ByteLength(text.slice(0, startCodeUnits)),
-      end: utf8ByteLength(text.slice(0, endCodeUnits))
+      start: offsets.byteOffsetForCodeUnit(startCodeUnits),
+      end: offsets.byteOffsetForCodeUnit(endCodeUnits)
     })
   }
 
@@ -799,6 +1028,24 @@ function isWordish(char) {
   return /[\p{L}\p{N}_]/u.test(char)
 }
 
+function expandRangeToWordBounds(text, start, end) {
+  let startCodeUnits = utf8ByteOffsetToCodeUnitOffset(text, start)
+  let endCodeUnits = utf8ByteOffsetToCodeUnitOffset(text, end)
+
+  while (startCodeUnits > 0 && isWordish(text[startCodeUnits - 1] ?? '')) {
+    startCodeUnits -= 1
+  }
+
+  while (endCodeUnits < text.length && isWordish(text[endCodeUnits] ?? '')) {
+    endCodeUnits += 1
+  }
+
+  return {
+    start: utf8ByteLength(text.slice(0, startCodeUnits)),
+    end: utf8ByteLength(text.slice(0, endCodeUnits))
+  }
+}
+
 function validateTextRange(text, start, end) {
   if (start > utf8ByteLength(text) || end > utf8ByteLength(text) || start >= end) {
     return false
@@ -811,26 +1058,74 @@ function validateTextRange(text, start, end) {
 }
 
 function sliceUtf8Bytes(text, start, end) {
+  const offsets = createUtf8OffsetMapper(text)
+  return sliceUtf8BytesWithMapper(text, start, end, offsets)
+}
+
+function sliceUtf8BytesWithMapper(text, start, end, offsets) {
   return text.slice(
-    utf8ByteOffsetToCodeUnitOffset(text, start),
-    utf8ByteOffsetToCodeUnitOffset(text, end)
+    offsets.codeUnitOffset(start),
+    offsets.codeUnitOffset(end)
   )
 }
 
 function utf8ByteOffsetToCodeUnitOffset(value, targetBytes) {
-  let bytes = 0
-  let codeUnits = 0
+  return createUtf8OffsetMapper(value).codeUnitOffset(targetBytes)
+}
 
-  for (const char of value) {
-    if (bytes >= targetBytes) {
-      break
+function createUtf8OffsetMapper(value) {
+  let byteCursor = 0
+  let codeUnitCursor = 0
+
+  const advanceToCodeUnit = (targetCodeUnits) => {
+    if (targetCodeUnits < codeUnitCursor) {
+      byteCursor = 0
+      codeUnitCursor = 0
     }
 
-    bytes += utf8ByteLength(char)
-    codeUnits += char.length
+    while (codeUnitCursor < targetCodeUnits && codeUnitCursor < value.length) {
+      const codePoint = value.codePointAt(codeUnitCursor)
+      const charLength = codePoint > 0xffff ? 2 : 1
+      byteCursor += utf8CodePointByteLength(codePoint)
+      codeUnitCursor += charLength
+    }
+
+    return byteCursor
   }
 
-  return codeUnits
+  const advanceToByte = (targetBytes) => {
+    if (targetBytes < byteCursor) {
+      byteCursor = 0
+      codeUnitCursor = 0
+    }
+
+    while (byteCursor < targetBytes && codeUnitCursor < value.length) {
+      const codePoint = value.codePointAt(codeUnitCursor)
+      const charLength = codePoint > 0xffff ? 2 : 1
+      byteCursor += utf8CodePointByteLength(codePoint)
+      codeUnitCursor += charLength
+    }
+
+    return codeUnitCursor
+  }
+
+  return {
+    byteOffsetForCodeUnit: advanceToCodeUnit,
+    codeUnitOffset: advanceToByte
+  }
+}
+
+function utf8CodePointByteLength(codePoint) {
+  if (codePoint <= 0x7f) {
+    return 1
+  }
+  if (codePoint <= 0x7ff) {
+    return 2
+  }
+  if (codePoint <= 0xffff) {
+    return 3
+  }
+  return 4
 }
 
 function utf8ByteLength(value) {
@@ -887,7 +1182,10 @@ function createRecord(start, end, replacement, label, matchedText, source = {}) 
     committed: false,
     committedStart: null,
     committedEnd: null,
-    committedReplacement: null
+    committedReplacement: null,
+    suppressedRecords: Array.isArray(source.suppressedRecords)
+      ? source.suppressedRecords.map(cloneRecord)
+      : []
   }
 }
 
@@ -906,7 +1204,12 @@ function normalizeRecordOrder(records) {
 }
 
 function cloneRecord(record) {
-  return { ...record }
+  return {
+    ...record,
+    suppressedRecords: Array.isArray(record?.suppressedRecords)
+      ? record.suppressedRecords.map(cloneRecord)
+      : []
+  }
 }
 
 function countMarks(html) {

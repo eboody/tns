@@ -121,13 +121,13 @@ function previewHasUnredactedOccurrence(preview, candidate) {
     return false
   }
 
-  const ranges = Array.isArray(preview?.redactionRanges) ? preview.redactionRanges : []
+  const ranges = normalizedSortedRanges(preview?.redactionRanges)
   for (const match of literalCaseInsensitiveMatches(originalText, candidate)) {
     if (!hasExactMatchBoundaries(originalText, match.start, match.end, match.text)) {
       continue
     }
 
-    if (!ranges.some((range) => overlapsRange(match.start, match.end, range))) {
+    if (!overlapsAnySortedRange(match.start, match.end, ranges)) {
       return true
     }
   }
@@ -170,8 +170,26 @@ function isWordish(char) {
   return /[\p{L}\p{N}_]/u.test(char)
 }
 
-function overlapsRange(start, end, range) {
-  const rangeStart = Number(range?.start ?? -1)
-  const rangeEnd = Number(range?.end ?? -1)
-  return start < rangeEnd && end > rangeStart
+function normalizedSortedRanges(ranges) {
+  return (Array.isArray(ranges) ? ranges : [])
+    .map((range) => ({
+      start: Number(range?.start ?? -1),
+      end: Number(range?.end ?? -1)
+    }))
+    .filter((range) => Number.isFinite(range.start) && Number.isFinite(range.end) && range.start < range.end)
+    .sort((left, right) => left.start - right.start || left.end - right.end)
+}
+
+function overlapsAnySortedRange(start, end, ranges) {
+  for (const range of ranges) {
+    if (range.start >= end) {
+      return false
+    }
+
+    if (start < range.end && end > range.start) {
+      return true
+    }
+  }
+
+  return false
 }

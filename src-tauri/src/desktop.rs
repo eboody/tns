@@ -11,8 +11,8 @@ use serde_json::{Value, json};
 use crate::{
     Result, RunFileStatus, RunMode, RunOptions,
     config::{
-        CaseContextConfig, ClientConfig, Config, DeidProfileConfig, ExactEntityConfig,
-        NerConfig, PatternConfig, PatternRuleConfig,
+        CaseContextConfig, ClientConfig, Config, DeidProfileConfig, ExactEntityConfig, NerConfig,
+        PatternConfig, PatternRuleConfig,
     },
     extraction, run,
 };
@@ -201,6 +201,8 @@ struct EditableAuditPreviewRecord {
     score: Option<f32>,
     start: usize,
     end: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    suppressed_replacements: Vec<EditableAuditPreviewRecord>,
 }
 
 #[derive(Debug, Clone)]
@@ -339,6 +341,13 @@ struct ExactMatchPropagationRule {
     replacement: String,
     source: Value,
     reason: String,
+    match_mode: MatchMode,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum MatchMode {
+    WholeTerm,
+    Literal,
 }
 
 impl DesktopRunSettings {
@@ -550,6 +559,7 @@ pub fn add_manual_redaction(
                     score: None,
                     start,
                     end,
+                    suppressed_replacements: Vec::new(),
                 }]
             }
         }
@@ -630,13 +640,16 @@ pub fn merge_manual_redaction(
         request.selection_start,
         request.selection_end,
     )?;
-    let Some((merge_start, merge_end)) = merged_overlap_bounds(&audit_report.replacements, start, end)
+    let Some((merge_start, merge_end)) =
+        merged_overlap_bounds(&audit_report.replacements, start, end)
     else {
         return Err(crate::error::AppError::InvalidPreviewEdit(
             "selected text must overlap one or more existing redactions to merge".to_string(),
         ));
     };
 
+    let (merge_start, merge_end) =
+        expand_range_to_word_bounds(&original_text, merge_start, merge_end);
     let matched_text = original_text[merge_start..merge_end].to_string();
     if matched_text.trim().is_empty() {
         return Err(crate::error::AppError::InvalidPreviewEdit(
@@ -644,9 +657,11 @@ pub fn merge_manual_redaction(
         ));
     }
 
-    audit_report
+    let (suppressed_replacements, visible_replacements): (Vec<_>, Vec<_>) = audit_report
         .replacements
-        .retain(|record| !(merge_start < record.end && merge_end > record.start));
+        .into_iter()
+        .partition(|record| merge_start < record.end && merge_end > record.start);
+    audit_report.replacements = visible_replacements;
     audit_report.replacements.push(EditableAuditPreviewRecord {
         source: json!("custom"),
         entity_type: "MANUAL_REDACTION".to_string(),
@@ -656,6 +671,7 @@ pub fn merge_manual_redaction(
         score: None,
         start: merge_start,
         end: merge_end,
+        suppressed_replacements,
     });
     sort_and_validate_replacements(&mut audit_report.replacements)?;
 
@@ -684,22 +700,27 @@ pub fn find_and_redact_term(
         matched_text: term,
         replacement: "[MANUAL_REDACTION]".to_string(),
         reason: "desktop manual find-and-redact".to_string(),
+        match_mode: MatchMode::Literal,
     };
     let existing_reason = propagation_rule.reason.clone();
     let existing_term = propagation_rule.matched_text.clone();
 
-    update_redaction_targets(request.targets, |audit_report| {
-        audit_report.replacements.retain(|record| {
-            !(record.reason == existing_reason
-                && same_match_text(&record.matched_text, &existing_term))
-        });
-    }, move |original_text, existing_replacements| {
-        build_exact_match_replacements(
-            original_text,
-            &[propagation_rule.clone()],
-            existing_replacements,
-        )
-    })
+    update_redaction_targets(
+        request.targets,
+        |audit_report| {
+            audit_report.replacements.retain(|record| {
+                !(record.reason == existing_reason
+                    && same_match_text(&record.matched_text, &existing_term))
+            });
+        },
+        move |original_text, existing_replacements| {
+            build_exact_match_replacements(
+                original_text,
+                &[propagation_rule.clone()],
+                existing_replacements,
+            )
+        },
+    )
 }
 
 pub fn remove_redaction_term(
@@ -712,11 +733,15 @@ pub fn remove_redaction_term(
         ));
     }
 
-    update_redaction_targets(request.targets, move |audit_report| {
-        audit_report
-            .replacements
-            .retain(|record| !same_match_text(&record.matched_text, &term));
-    }, |_original_text, _existing_replacements| Vec::new())
+    update_redaction_targets(
+        request.targets,
+        move |audit_report| {
+            audit_report
+                .replacements
+                .retain(|record| !same_match_text(&record.matched_text, &term));
+        },
+        |_original_text, _existing_replacements| Vec::new(),
+    )
 }
 
 pub fn replace_redaction_term(
@@ -760,6 +785,7 @@ pub fn replace_redaction_term(
             .filter(|record| same_match_text(&record.matched_text, &previous_term))
             .cloned()
             .collect::<Vec<_>>();
+        let propagated_style = matching_records.first().cloned();
 
         audit_report
             .replacements
@@ -770,7 +796,8 @@ pub fn replace_redaction_term(
         let mut preserved_replacements = Vec::new();
 
         for record in matching_records {
-            let Some(updated_record) = anchored_replacement_from_record(&original_text, &record, &next_term)
+            let Some(updated_record) =
+                anchored_replacement_from_record(&original_text, &record, &next_term)
             else {
                 occupied.push(record.clone());
                 preserved_replacements.push(record);
@@ -790,11 +817,24 @@ pub fn replace_redaction_term(
         let propagated_replacements = build_exact_match_replacements(
             &original_text,
             &[ExactMatchPropagationRule {
-                source: json!("custom"),
-                entity_type: "MANUAL_REDACTION".to_string(),
+                source: propagated_style
+                    .as_ref()
+                    .map(|record| record.source.clone())
+                    .unwrap_or_else(|| json!("custom")),
+                entity_type: propagated_style
+                    .as_ref()
+                    .map(|record| record.entity_type.clone())
+                    .unwrap_or_else(|| "MANUAL_REDACTION".to_string()),
                 matched_text: next_term.clone(),
-                replacement: "[MANUAL_REDACTION]".to_string(),
-                reason: "desktop manual find-and-redact".to_string(),
+                replacement: propagated_style
+                    .as_ref()
+                    .map(|record| record.replacement.clone())
+                    .unwrap_or_else(|| "[MANUAL_REDACTION]".to_string()),
+                reason: propagated_style
+                    .as_ref()
+                    .map(|record| record.reason.clone())
+                    .unwrap_or_else(|| "desktop manual find-and-redact".to_string()),
+                match_mode: MatchMode::Literal,
             }],
             &occupied,
         );
@@ -839,17 +879,27 @@ pub fn apply_redaction_to_all_files(
         matched_text: source_record.matched_text.clone(),
         replacement: source_record.replacement.clone(),
         reason: propagation_reason.clone(),
+        match_mode: MatchMode::WholeTerm,
     };
 
-    update_redaction_across_files(request, true, |audit_report| {
-        audit_report.replacements.retain(|record| {
-            !(record.reason == propagation_reason
-                && record.entity_type == source_record.entity_type
-                && same_match_text(&record.matched_text, &source_record.matched_text))
-        });
-    }, move |original_text, existing_replacements| {
-        build_exact_match_replacements(original_text, &[propagation_rule.clone()], existing_replacements)
-    })
+    update_redaction_across_files(
+        request,
+        true,
+        |audit_report| {
+            audit_report.replacements.retain(|record| {
+                !(record.reason == propagation_reason
+                    && record.entity_type == source_record.entity_type
+                    && same_match_text(&record.matched_text, &source_record.matched_text))
+            });
+        },
+        move |original_text, existing_replacements| {
+            build_exact_match_replacements(
+                original_text,
+                &[propagation_rule.clone()],
+                existing_replacements,
+            )
+        },
+    )
 }
 
 pub fn remove_redaction_from_all_files(
@@ -857,12 +907,23 @@ pub fn remove_redaction_from_all_files(
 ) -> Result<DesktopAcrossFilesUpdateResult> {
     let source_record = read_source_redaction_record(&request.source)?;
 
-    update_redaction_across_files(request, true, move |audit_report| {
-        audit_report.replacements.retain(|record| {
-            !(same_match_text(&record.matched_text, &source_record.matched_text)
-                && record.replacement == source_record.replacement)
-        });
-    }, |_original_text, _existing_replacements| Vec::new())
+    update_redaction_across_files(
+        request,
+        true,
+        move |audit_report| {
+            let mut restored_replacements = Vec::new();
+            audit_report.replacements.retain(|record| {
+                let remove = same_match_text(&record.matched_text, &source_record.matched_text)
+                    && record.replacement == source_record.replacement;
+                if remove {
+                    restored_replacements.extend(record.suppressed_replacements.clone());
+                }
+                !remove
+            });
+            restore_suppressed_replacements(&mut audit_report.replacements, restored_replacements);
+        },
+        |_original_text, _existing_replacements| Vec::new(),
+    )
 }
 
 pub fn inspect_redaction_across_files(
@@ -875,6 +936,7 @@ pub fn inspect_redaction_across_files(
         matched_text: source_record.matched_text.clone(),
         replacement: source_record.replacement.clone(),
         reason: source_propagation_reason(&request.source.preview.path),
+        match_mode: MatchMode::WholeTerm,
     };
 
     let mut applicable_targets = 0usize;
@@ -924,7 +986,10 @@ fn update_redaction_across_files(
     request: DesktopRedactionAcrossFilesRequest,
     include_source_target: bool,
     normalize: impl FnMut(&mut EditableAuditPreviewReport),
-    build_new_replacements: impl FnMut(&str, &[EditableAuditPreviewRecord]) -> Vec<EditableAuditPreviewRecord>,
+    build_new_replacements: impl FnMut(
+        &str,
+        &[EditableAuditPreviewRecord],
+    ) -> Vec<EditableAuditPreviewRecord>,
 ) -> Result<DesktopAcrossFilesUpdateResult> {
     update_redaction_targets(
         request
@@ -940,7 +1005,10 @@ fn update_redaction_across_files(
 fn update_redaction_targets(
     targets: Vec<DesktopPreviewArtifactRequest>,
     mut normalize: impl FnMut(&mut EditableAuditPreviewReport),
-    mut build_new_replacements: impl FnMut(&str, &[EditableAuditPreviewRecord]) -> Vec<EditableAuditPreviewRecord>,
+    mut build_new_replacements: impl FnMut(
+        &str,
+        &[EditableAuditPreviewRecord],
+    ) -> Vec<EditableAuditPreviewRecord>,
 ) -> Result<DesktopAcrossFilesUpdateResult> {
     let requested_targets = targets.len();
     let mut updated_targets = 0usize;
@@ -1020,6 +1088,7 @@ fn build_manual_replacements_for_exact_matches(
             matched_text: matched_text.to_string(),
             replacement: "[MANUAL_REDACTION]".to_string(),
             reason: "desktop manual exact-match propagation".to_string(),
+            match_mode: MatchMode::WholeTerm,
         }],
         existing_replacements,
     )
@@ -1037,18 +1106,26 @@ fn anchored_replacement_from_record(
     record: &EditableAuditPreviewRecord,
     next_term: &str,
 ) -> Option<EditableAuditPreviewRecord> {
-    let end = record.start.checked_add(next_term.len())?;
-    let matched_slice = original_text.get(record.start..end)?;
+    let replacement_range = literal_case_insensitive_matches(original_text, next_term)
+        .into_iter()
+        .find(|range| range.start < record.end && range.end > record.start)?;
+    let matched_slice = original_text.get(replacement_range.clone())?;
 
     if !same_match_text(matched_slice, next_term) {
         return None;
     }
 
-    Some(EditableAuditPreviewRecord {
+    let mut updated_record = EditableAuditPreviewRecord {
         matched_text: matched_slice.to_string(),
-        end,
+        start: replacement_range.start,
+        end: replacement_range.end,
         ..record.clone()
-    })
+    };
+    if updated_record.start != record.start || updated_record.end != record.end {
+        updated_record.suppressed_replacements = vec![record.clone()];
+    }
+
+    Some(updated_record)
 }
 
 fn build_exact_match_replacements(
@@ -1075,7 +1152,9 @@ fn build_exact_match_replacements(
             let start = matched_range.start;
             let end = matched_range.end;
             let matched_text = original_text[start..end].to_string();
-            if !has_exact_match_boundaries(original_text, start, end, &matched_text) {
+            if rule.match_mode == MatchMode::WholeTerm
+                && !has_exact_match_boundaries(original_text, start, end, &matched_text)
+            {
                 continue;
             }
             if overlaps_existing_replacement(&occupied, start, end) {
@@ -1091,6 +1170,7 @@ fn build_exact_match_replacements(
                 score: None,
                 start,
                 end,
+                suppressed_replacements: Vec::new(),
             };
             occupied.push(record.clone());
             replacements.push(record);
@@ -1101,10 +1181,16 @@ fn build_exact_match_replacements(
     replacements
 }
 
-fn literal_case_insensitive_matches<'a>(text: &'a str, matched_text: &str) -> Vec<std::ops::Range<usize>> {
+fn literal_case_insensitive_matches<'a>(
+    text: &'a str,
+    matched_text: &str,
+) -> Vec<std::ops::Range<usize>> {
     let pattern = format!("(?i:{})", regex::escape(matched_text));
     let regex = Regex::new(&pattern).expect("escaped literal case-insensitive regex");
-    regex.find_iter(text).map(|matched| matched.range()).collect()
+    regex
+        .find_iter(text)
+        .map(|matched| matched.range())
+        .collect()
 }
 
 fn same_match_text(left: &str, right: &str) -> bool {
@@ -1129,10 +1215,7 @@ fn has_exact_match_boundaries(text: &str, start: usize, end: usize, matched_text
     };
 
     let right_ok = if is_wordish(last_char) {
-        text[end..]
-            .chars()
-            .next()
-            .is_none_or(|ch| !is_wordish(ch))
+        text[end..].chars().next().is_none_or(|ch| !is_wordish(ch))
     } else {
         true
     };
@@ -1149,7 +1232,7 @@ pub fn remove_redaction(
 ) -> Result<DesktopPreviewUpdateResult> {
     let original_text = load_preview_input_as_markdown(&request.input_path)?;
     let mut audit_report = read_editable_audit_report(&request.audit_output_path)?;
-    let original_len = audit_report.replacements.len();
+    let mut removed_any = false;
 
     let target_record = audit_report
         .replacements
@@ -1167,20 +1250,44 @@ pub fn remove_redaction(
         ));
     };
 
-    audit_report.replacements.retain(|record| match request.redaction_scope {
-        ManualRedactionScope::SingleOccurrence => {
-            !(record.start == request.start
-                && record.end == request.end
-                && record.replacement == request.replacement)
-        }
-        ManualRedactionScope::FileExactMatches => {
-            !(record.entity_type == target_record.entity_type
-                && record.matched_text == target_record.matched_text
-                && record.replacement == target_record.replacement)
-        }
-    });
+    let mut restored_replacements = Vec::new();
+    let mut removed_records = Vec::new();
+    audit_report
+        .replacements
+        .retain(|record| match request.redaction_scope {
+            ManualRedactionScope::SingleOccurrence => {
+                let remove = record.start == request.start
+                    && record.end == request.end
+                    && record.replacement == request.replacement;
+                if remove {
+                    removed_any = true;
+                    removed_records.push(record.clone());
+                    restored_replacements.extend(record.suppressed_replacements.clone());
+                }
+                !remove
+            }
+            ManualRedactionScope::FileExactMatches => {
+                let remove = record.entity_type == target_record.entity_type
+                    && record.matched_text == target_record.matched_text
+                    && record.replacement == target_record.replacement;
+                if remove {
+                    removed_any = true;
+                    removed_records.push(record.clone());
+                    restored_replacements.extend(record.suppressed_replacements.clone());
+                }
+                !remove
+            }
+        });
 
-    if audit_report.replacements.len() == original_len {
+    removed_records.extend(restored_replacements.iter().cloned());
+    restore_suppressed_replacements(&mut audit_report.replacements, restored_replacements);
+    reapply_visible_terms_within_removed_ranges(
+        &original_text,
+        &mut audit_report.replacements,
+        &removed_records,
+    );
+
+    if !removed_any {
         return Err(crate::error::AppError::InvalidPreviewEdit(
             "clicked redaction no longer exists in the current preview".to_string(),
         ));
@@ -1326,10 +1433,11 @@ fn build_preview_redaction_terms(
     }
 
     terms.sort_by(|left, right| {
-        right
-            .occurrences
-            .cmp(&left.occurrences)
-            .then_with(|| left.matched_text.to_lowercase().cmp(&right.matched_text.to_lowercase()))
+        right.occurrences.cmp(&left.occurrences).then_with(|| {
+            left.matched_text
+                .to_lowercase()
+                .cmp(&right.matched_text.to_lowercase())
+        })
     });
     terms
 }
@@ -1690,7 +1798,11 @@ fn map_redacted_offset_to_original_for_merge(
         let replacement_end =
             replacement_start + rendered_replacement_text(record, manual_number).len();
         if offset < replacement_end {
-            return Ok(if use_end_boundary { record.end } else { record.start });
+            return Ok(if use_end_boundary {
+                record.end
+            } else {
+                record.start
+            });
         }
 
         input_cursor = record.end;
@@ -1710,7 +1822,7 @@ fn merged_overlap_bounds(
     let mut found_overlap = false;
 
     for record in records {
-        if merge_start < record.end && merge_end > record.start {
+        if merge_start <= record.end && merge_end >= record.start {
             merge_start = merge_start.min(record.start);
             merge_end = merge_end.max(record.end);
             found_overlap = true;
@@ -1732,6 +1844,99 @@ fn overlaps_existing_replacement(
     records
         .iter()
         .any(|record| start < record.end && end > record.start)
+}
+
+fn restore_suppressed_replacements(
+    visible_replacements: &mut Vec<EditableAuditPreviewRecord>,
+    suppressed_replacements: Vec<EditableAuditPreviewRecord>,
+) {
+    for mut record in suppressed_replacements {
+        let nested = std::mem::take(&mut record.suppressed_replacements);
+        if !overlaps_existing_replacement(visible_replacements, record.start, record.end) {
+            visible_replacements.push(record);
+            restore_suppressed_replacements(visible_replacements, nested);
+            continue;
+        }
+
+        restore_suppressed_replacements(visible_replacements, nested);
+    }
+}
+
+fn reapply_visible_terms_within_removed_ranges(
+    original_text: &str,
+    visible_replacements: &mut Vec<EditableAuditPreviewRecord>,
+    removed_records: &[EditableAuditPreviewRecord],
+) {
+    let rules = visible_replacements.clone();
+    let mut occupied = visible_replacements.clone();
+    let mut additions = Vec::new();
+
+    for removed in removed_records {
+        for rule in &rules {
+            if rule.matched_text.trim().is_empty() {
+                continue;
+            }
+
+            for matched_range in literal_case_insensitive_matches(original_text, &rule.matched_text)
+            {
+                if matched_range.start < removed.start || matched_range.end > removed.end {
+                    continue;
+                }
+                if overlaps_existing_replacement(&occupied, matched_range.start, matched_range.end)
+                {
+                    continue;
+                }
+                let Some(matched_text) = original_text.get(matched_range.clone()) else {
+                    continue;
+                };
+
+                let record = EditableAuditPreviewRecord {
+                    source: rule.source.clone(),
+                    entity_type: rule.entity_type.clone(),
+                    matched_text: matched_text.to_string(),
+                    replacement: rule.replacement.clone(),
+                    reason: rule.reason.clone(),
+                    score: rule.score,
+                    start: matched_range.start,
+                    end: matched_range.end,
+                    suppressed_replacements: Vec::new(),
+                };
+                occupied.push(record.clone());
+                additions.push(record);
+            }
+        }
+    }
+
+    visible_replacements.extend(additions);
+}
+
+fn expand_range_to_word_bounds(text: &str, start: usize, end: usize) -> (usize, usize) {
+    let mut expanded_start = start;
+    let mut expanded_end = end;
+
+    while expanded_start > 0 {
+        let Some((previous_start, previous_char)) =
+            text[..expanded_start].char_indices().next_back()
+        else {
+            break;
+        };
+        if !is_wordish(previous_char) {
+            break;
+        }
+        expanded_start = previous_start;
+    }
+
+    while expanded_end < text.len() {
+        let Some(next_char) = text[expanded_end..].chars().next() else {
+            break;
+        };
+        if !is_wordish(next_char) {
+            break;
+        }
+        expanded_end += next_char.len_utf8();
+    }
+
+    (expanded_start, expanded_end)
 }
 
 fn validate_text_range(text: &str, start: usize, end: usize) -> Result<()> {
@@ -1769,21 +1974,20 @@ mod tests {
     use lopdf::{Document, Object, Stream, dictionary};
 
     use super::{
-        DesktopAddRedactionRequest, DesktopExistingRedactionRequest, DesktopFindAndRedactRequest,
-        DesktopReplaceRedactionTermRequest,
-        DesktopRemoveRedactionTermRequest,
-        DesktopRedactionAcrossFilesRequest,
-        DesktopCaseContextSettings, DesktopExactEntitySettings, DesktopNerSettings,
+        DesktopAddRedactionRequest, DesktopCaseContextSettings, DesktopExactEntitySettings,
+        DesktopExistingRedactionRequest, DesktopFindAndRedactRequest, DesktopNerSettings,
         DesktopPatternRuleSettings, DesktopPatternSettings, DesktopPreviewArtifactRequest,
-        DesktopProfileSettings, DesktopRemoveRedactionRequest, DesktopReplaceRequest,
-        DesktopReviewReason, DesktopReviewRequest, DesktopRunSettings,
+        DesktopProfileSettings, DesktopRedactionAcrossFilesRequest, DesktopRemoveRedactionRequest,
+        DesktopRemoveRedactionTermRequest, DesktopReplaceRedactionTermRequest,
+        DesktopReplaceRequest, DesktopReviewReason, DesktopReviewRequest, DesktopRunSettings,
         EditableAuditPreviewRecord, ManualRedactionScope, PreviewSelectionSource,
-        add_manual_redaction, apply_redaction_to_all_files, inspect_redaction_across_files,
-        find_and_redact_term, remove_redaction_term, replace_redaction_term,
-        inspect_manual_redaction, merge_manual_redaction, remove_redaction_from_all_files,
-        build_manual_replacements_for_exact_matches, load_preview_input_as_markdown,
-        map_original_highlights, read_editable_audit_report, remove_redaction, run_replace_job,
-        run_review_job,
+        add_manual_redaction, apply_redaction_to_all_files,
+        build_manual_replacements_for_exact_matches, find_and_redact_term,
+        inspect_manual_redaction, inspect_redaction_across_files, load_preview_input_as_markdown,
+        map_original_highlights, merge_manual_redaction, persist_preview_edit,
+        read_editable_audit_report, remove_redaction, remove_redaction_from_all_files,
+        remove_redaction_term, replace_redaction_term, run_replace_job, run_review_job,
+        sort_and_validate_replacements,
     };
 
     #[test]
@@ -1933,9 +2137,21 @@ mod tests {
         .unwrap();
 
         assert_eq!(result.replacements, 3);
-        assert!(result.review_summary.contains("[configured:client] Jane Doe -> CLIENT"));
-        assert!(result.review_summary.contains("[redact-core:EMAIL_ADDRESS]"));
-        assert!(result.review_summary.contains("[configured:date] 01/02/2024 -> [DATE]"));
+        assert!(
+            result
+                .review_summary
+                .contains("[configured:client] Jane Doe -> CLIENT")
+        );
+        assert!(
+            result
+                .review_summary
+                .contains("[redact-core:EMAIL_ADDRESS]")
+        );
+        assert!(
+            result
+                .review_summary
+                .contains("[configured:date] 01/02/2024 -> [DATE]")
+        );
     }
 
     #[test]
@@ -2051,7 +2267,12 @@ mod tests {
         .unwrap();
 
         assert_eq!(updated.replacements, 6);
-        assert!(updated.preview.redacted_html.contains("[MANUAL_REDACTION_1]"));
+        assert!(
+            updated
+                .preview
+                .redacted_html
+                .contains("[MANUAL_REDACTION_1]")
+        );
         assert!(
             updated
                 .preview
@@ -2122,8 +2343,18 @@ mod tests {
         .unwrap();
 
         assert_eq!(updated.replacements, 5);
-        assert!(updated.preview.redacted_html.contains("data-manual-number=\"1\""));
-        assert!(!updated.preview.redacted_html.contains("data-manual-number=\"2\""));
+        assert!(
+            updated
+                .preview
+                .redacted_html
+                .contains("data-manual-number=\"1\"")
+        );
+        assert!(
+            !updated
+                .preview
+                .redacted_html
+                .contains("data-manual-number=\"2\"")
+        );
     }
 
     #[test]
@@ -2132,11 +2363,7 @@ mod tests {
         let input_dir = temp.path().join("input");
 
         fs::create_dir_all(&input_dir).unwrap();
-        fs::write(
-            input_dir.join("note.md"),
-            "alpha beta gamma beta delta",
-        )
-        .unwrap();
+        fs::write(input_dir.join("note.md"), "alpha beta gamma beta delta").unwrap();
 
         let result = run_replace_job(DesktopReplaceRequest {
             input: input_dir.clone(),
@@ -2182,24 +2409,24 @@ mod tests {
                 score: None,
                 start: 11,
                 end: 16,
+                suppressed_replacements: Vec::new(),
             }],
         );
 
         assert_eq!(replacements.len(), 2);
         assert_eq!(replacements[0].start, 0);
         assert_eq!(replacements[1].start, 23);
-        assert!(replacements
-            .iter()
-            .all(|record| record.reason == "desktop manual exact-match propagation"));
+        assert!(
+            replacements
+                .iter()
+                .all(|record| record.reason == "desktop manual exact-match propagation")
+        );
     }
 
     #[test]
     fn manual_redaction_exact_match_propagation_does_not_match_inside_larger_words() {
-        let replacements = build_manual_replacements_for_exact_matches(
-            "CA CASE CA, SCAFFOLD",
-            "CA",
-            &[],
-        );
+        let replacements =
+            build_manual_replacements_for_exact_matches("CA CASE CA, SCAFFOLD", "CA", &[]);
 
         assert_eq!(replacements.len(), 2);
         assert_eq!(replacements[0].matched_text, "CA");
@@ -2233,6 +2460,7 @@ mod tests {
                 score: None,
                 start: 6,
                 end: 10,
+                suppressed_replacements: Vec::new(),
             },
             EditableAuditPreviewRecord {
                 source: json!("custom"),
@@ -2243,6 +2471,7 @@ mod tests {
                 score: Some(0.8),
                 start: 11,
                 end: 27,
+                suppressed_replacements: Vec::new(),
             },
             EditableAuditPreviewRecord {
                 source: json!("custom"),
@@ -2253,6 +2482,7 @@ mod tests {
                 score: None,
                 start: 28,
                 end: 33,
+                suppressed_replacements: Vec::new(),
             },
         ]);
 
@@ -2382,8 +2612,18 @@ mod tests {
         .unwrap();
 
         assert_eq!(removed.replacements, 4);
-        assert!(!removed.preview.redacted_html.contains("data-manual-number=\"1\""));
-        assert!(!removed.preview.redacted_html.contains("data-manual-number=\"2\""));
+        assert!(
+            !removed
+                .preview
+                .redacted_html
+                .contains("data-manual-number=\"1\"")
+        );
+        assert!(
+            !removed
+                .preview
+                .redacted_html
+                .contains("data-manual-number=\"2\"")
+        );
     }
 
     #[test]
@@ -2472,7 +2712,12 @@ mod tests {
         assert_eq!(applied.ignored_targets, 0);
         assert_eq!(applied.unchanged_targets, 1);
         assert_eq!(applied.updates.len(), 1);
-        assert!(applied.updates[0].preview.redacted_html.contains("[MANUAL_REDACTION_1]"));
+        assert!(
+            applied.updates[0]
+                .preview
+                .redacted_html
+                .contains("[MANUAL_REDACTION_1]")
+        );
         assert!(
             fs::read_to_string(&target_preview.output_path)
                 .unwrap()
@@ -2915,14 +3160,196 @@ mod tests {
         })
         .unwrap();
 
-        assert!(merged
-            .preview
-            .original_html
-            .as_ref()
-            .is_some_and(|html| html.contains("Manual redaction 1")));
-        assert!(fs::read_to_string(&preview.output_path)
-            .unwrap()
-            .contains("[MANUAL_REDACTION_1]"));
+        assert!(
+            merged
+                .preview
+                .original_html
+                .as_ref()
+                .is_some_and(|html| html.contains("Manual redaction 1"))
+        );
+        assert!(
+            fs::read_to_string(&preview.output_path)
+                .unwrap()
+                .contains("[MANUAL_REDACTION_1]")
+        );
+    }
+
+    #[test]
+    fn merge_manual_redaction_can_absorb_adjacent_selection() {
+        let temp = tempdir().unwrap();
+        let input_dir = temp.path().join("input");
+
+        fs::create_dir_all(&input_dir).unwrap();
+        fs::write(input_dir.join("note.md"), "alpha beta gamma").unwrap();
+
+        let result = run_replace_job(DesktopReplaceRequest {
+            input: input_dir.clone(),
+            config: None,
+            settings: None,
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+        })
+        .unwrap();
+
+        let preview = &result.file_previews[0];
+        let original_text = load_preview_input_as_markdown(&preview.input_path).unwrap();
+        let beta_start = original_text.find("beta").unwrap();
+        let beta_end = beta_start + "beta".len();
+        let gamma_end = original_text.find("gamma").unwrap() + "gamma".len();
+
+        let updated = add_manual_redaction(DesktopAddRedactionRequest {
+            path: preview.path.clone(),
+            input_path: preview.input_path.clone(),
+            output_path: preview.output_path.clone(),
+            audit_output_path: preview.audit_output_path.clone(),
+            source_preview: PreviewSelectionSource::Original,
+            selection_start: beta_start,
+            selection_end: beta_end,
+            redaction_scope: ManualRedactionScope::SingleOccurrence,
+        })
+        .unwrap();
+
+        let merged = merge_manual_redaction(DesktopAddRedactionRequest {
+            path: updated.preview.path.clone(),
+            input_path: updated.preview.input_path.clone(),
+            output_path: updated.preview.output_path.clone(),
+            audit_output_path: updated.preview.audit_output_path.clone(),
+            source_preview: PreviewSelectionSource::Original,
+            selection_start: beta_end,
+            selection_end: gamma_end,
+            redaction_scope: ManualRedactionScope::SingleOccurrence,
+        })
+        .unwrap();
+
+        let audit_report = read_editable_audit_report(&merged.preview.audit_output_path).unwrap();
+        assert_eq!(audit_report.replacements.len(), 1);
+        assert_eq!(audit_report.replacements[0].matched_text, "beta gamma");
+    }
+
+    #[test]
+    fn merge_manual_redaction_expands_partial_word_selection_to_whole_word() {
+        let temp = tempdir().unwrap();
+        let input_dir = temp.path().join("input");
+
+        fs::create_dir_all(&input_dir).unwrap();
+        fs::write(input_dir.join("note.md"), "alpha beta gamma").unwrap();
+
+        let result = run_replace_job(DesktopReplaceRequest {
+            input: input_dir.clone(),
+            config: None,
+            settings: None,
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+        })
+        .unwrap();
+
+        let preview = &result.file_previews[0];
+        let original_text = load_preview_input_as_markdown(&preview.input_path).unwrap();
+        let beta_start = original_text.find("beta").unwrap();
+        let beta_end = beta_start + "beta".len();
+        let gamma_start = original_text.find("gamma").unwrap();
+
+        let updated = add_manual_redaction(DesktopAddRedactionRequest {
+            path: preview.path.clone(),
+            input_path: preview.input_path.clone(),
+            output_path: preview.output_path.clone(),
+            audit_output_path: preview.audit_output_path.clone(),
+            source_preview: PreviewSelectionSource::Original,
+            selection_start: beta_start,
+            selection_end: beta_end,
+            redaction_scope: ManualRedactionScope::SingleOccurrence,
+        })
+        .unwrap();
+
+        let merged = merge_manual_redaction(DesktopAddRedactionRequest {
+            path: updated.preview.path.clone(),
+            input_path: updated.preview.input_path.clone(),
+            output_path: updated.preview.output_path.clone(),
+            audit_output_path: updated.preview.audit_output_path.clone(),
+            source_preview: PreviewSelectionSource::Original,
+            selection_start: beta_end,
+            selection_end: gamma_start + 3,
+            redaction_scope: ManualRedactionScope::SingleOccurrence,
+        })
+        .unwrap();
+
+        let audit_report = read_editable_audit_report(&merged.preview.audit_output_path).unwrap();
+        assert_eq!(audit_report.replacements.len(), 1);
+        assert_eq!(audit_report.replacements[0].matched_text, "beta gamma");
+    }
+
+    #[test]
+    fn remove_redaction_restores_redaction_subsumed_by_merge() {
+        let temp = tempdir().unwrap();
+        let input_dir = temp.path().join("input");
+
+        fs::create_dir_all(&input_dir).unwrap();
+        fs::write(input_dir.join("note.md"), "alpha beta gamma").unwrap();
+
+        let result = run_replace_job(DesktopReplaceRequest {
+            input: input_dir.clone(),
+            config: None,
+            settings: None,
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+        })
+        .unwrap();
+
+        let preview = &result.file_previews[0];
+        let original_text = load_preview_input_as_markdown(&preview.input_path).unwrap();
+        let beta_start = original_text.find("beta").unwrap();
+        let beta_end = beta_start + "beta".len();
+        let gamma_end = original_text.find("gamma").unwrap() + "gamma".len();
+
+        let updated = add_manual_redaction(DesktopAddRedactionRequest {
+            path: preview.path.clone(),
+            input_path: preview.input_path.clone(),
+            output_path: preview.output_path.clone(),
+            audit_output_path: preview.audit_output_path.clone(),
+            source_preview: PreviewSelectionSource::Original,
+            selection_start: beta_start,
+            selection_end: beta_end,
+            redaction_scope: ManualRedactionScope::SingleOccurrence,
+        })
+        .unwrap();
+
+        let merged = merge_manual_redaction(DesktopAddRedactionRequest {
+            path: updated.preview.path.clone(),
+            input_path: updated.preview.input_path.clone(),
+            output_path: updated.preview.output_path.clone(),
+            audit_output_path: updated.preview.audit_output_path.clone(),
+            source_preview: PreviewSelectionSource::Original,
+            selection_start: beta_end,
+            selection_end: gamma_end,
+            redaction_scope: ManualRedactionScope::SingleOccurrence,
+        })
+        .unwrap();
+
+        let merged_audit_report =
+            read_editable_audit_report(&merged.preview.audit_output_path).unwrap();
+        let merged_record = merged_audit_report.replacements.first().unwrap();
+
+        let removed = remove_redaction(DesktopRemoveRedactionRequest {
+            path: merged.preview.path.clone(),
+            input_path: merged.preview.input_path.clone(),
+            output_path: merged.preview.output_path.clone(),
+            audit_output_path: merged.preview.audit_output_path.clone(),
+            start: merged_record.start,
+            end: merged_record.end,
+            replacement: merged_record.replacement.clone(),
+            redaction_scope: ManualRedactionScope::SingleOccurrence,
+        })
+        .unwrap();
+
+        let audit_report = read_editable_audit_report(&removed.preview.audit_output_path).unwrap();
+        assert_eq!(audit_report.replacements.len(), 1);
+        assert_eq!(audit_report.replacements[0].matched_text, "beta");
+        assert!(
+            removed
+                .preview
+                .redacted_html
+                .contains("[MANUAL_REDACTION_1]")
+        );
     }
 
     #[test]
@@ -2985,9 +3412,11 @@ mod tests {
         .unwrap();
 
         assert_eq!(merged.replacements, 1);
-        assert!(fs::read_to_string(&preview.output_path)
-            .unwrap()
-            .contains("alpha [MANUAL_REDACTION_1] delta"));
+        assert!(
+            fs::read_to_string(&preview.output_path)
+                .unwrap()
+                .contains("alpha [MANUAL_REDACTION_1] delta")
+        );
     }
 
     #[test]
@@ -3041,9 +3470,11 @@ mod tests {
         })
         .unwrap();
 
-        assert!(fs::read_to_string(&preview.output_path)
-            .unwrap()
-            .contains("alpha [MANUAL_REDACTION_1]"));
+        assert!(
+            fs::read_to_string(&preview.output_path)
+                .unwrap()
+                .contains("alpha [MANUAL_REDACTION_1]")
+        );
         assert_eq!(merged.replacements, 1);
     }
 
@@ -3135,7 +3566,12 @@ mod tests {
         .unwrap();
 
         assert_eq!(applied.updated_targets, 1);
-        assert!(applied.updates[0].preview.redacted_html.contains("data-manual-number=\"2\""));
+        assert!(
+            applied.updates[0]
+                .preview
+                .redacted_html
+                .contains("data-manual-number=\"2\"")
+        );
     }
 
     #[test]
@@ -3144,8 +3580,16 @@ mod tests {
         let input_dir = temp.path().join("input");
 
         fs::create_dir_all(&input_dir).unwrap();
-        fs::write(input_dir.join("source.md"), "john appears in the source file.").unwrap();
-        fs::write(input_dir.join("target.md"), "JOHN appears in the target file.").unwrap();
+        fs::write(
+            input_dir.join("source.md"),
+            "john appears in the source file.",
+        )
+        .unwrap();
+        fs::write(
+            input_dir.join("target.md"),
+            "JOHN appears in the target file.",
+        )
+        .unwrap();
 
         let result = run_replace_job(DesktopReplaceRequest {
             input: input_dir.clone(),
@@ -3204,9 +3648,11 @@ mod tests {
         .unwrap();
 
         assert_eq!(applied.updated_targets, 1);
-        assert!(fs::read_to_string(&target_preview.output_path)
-            .unwrap()
-            .contains("[MANUAL_REDACTION_1]"));
+        assert!(
+            fs::read_to_string(&target_preview.output_path)
+                .unwrap()
+                .contains("[MANUAL_REDACTION_1]")
+        );
     }
 
     #[test]
@@ -3243,10 +3689,57 @@ mod tests {
         .unwrap();
 
         assert_eq!(applied.updated_targets, 2);
-        assert!(applied
-            .updates
-            .iter()
-            .all(|update| update.preview.redacted_html.contains("[MANUAL_REDACTION_1]")));
+        assert!(applied.updates.iter().all(|update| {
+            update
+                .preview
+                .redacted_html
+                .contains("[MANUAL_REDACTION_1]")
+        }));
+    }
+
+    #[test]
+    fn find_and_redact_term_can_match_inside_larger_words() {
+        let temp = tempdir().unwrap();
+        let input_dir = temp.path().join("input");
+
+        fs::create_dir_all(&input_dir).unwrap();
+        fs::write(input_dir.join("a.md"), "Johnathan and Johnson").unwrap();
+
+        let result = run_replace_job(DesktopReplaceRequest {
+            input: input_dir.clone(),
+            config: None,
+            settings: None,
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+        })
+        .unwrap();
+
+        let applied = find_and_redact_term(DesktopFindAndRedactRequest {
+            term: "John".to_string(),
+            targets: result
+                .file_previews
+                .iter()
+                .map(|preview| DesktopPreviewArtifactRequest {
+                    path: preview.path.clone(),
+                    input_path: preview.input_path.clone(),
+                    output_path: preview.output_path.clone(),
+                    audit_output_path: preview.audit_output_path.clone(),
+                })
+                .collect(),
+        })
+        .unwrap();
+
+        assert_eq!(applied.updated_targets, 1);
+        let audit_report =
+            read_editable_audit_report(&applied.updates[0].preview.audit_output_path).unwrap();
+        assert_eq!(
+            audit_report
+                .replacements
+                .iter()
+                .filter(|record| record.matched_text == "John")
+                .count(),
+            2
+        );
     }
 
     #[test]
@@ -3298,10 +3791,12 @@ mod tests {
         .unwrap();
 
         assert_eq!(removed.updated_targets, 2);
-        assert!(removed
-            .updates
-            .iter()
-            .all(|update| !update.preview.redacted_html.contains("[MANUAL_REDACTION_")));
+        assert!(
+            removed
+                .updates
+                .iter()
+                .all(|update| !update.preview.redacted_html.contains("[MANUAL_REDACTION_"))
+        );
     }
 
     #[test]
@@ -3353,11 +3848,322 @@ mod tests {
         .unwrap();
 
         assert_eq!(replaced.updated_targets, 1);
-        let audit_report = read_editable_audit_report(&replaced.updates[0].preview.audit_output_path).unwrap();
-        assert!(audit_report
+        let audit_report =
+            read_editable_audit_report(&replaced.updates[0].preview.audit_output_path).unwrap();
+        assert!(
+            audit_report
+                .replacements
+                .iter()
+                .any(|record| record.matched_text == "John Do")
+        );
+    }
+
+    #[test]
+    fn replace_redaction_term_can_expand_existing_redaction_in_place() {
+        let temp = tempdir().unwrap();
+        let input_dir = temp.path().join("input");
+
+        fs::create_dir_all(&input_dir).unwrap();
+        fs::write(input_dir.join("a.md"), "John Doe appeared here.").unwrap();
+
+        let result = run_replace_job(DesktopReplaceRequest {
+            input: input_dir.clone(),
+            config: None,
+            settings: None,
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+        })
+        .unwrap();
+
+        let applied = find_and_redact_term(DesktopFindAndRedactRequest {
+            term: "ohn Doe".to_string(),
+            targets: result
+                .file_previews
+                .iter()
+                .map(|preview| DesktopPreviewArtifactRequest {
+                    path: preview.path.clone(),
+                    input_path: preview.input_path.clone(),
+                    output_path: preview.output_path.clone(),
+                    audit_output_path: preview.audit_output_path.clone(),
+                })
+                .collect(),
+        })
+        .unwrap();
+
+        let replaced = replace_redaction_term(DesktopReplaceRedactionTermRequest {
+            previous_term: "ohn Doe".to_string(),
+            next_term: "John Doe".to_string(),
+            targets: applied
+                .updates
+                .iter()
+                .map(|update| DesktopPreviewArtifactRequest {
+                    path: update.preview.path.clone(),
+                    input_path: update.preview.input_path.clone(),
+                    output_path: update.preview.output_path.clone(),
+                    audit_output_path: update.preview.audit_output_path.clone(),
+                })
+                .collect(),
+        })
+        .unwrap();
+
+        assert_eq!(replaced.updated_targets, 1);
+        let audit_report =
+            read_editable_audit_report(&replaced.updates[0].preview.audit_output_path).unwrap();
+        assert!(
+            audit_report
+                .replacements
+                .iter()
+                .any(|record| record.start == 0 && record.matched_text == "John Doe")
+        );
+    }
+
+    #[test]
+    fn replace_redaction_term_preserves_replacement_for_new_literal_matches() {
+        let temp = tempdir().unwrap();
+        let input_dir = temp.path().join("input");
+
+        fs::create_dir_all(&input_dir).unwrap();
+        fs::write(
+            input_dir.join("a.md"),
+            "John Doe met Jane. John Doe stayed.",
+        )
+        .unwrap();
+
+        let result = run_replace_job(DesktopReplaceRequest {
+            input: input_dir.clone(),
+            config: None,
+            settings: None,
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+        })
+        .unwrap();
+
+        let mut audit_report =
+            read_editable_audit_report(&result.file_previews[0].audit_output_path).unwrap();
+        let original_text =
+            load_preview_input_as_markdown(&result.file_previews[0].input_path).unwrap();
+        let doe_start = original_text.find("Doe").unwrap();
+        audit_report.replacements.push(EditableAuditPreviewRecord {
+            source: json!("fixture"),
+            entity_type: "NAME".to_string(),
+            matched_text: "Doe".to_string(),
+            replacement: "[NAME]".to_string(),
+            reason: "fixture name".to_string(),
+            score: None,
+            start: doe_start,
+            end: doe_start + "Doe".len(),
+            suppressed_replacements: Vec::new(),
+        });
+        persist_preview_edit(
+            result.file_previews[0].path.clone(),
+            result.file_previews[0].output_path.clone(),
+            result.file_previews[0].audit_output_path.clone(),
+            original_text,
+            audit_report,
+        )
+        .unwrap();
+
+        let replaced = replace_redaction_term(DesktopReplaceRedactionTermRequest {
+            previous_term: "Doe".to_string(),
+            next_term: "John Doe".to_string(),
+            targets: result
+                .file_previews
+                .iter()
+                .map(|preview| DesktopPreviewArtifactRequest {
+                    path: preview.path.clone(),
+                    input_path: preview.input_path.clone(),
+                    output_path: preview.output_path.clone(),
+                    audit_output_path: preview.audit_output_path.clone(),
+                })
+                .collect(),
+        })
+        .unwrap();
+
+        assert_eq!(replaced.updated_targets, 1);
+        let audit_report =
+            read_editable_audit_report(&replaced.updates[0].preview.audit_output_path).unwrap();
+        let john_doe_records = audit_report
             .replacements
             .iter()
-            .any(|record| record.matched_text == "John Do"));
+            .filter(|record| record.matched_text == "John Doe")
+            .collect::<Vec<_>>();
+        assert_eq!(john_doe_records.len(), 2);
+        assert!(
+            john_doe_records
+                .iter()
+                .all(|record| record.replacement == "[NAME]")
+        );
+        assert!(
+            john_doe_records
+                .iter()
+                .all(|record| record.entity_type == "NAME")
+        );
+    }
+
+    #[test]
+    fn removing_expanded_replacement_term_restores_original_inner_redaction() {
+        let temp = tempdir().unwrap();
+        let input_dir = temp.path().join("input");
+        let expanded_text = "Jane Doe demonstrated anxious-like behaviors related to her performance and a desire to do well";
+
+        fs::create_dir_all(&input_dir).unwrap();
+        fs::write(input_dir.join("a.md"), format!("{expanded_text}.")).unwrap();
+
+        let result = run_replace_job(DesktopReplaceRequest {
+            input: input_dir.clone(),
+            config: None,
+            settings: None,
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+        })
+        .unwrap();
+
+        let mut audit_report =
+            read_editable_audit_report(&result.file_previews[0].audit_output_path).unwrap();
+        let original_text =
+            load_preview_input_as_markdown(&result.file_previews[0].input_path).unwrap();
+        audit_report.replacements.push(EditableAuditPreviewRecord {
+            source: json!("fixture"),
+            entity_type: "NAME".to_string(),
+            matched_text: "Jane Doe".to_string(),
+            replacement: "[NAME]".to_string(),
+            reason: "fixture name".to_string(),
+            score: None,
+            start: 0,
+            end: "Jane Doe".len(),
+            suppressed_replacements: Vec::new(),
+        });
+        persist_preview_edit(
+            result.file_previews[0].path.clone(),
+            result.file_previews[0].output_path.clone(),
+            result.file_previews[0].audit_output_path.clone(),
+            original_text,
+            audit_report,
+        )
+        .unwrap();
+
+        let replaced = replace_redaction_term(DesktopReplaceRedactionTermRequest {
+            previous_term: "Jane Doe".to_string(),
+            next_term: expanded_text.to_string(),
+            targets: result
+                .file_previews
+                .iter()
+                .map(|preview| DesktopPreviewArtifactRequest {
+                    path: preview.path.clone(),
+                    input_path: preview.input_path.clone(),
+                    output_path: preview.output_path.clone(),
+                    audit_output_path: preview.audit_output_path.clone(),
+                })
+                .collect(),
+        })
+        .unwrap();
+        let expanded_report =
+            read_editable_audit_report(&replaced.updates[0].preview.audit_output_path).unwrap();
+        let expanded_record = expanded_report.replacements.first().unwrap();
+
+        let removed = remove_redaction(DesktopRemoveRedactionRequest {
+            path: replaced.updates[0].preview.path.clone(),
+            input_path: replaced.updates[0].preview.input_path.clone(),
+            output_path: replaced.updates[0].preview.output_path.clone(),
+            audit_output_path: replaced.updates[0].preview.audit_output_path.clone(),
+            start: expanded_record.start,
+            end: expanded_record.end,
+            replacement: expanded_record.replacement.clone(),
+            redaction_scope: ManualRedactionScope::SingleOccurrence,
+        })
+        .unwrap();
+
+        let restored_report =
+            read_editable_audit_report(&removed.preview.audit_output_path).unwrap();
+        assert_eq!(restored_report.replacements.len(), 1);
+        assert_eq!(restored_report.replacements[0].matched_text, "Jane Doe");
+        assert_eq!(restored_report.replacements[0].replacement, "[NAME]");
+    }
+
+    #[test]
+    fn removing_large_redaction_reapplies_visible_terms_inside_removed_text() {
+        let temp = tempdir().unwrap();
+        let input_dir = temp.path().join("input");
+        let large_text = "Jane Doe demonstrated anxious-like behaviors related to her performance and a desire to do well";
+        let full_text = format!("{large_text}. Later Jane Doe returned.");
+
+        fs::create_dir_all(&input_dir).unwrap();
+        fs::write(input_dir.join("a.md"), &full_text).unwrap();
+
+        let result = run_replace_job(DesktopReplaceRequest {
+            input: input_dir.clone(),
+            config: None,
+            settings: None,
+            include_patterns: Vec::new(),
+            exclude_patterns: Vec::new(),
+        })
+        .unwrap();
+
+        let mut audit_report =
+            read_editable_audit_report(&result.file_previews[0].audit_output_path).unwrap();
+        let original_text =
+            load_preview_input_as_markdown(&result.file_previews[0].input_path).unwrap();
+        let later_start = original_text.rfind("Jane Doe").unwrap();
+        audit_report.replacements.push(EditableAuditPreviewRecord {
+            source: json!("fixture"),
+            entity_type: "NAME".to_string(),
+            matched_text: large_text.to_string(),
+            replacement: "[NAME]".to_string(),
+            reason: "fixture expanded name".to_string(),
+            score: None,
+            start: 0,
+            end: large_text.len(),
+            suppressed_replacements: Vec::new(),
+        });
+        audit_report.replacements.push(EditableAuditPreviewRecord {
+            source: json!("fixture"),
+            entity_type: "NAME".to_string(),
+            matched_text: "Jane Doe".to_string(),
+            replacement: "[NAME]".to_string(),
+            reason: "fixture name".to_string(),
+            score: None,
+            start: later_start,
+            end: later_start + "Jane Doe".len(),
+            suppressed_replacements: Vec::new(),
+        });
+        sort_and_validate_replacements(&mut audit_report.replacements).unwrap();
+        persist_preview_edit(
+            result.file_previews[0].path.clone(),
+            result.file_previews[0].output_path.clone(),
+            result.file_previews[0].audit_output_path.clone(),
+            original_text,
+            audit_report,
+        )
+        .unwrap();
+
+        let removed = remove_redaction(DesktopRemoveRedactionRequest {
+            path: result.file_previews[0].path.clone(),
+            input_path: result.file_previews[0].input_path.clone(),
+            output_path: result.file_previews[0].output_path.clone(),
+            audit_output_path: result.file_previews[0].audit_output_path.clone(),
+            start: 0,
+            end: large_text.len(),
+            replacement: "[NAME]".to_string(),
+            redaction_scope: ManualRedactionScope::SingleOccurrence,
+        })
+        .unwrap();
+
+        let restored_report =
+            read_editable_audit_report(&removed.preview.audit_output_path).unwrap();
+        assert_eq!(
+            restored_report
+                .replacements
+                .iter()
+                .filter(|record| record.matched_text == "Jane Doe")
+                .count(),
+            2
+        );
+        assert!(
+            restored_report
+                .replacements
+                .iter()
+                .any(|record| record.start == 0 && record.matched_text == "Jane Doe")
+        );
     }
 
     #[test]
@@ -3410,11 +4216,14 @@ mod tests {
 
         assert_eq!(invalid.updated_targets, 0);
         assert_eq!(invalid.unchanged_targets, 1);
-        let audit_report = read_editable_audit_report(&applied.updates[0].preview.audit_output_path).unwrap();
-        assert!(audit_report
-            .replacements
-            .iter()
-            .any(|record| record.matched_text == "John Doe"));
+        let audit_report =
+            read_editable_audit_report(&applied.updates[0].preview.audit_output_path).unwrap();
+        assert!(
+            audit_report
+                .replacements
+                .iter()
+                .any(|record| record.matched_text == "John Doe")
+        );
 
         let corrected = replace_redaction_term(DesktopReplaceRedactionTermRequest {
             previous_term: "John Doe".to_string(),
@@ -3432,11 +4241,14 @@ mod tests {
         })
         .unwrap();
 
-        let corrected_audit = read_editable_audit_report(&corrected.updates[0].preview.audit_output_path).unwrap();
-        assert!(corrected_audit
-            .replacements
-            .iter()
-            .any(|record| record.matched_text == "John Do"));
+        let corrected_audit =
+            read_editable_audit_report(&corrected.updates[0].preview.audit_output_path).unwrap();
+        assert!(
+            corrected_audit
+                .replacements
+                .iter()
+                .any(|record| record.matched_text == "John Do")
+        );
     }
 
     #[test]
@@ -3544,13 +4356,17 @@ mod tests {
         assert_eq!(reconciled.updated_targets, 2);
         assert_eq!(reconciled.unchanged_targets, 0);
         assert_eq!(reconciled.updates.len(), 2);
-        assert!(reconciled
-            .updates
-            .iter()
-            .all(|update| !update.preview.redacted_html.contains("[MANUAL_REDACTION_")));
-        assert!(!fs::read_to_string(&target_preview.output_path)
-            .unwrap()
-            .contains("[MANUAL_REDACTION_"));
+        assert!(
+            reconciled
+                .updates
+                .iter()
+                .all(|update| !update.preview.redacted_html.contains("[MANUAL_REDACTION_"))
+        );
+        assert!(
+            !fs::read_to_string(&target_preview.output_path)
+                .unwrap()
+                .contains("[MANUAL_REDACTION_")
+        );
     }
 
     #[test]
@@ -3649,13 +4465,17 @@ mod tests {
         .unwrap();
 
         assert_eq!(reconciled.updated_targets, 2);
-        assert!(reconciled
-            .updates
-            .iter()
-            .all(|update| !update.preview.redacted_html.contains("[MANUAL_REDACTION_")));
-        assert!(fs::read_to_string(&updated_target.preview.output_path)
-            .unwrap()
-            .contains("Elm Hall"));
+        assert!(
+            reconciled
+                .updates
+                .iter()
+                .all(|update| !update.preview.redacted_html.contains("[MANUAL_REDACTION_"))
+        );
+        assert!(
+            fs::read_to_string(&updated_target.preview.output_path)
+                .unwrap()
+                .contains("Elm Hall")
+        );
     }
 
     fn write_test_pdf(path: &std::path::Path, text: &str) {

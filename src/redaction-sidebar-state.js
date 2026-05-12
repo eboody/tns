@@ -6,13 +6,15 @@ import {
   redactionTermKey
 } from './redaction-terms.js'
 
-export function createRedactionSidebarState() {
+export function createRedactionSidebarState({ draftPreviewDelayMs = 0 } = {}) {
   let nextWorkspaceTermId = 1
   let syncedWorkspaceKey = null
+  let deferredDraftTimer = null
   const sourcePreviews = signal([])
   const workspaceTerms = signal([])
   const persistedTerms = signal([])
   const termDrafts = signal(new Map())
+  const deferredTermDrafts = signal(new Map())
 
   const sourceTerms = computed(() => workspaceTerms.value)
   const committedValueFor = (id) => sourceTerms.value.find((term) => term.id === id)?.matchedText ?? ''
@@ -24,38 +26,58 @@ export function createRedactionSidebarState() {
 
     return committedValueFor(id)
   }
+  const deferredDraftValueFor = (id) => {
+    const draft = deferredTermDrafts.value.get(id)
+    if (typeof draft === 'string') {
+      return draft
+    }
+
+    return committedValueFor(id)
+  }
+  const scheduleDeferredDrafts = () => {
+    if (deferredDraftTimer !== null) {
+      globalThis.clearTimeout(deferredDraftTimer)
+      deferredDraftTimer = null
+    }
+
+    if (draftPreviewDelayMs <= 0) {
+      deferredTermDrafts.value = new Map(termDrafts.peek())
+      return
+    }
+
+    deferredDraftTimer = globalThis.setTimeout(() => {
+      deferredDraftTimer = null
+      deferredTermDrafts.value = new Map(termDrafts.peek())
+    }, draftPreviewDelayMs)
+  }
 
   const suggestionTerms = computed(() => {
     return sourceTerms.value
       .map((term) => ({
         ...term,
-        matchedText: normalizeDraft(draftValueFor(term.id))
+        matchedText: normalizeDraft(deferredDraftValueFor(term.id))
       }))
       .filter((term) => term.matchedText)
   })
 
   const relatedSuggestions = computed(() => collectSuggestedRedactionTermsForWorkspace(sourcePreviews.value, suggestionTerms.value))
-  const pendingEdits = computed(() => sourceTerms.value
-    .map((term) => {
-      const nextTerm = normalizeDraft(draftValueFor(term.id))
-      const previousTerm = committedValueFor(term.id)
-
-      return {
-        termId: term.id,
-        previousTerm,
-        nextTerm
-      }
-    })
-    .filter((edit) => Boolean(edit.nextTerm) && edit.nextTerm !== edit.previousTerm))
+  const pendingEdits = computed(() => buildPendingEdits(sourceTerms.value, termDrafts.value))
+  const previewPendingEdits = computed(() => buildPendingEdits(sourceTerms.value, deferredTermDrafts.value))
   const hasPendingEdits = computed(() => pendingEdits.value.length > 0)
 
   return {
     sourcePreviews,
     sourceTerms,
     pendingEdits,
+    previewPendingEdits,
     hasPendingEdits,
     relatedSuggestions,
     syncFromDraftState({ filePreviews, terms }) {
+      if (deferredDraftTimer !== null) {
+        globalThis.clearTimeout(deferredDraftTimer)
+        deferredDraftTimer = null
+      }
+
       const nextWorkspaceKey = sidebarDraftScopeKey(filePreviews)
       const preserveDrafts = syncedWorkspaceKey === null || syncedWorkspaceKey === nextWorkspaceKey
       const existingIdsByKey = new Map(
@@ -79,12 +101,14 @@ export function createRedactionSidebarState() {
           ...term,
           id: existingIdsByKey.get(term.identityKey ?? term.key) ?? `workspace-term-${nextWorkspaceTermId++}`
         }))
-        termDrafts.value = new Map(
+        const nextDrafts = new Map(
           workspaceTerms.value.flatMap((term) => {
             const draft = existingDraftsByIdentityKey.get(term.identityKey ?? term.key)
             return draft === undefined ? [] : [[term.id, draft]]
           })
         )
+        termDrafts.value = nextDrafts
+        deferredTermDrafts.value = new Map(nextDrafts)
       })
     },
     setPersistedTerms(terms) {
@@ -122,11 +146,13 @@ export function createRedactionSidebarState() {
       const nextDrafts = new Map(termDrafts.peek())
       nextDrafts.set(id, value)
       termDrafts.value = nextDrafts
+      scheduleDeferredDrafts()
     },
     resetDraft(id) {
       const nextDrafts = new Map(termDrafts.peek())
       nextDrafts.delete(id)
       termDrafts.value = nextDrafts
+      scheduleDeferredDrafts()
     },
     draftValueFor,
     committedValueFor,
@@ -154,6 +180,22 @@ export function createRedactionSidebarState() {
       }
     }
   }
+}
+
+function buildPendingEdits(sourceTerms, drafts) {
+  return sourceTerms
+    .map((term) => {
+      const draft = drafts.get(term.id)
+      const nextTerm = normalizeDraft(typeof draft === 'string' ? draft : term.matchedText)
+      const previousTerm = normalizeDraft(term.matchedText)
+
+      return {
+        termId: term.id,
+        previousTerm,
+        nextTerm
+      }
+    })
+    .filter((edit) => Boolean(edit.nextTerm) && edit.nextTerm !== edit.previousTerm)
 }
 
 function normalizeDraft(value) {

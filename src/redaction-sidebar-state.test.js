@@ -45,6 +45,39 @@ test('sidebar state keeps draft edits separate from committed redaction terms un
   assert.equal(state.sourceTerms.value[0].matchedText, 'John Doe')
 })
 
+test('sidebar state defers preview edits while keeping textbox drafts immediate', async () => {
+  const state = createRedactionSidebarState({ draftPreviewDelayMs: 10 })
+
+  state.syncFromDraftState({ filePreviews: [
+    {
+      originalText: 'John Doe met Jane.',
+      redactionRanges: [{ start: 5, end: 8 }],
+      redactionTerms: [
+        { matchedText: 'Doe', replacement: '[NAME]', entityType: 'NAME', occurrences: 1 }
+      ]
+    }
+  ] })
+
+  const id = state.sourceTerms.value[0].id
+  state.setDraft(id, 'John Doe')
+
+  assert.equal(state.draftValueFor(id), 'John Doe')
+  assert.deepEqual(state.pendingEdits.value, [{
+    termId: id,
+    previousTerm: 'Doe',
+    nextTerm: 'John Doe'
+  }])
+  assert.deepEqual(state.previewPendingEdits.value, [])
+
+  await new Promise((resolve) => setTimeout(resolve, 20))
+
+  assert.deepEqual(state.previewPendingEdits.value, [{
+    termId: id,
+    previousTerm: 'Doe',
+    nextTerm: 'John Doe'
+  }])
+})
+
 test('sidebar state clears drafts when previews resync', () => {
   const state = createRedactionSidebarState()
 
