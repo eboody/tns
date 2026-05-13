@@ -82,8 +82,7 @@ Use:
 - Previous Evaluations
 
 Child cases **do not** have a separate Presenting Complaints/Symptoms section.
-Reported concerns should be distributed into the relevant history sections and
-woven through those sections rather than gathered into a symptom-only block.
+Reported concerns should be distributed into the relevant history sections.
 
 ## Global Writing Rules
 
@@ -109,19 +108,6 @@ Name sources when:
 - sources differ
 - the source itself matters
 - the statement would sound too strong without attribution
-
-This applies throughout the report, not just in isolated sections.
-
-### Acronyms and Initialisms
-
-On the first reference to any acronym or initialism in the report, write the full
-term followed by the acronym in parentheses, then use the acronym alone on later
-references. For example: `Attention-Deficit/Hyperactivity Disorder (ADHD)` on
-first reference, then `ADHD` thereafter.
-
-Only expand acronyms when the full term is source-supported or clinically
-standard and unambiguous in context. If the expansion is unclear, avoid the
-acronym when possible or mark it as needing clarification rather than guessing.
 
 ### Quotes
 
@@ -205,10 +191,24 @@ Check for:
 - missing attribution
 - too many or too few examples
 - mismatch with Reason for Referral
-- acronyms/initialisms used before first-reference expansion
 - residual intake-note tone
 
 ## Section-Specific Rules
+
+### Reason for Referral: Global Rules
+
+- include only the main presenting concerns
+- do not include strengths
+- do not include secondary manifestations/details that belong later
+- do not include grade in child cases
+- use the narrowest accurate source-supported labels
+- do not expand concerns with examples, symptom lists, or functional elaboration
+- preferred paragraph shape is:
+  1. identification + concern sentence
+  2. brief onset/scope sentence
+  3. fixed closing sentence
+- keep cross-setting scope brief when included, e.g. `have continued across home
+  and school settings`
 
 ### Adult: Reason for Referral
 
@@ -233,8 +233,30 @@ Include:
 The concerns named here determine the order later used in adult Presenting
 Complaints/Symptoms.
 
-This section should orient the reader clearly but remain concise. Name the main
-concern clusters here without overloading the section with examples.
+Keep the paragraph concise. Do not expand the concern list with examples,
+teacher/parent specifics, homework/task-completion detail, or additional symptom
+enumeration here.
+
+### Child: Reason for Referral
+
+Include:
+
+- child name
+- age in years and months
+- male/female
+- handedness
+- evaluation setting phrased as
+  - `presented for an outpatient neuropsychological assessment`
+- main concerns
+- onset of concerns
+- brief cross-setting scope only when concise and source-grounded
+- exact closing sentence:
+
+> The purpose of this evaluation is to determine strengths and weaknesses and to
+> assist with diagnostic clarification and treatment planning.
+
+Do not expand the concerns with examples, teacher-specific detail, homework or
+task-completion elaboration, behavioral symptom lists, strengths, or grade.
 
 ### Adult: Presenting Complaints/Symptoms
 
@@ -292,6 +314,13 @@ For included issues:
 Developmental history is treated **more inclusively** than general medical
 history.
 
+When sleep history is available and normal, prefer phrasing such as:
+
+> No sleep issues or atypical sleep behaviors were reported.
+
+Also include approximate nightly sleep duration when that information was
+collected.
+
 ### Child: Developmental History
 
 Include, as reported and when available:
@@ -315,6 +344,14 @@ Rules:
 - organize chronologically
 - use objective report-based language
 - do not interpret
+- if developmental milestones are broadly within normal limits but a mild
+  exception such as nocturnal enuresis is present, state the broad typical
+  pattern first and then name the exception clearly
+- do not leave `toileting within normal limits` unqualified when nocturnal
+  enuresis is also reported
+- do not use phrasing such as `biological child`; biological/adoptive/foster
+  wording belongs to parent/caregiver or family-structure description, not to the
+  child
 
 ### Adult: Developmental History
 
@@ -342,6 +379,15 @@ Prefer summary phrasing such as:
 
 It is acceptable to name relationships for family structure or living context,
 but not to attach protected conditions to specific relatives.
+
+When diagnoses are documented, state the diagnosis names directly at the
+immediate/extended family-history level rather than weakening them into vague
+labels such as `attention problems`.
+
+Examples:
+
+- `Immediate family history is remarkable for ADHD and epilepsy.`
+- `Extended family history is remarkable for dyslexia and Alzheimer's disease.`
 
 #### Section Flow
 
@@ -380,10 +426,6 @@ Include:
 - immediate and extended family psychiatric, neurodevelopmental, and medical
   history
 - cultural, ethnic, or language background when relevant
-
-Do not specify which immediate or extended relative had which condition in the
-final report. Preserve only the summary bucket unless the detail is about family
-structure/context rather than protected health information.
 
 ### Emotional/Behavioral History
 
@@ -492,7 +534,7 @@ Include:
 - when it occurred
 - by whom
 - usually only the diagnosis
-- if no diagnosis, a brief quoted or closely paraphrased impression if useful
+- if no diagnosis, a brief impression if useful
 - clear source attribution
 
 If expected information is missing here, `not reported` is appropriate.
@@ -534,8 +576,7 @@ Confirm that:
 For later-supported concerns, decide whether each is:
 
 - a major concern, or
-- a secondary historical feature, or
-- a secondary challenge tied to an existing major concern
+- a secondary historical feature/challenge tied to an existing major concern
 
 ## Final Polish Check
 
@@ -572,8 +613,6 @@ Therefore the writing should be clear, restrained, and privacy-conscious.
 - Does each section stay within reported history rather than interpretation?
 - Were diagnoses mentioned only when explicitly documented?
 - Were source attributions added where needed?
-- Were acronyms/initialisms expanded on first reference and used consistently
-  thereafter?
 - Were concerns ordered consistently from referral into adult presenting complaints?
 - Were child concerns distributed into history sections rather than forced into a
   presenting complaints section?

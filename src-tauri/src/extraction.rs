@@ -179,20 +179,18 @@ pub fn extract_input(input: &Path) -> Result<ExtractedInput> {
 fn extract_pdf_input(input: &Path) -> Result<ExtractedInput> {
     let lopdf = pdf_extract::extract_pdf_with_lopdf(input);
     let pdftotext = pdf_extract::extract_pdf_with_pdftotext(input);
-    let ocr = ocr_extract::extract_pdf_via_ocr_attempt(input).map(|ocr| {
-        pdf_extract::PdfExtraction {
+    let ocr =
+        ocr_extract::extract_pdf_via_ocr_attempt(input).map(|ocr| pdf_extract::PdfExtraction {
             text: ocr.text,
             text_degraded_detected: false,
             low_confidence_review_required: true,
             quality_penalty: usize::MAX / 4,
-        }
-    });
+        });
 
     let selected = match (&lopdf, &pdftotext) {
         (
             crate::extractor_pipeline::ExtractionAttempt::Extracted {
-                value: lopdf_value,
-                ..
+                value: lopdf_value, ..
             },
             crate::extractor_pipeline::ExtractionAttempt::Extracted {
                 value: pdftotext_value,

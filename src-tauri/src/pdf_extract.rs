@@ -30,8 +30,13 @@ pub fn extract_pdf(path: &Path) -> Result<PdfExtraction> {
 
     Ok(match (&lopdf, &pdftotext) {
         (
-            ExtractionAttempt::Extracted { value: lopdf_value, .. },
-            ExtractionAttempt::Extracted { value: pdftotext_value, .. },
+            ExtractionAttempt::Extracted {
+                value: lopdf_value, ..
+            },
+            ExtractionAttempt::Extracted {
+                value: pdftotext_value,
+                ..
+            },
         ) if should_prefer_pdftotext(lopdf_value, pdftotext_value) => {
             select_first_success(
                 [pdftotext, lopdf],
@@ -39,11 +44,13 @@ pub fn extract_pdf(path: &Path) -> Result<PdfExtraction> {
             )?
             .value
         }
-        _ => select_first_success(
-            [lopdf, pdftotext],
-            "PDF contains no extractable text; treat as non-extractable or low-confidence",
-        )?
-        .value,
+        _ => {
+            select_first_success(
+                [lopdf, pdftotext],
+                "PDF contains no extractable text; treat as non-extractable or low-confidence",
+            )?
+            .value
+        }
     })
 }
 
@@ -188,7 +195,9 @@ fn line_fragmentation_suspected(text: &str) -> bool {
     let broken_word_pairs = trimmed_lines
         .windows(2)
         .filter(|window| {
-            let [left, right] = window else { return false; };
+            let [left, right] = window else {
+                return false;
+            };
             left.chars().count() == 1
                 && left
                     .chars()
@@ -204,11 +213,18 @@ fn line_fragmentation_suspected(text: &str) -> bool {
     let broken_number_pairs = trimmed_lines
         .windows(2)
         .filter(|window| {
-            let [left, right] = window else { return false; };
+            let [left, right] = window else {
+                return false;
+            };
             left.chars().count() == 1
-                && left.chars().next().is_some_and(|char| char.is_ascii_digit())
+                && left
+                    .chars()
+                    .next()
+                    .is_some_and(|char| char.is_ascii_digit())
                 && right.chars().count() >= 2
-                && right.chars().all(|char| char.is_ascii_digit() || char == '/')
+                && right
+                    .chars()
+                    .all(|char| char.is_ascii_digit() || char == '/')
         })
         .count();
 
@@ -232,7 +248,9 @@ fn quality_penalty(text: &str) -> usize {
     let broken_word_pairs = trimmed_lines
         .windows(2)
         .filter(|window| {
-            let [left, right] = window else { return false; };
+            let [left, right] = window else {
+                return false;
+            };
             left.chars().count() == 1
                 && left
                     .chars()
@@ -248,11 +266,18 @@ fn quality_penalty(text: &str) -> usize {
     let broken_number_pairs = trimmed_lines
         .windows(2)
         .filter(|window| {
-            let [left, right] = window else { return false; };
+            let [left, right] = window else {
+                return false;
+            };
             left.chars().count() == 1
-                && left.chars().next().is_some_and(|char| char.is_ascii_digit())
+                && left
+                    .chars()
+                    .next()
+                    .is_some_and(|char| char.is_ascii_digit())
                 && right.chars().count() >= 2
-                && right.chars().all(|char| char.is_ascii_digit() || char == '/')
+                && right
+                    .chars()
+                    .all(|char| char.is_ascii_digit() || char == '/')
         })
         .count();
 

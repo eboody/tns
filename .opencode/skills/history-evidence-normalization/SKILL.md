@@ -61,13 +61,6 @@ the disagreement. Instead:
 
 Prefer short normalized fact statements over copied passages.
 
-When source materials use acronyms or initialisms that may appear in the final
-report, preserve the underlying term when it is available. Prepare the first
-report-facing reference as `full term (ACRONYM)` and use the acronym alone only
-after that first expanded reference. Do not invent an expansion when the source
-does not provide enough information; instead, flag the acronym as needing
-clarification or avoid it when plain-language wording is possible.
-
 Keep direct quotes only when:
 
 - the client's wording is clinically useful
@@ -138,12 +131,6 @@ Normalize evidence into domains used by later history drafting:
 
 Do not force every source into every domain.
 
-Important branching rule:
-
-- adult cases may populate a separate `presenting symptoms/concerns` domain
-- child cases do not get a separate presenting-complaints domain in the final
-  history; route those concerns into the relevant history sections instead
-
 ## Inclusion Rules
 
 Include information if it helps explain:
@@ -174,6 +161,11 @@ Otherwise it will usually be omitted.
 
 Developmental history is more inclusive than general medical history.
 
+When sleep information is available, preserve:
+
+- whether sleep issues or atypical sleep behaviors were reported
+- approximate nightly sleep duration, if collected
+
 ## Source Attribution Triggers
 
 Mark an item as attribution-sensitive when:
@@ -183,9 +175,6 @@ Mark an item as attribution-sensitive when:
 - the claim would sound too strong without naming the source
 - the source itself matters for credibility or context
 - the statement is subjective, evaluative, or potentially disputed
-
-Preserve attribution needs throughout normalization so later drafting can name
-parents, teachers, tutors, physicians, and other informants when needed.
 
 ## Quote Handling
 
@@ -206,16 +195,6 @@ For each domain, produce compact evidence clusters containing:
 - attribution flag
 
 Do not convert evidence clusters into polished prose yet.
-
-For adult cases, also preserve:
-
-- the concern order established for Reason for Referral
-- which concern clusters should later expand in Presenting Complaints/Symptoms
-
-For child cases, also preserve:
-
-- which reported concerns need to be distributed across developmental,
-  medical, emotional/behavioral, social, and educational history sections
 
 ## Provenance Requirements
 
@@ -240,8 +219,12 @@ Prefer buckets such as:
 - immediate family history
 - extended family history
 
-Do not normalize family-history evidence in a way that encourages later linkage
-of a protected condition to a named relative.
+When diagnoses are documented, preserve the diagnosis names exactly for later
+summary rendering. Do not weaken them into vague labels such as `attention
+problems` when the source supports a diagnosis such as `ADHD`.
+
+Also preserve all documented diagnoses within each bucket so later drafting does
+not accidentally omit a supported condition.
 
 ### Previous Evaluations
 
@@ -251,10 +234,7 @@ Keep prior evaluations normalized briefly:
 - when it occurred
 - by whom
 - diagnosis if formally stated
-- brief impression only when needed, usually when no diagnosis was stated
-
-Also flag when `not reported` may be appropriate because an expected detail is
-missing.
+- brief impression only when needed
 
 ### School Information Placement
 
@@ -277,11 +257,6 @@ can answer:
 - Which claims require explicit attribution?
 - Which disagreements must remain visible?
 - Which concrete examples are worth carrying forward?
-- Which acronyms/initialisms require first-reference expansion in the final
-  draft, and what source supports each expansion?
-- Which later-supported concerns are best treated as major concerns,
-  secondary historical features, or secondary challenges tied to an existing
-  concern?
 
 ## Review Checklist
 
@@ -294,8 +269,6 @@ can answer:
 - Was developmental history treated more inclusively than general medical history?
 - Were family-history privacy constraints preserved?
 - Were school-based details routed toward the right eventual sections?
-- Were acronyms/initialisms prepared with source-supported first-reference
-  expansions, or flagged when expansion is unclear?
 - Is the output normalized evidence rather than premature polished prose?
 
 Base directory for this skill: file:///home/eran/code/tns/.opencode/skills/history-evidence-normalization

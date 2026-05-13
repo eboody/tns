@@ -1,13 +1,2 @@
-target/
-src-tauri/target/
-src-tauri/gen/
-dist/
-ml/ner/model.onnx
-.gitnexus
-node_modules
-ralph
-.playwright-mcp/
-.sandcastle/history-report/cases/
-graphify-out/
-**/graphify-out/
-tns.mmd
+# Created by venv; see https://docs.python.org/3/library/venv.html
+*

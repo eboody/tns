@@ -16,7 +16,9 @@ pub fn apply(input_text: &str, entities: &[RecognizerResult]) -> (String, Vec<Fi
     let mut records = Vec::new();
 
     for segment in segments {
-        if segment.start() < last_end || segment.end() > input_text.len() {
+        if segment.start() < last_end
+            || !is_valid_text_span(input_text, segment.start(), segment.end())
+        {
             continue;
         }
 
@@ -120,6 +122,7 @@ impl Segment {
 fn collect_segments(input_text: &str, entities: &[RecognizerResult]) -> Vec<Segment> {
     let mut segments: Vec<Segment> = entities
         .iter()
+        .filter(|entity| is_valid_text_span(input_text, entity.start, entity.end))
         .filter(|entity| should_keep_library_entity(input_text, entity))
         .cloned()
         .map(Segment::Library)
@@ -130,6 +133,27 @@ fn collect_segments(input_text: &str, entities: &[RecognizerResult]) -> Vec<Segm
             .map(Segment::Custom),
     );
     segments
+}
+
+fn is_valid_text_span(input_text: &str, start: usize, end: usize) -> bool {
+    start <= end
+        && end <= input_text.len()
+        && input_text.is_char_boundary(start)
+        && input_text.is_char_boundary(end)
+}
+
+fn floor_char_boundary(input_text: &str, index: usize) -> usize {
+    let mut index = index.min(input_text.len());
+    while index > 0 && !input_text.is_char_boundary(index) {
+        index -= 1;
+    }
+    index
+}
+
+fn preceding_context(input_text: &str, end: usize, max_bytes: usize) -> &str {
+    let safe_end = floor_char_boundary(input_text, end);
+    let safe_start = floor_char_boundary(input_text, safe_end.saturating_sub(max_bytes));
+    &input_text[safe_start..safe_end]
 }
 
 fn detect_custom_segments(input_text: &str) -> Vec<CustomSegment> {
@@ -260,7 +284,12 @@ fn detect_custom_segments(input_text: &str) -> Vec<CustomSegment> {
         push_multiline_labeled_segments(
             &mut segments,
             input_text,
-            &["dob", "patient's date of birth", "patient\n'\ns date of birth", "date of birth"],
+            &[
+                "dob",
+                "patient's date of birth",
+                "patient\n'\ns date of birth",
+                "date of birth",
+            ],
             "DATE_OF_BIRTH",
             "[DATE_OF_BIRTH]",
             "custom multiline labeled date-of-birth classification",
@@ -268,7 +297,13 @@ fn detect_custom_segments(input_text: &str) -> Vec<CustomSegment> {
         push_multiline_labeled_segments(
             &mut segments,
             input_text,
-            &["client", "patient", "provider", "full name", "name of person filling out this form"],
+            &[
+                "client",
+                "patient",
+                "provider",
+                "full name",
+                "name of person filling out this form",
+            ],
             "CLIENT_NAME",
             "[CLIENT]",
             "custom multiline labeled intake person classification",
@@ -462,11 +497,16 @@ fn detect_custom_segments(input_text: &str) -> Vec<CustomSegment> {
         });
     }
 
-    let city_state_regex = Regex::new(r"(?i)\b[A-Za-z .'-]+,\s*[A-Z]{2}\b")
-        .expect("city/state regex should compile");
+    let city_state_regex =
+        Regex::new(r"\b[A-Z][A-Za-z.'-]*(?:\s+[A-Z][A-Za-z.'-]*){0,4},\s*[A-Z]{2}\b")
+            .expect("city/state regex should compile");
     for matched in city_state_regex.find_iter(input_text) {
         let text = matched.as_str().trim().to_string();
-        if text.len() < 6 || looks_like_city_state_zip_line(&text) {
+        let state_abbreviation = text.rsplit(',').next().map(str::trim).unwrap_or_default();
+        if text.len() < 6
+            || !is_us_state_or_district_abbreviation(state_abbreviation)
+            || looks_like_city_state_zip_line(&text)
+        {
             continue;
         }
         segments.push(CustomSegment {
@@ -598,7 +638,9 @@ fn detect_change_of_name_form_segments(input_text: &str) -> Vec<CustomSegment> {
 
     for (_, _, line) in &line_spans {
         if looks_like_form_person_line(line) {
-            *repeated_name_counts.entry(line.trim().to_string()).or_default() += 1;
+            *repeated_name_counts
+                .entry(line.trim().to_string())
+                .or_default() += 1;
         }
     }
 
@@ -649,7 +691,8 @@ fn detect_change_of_name_form_segments(input_text: &str) -> Vec<CustomSegment> {
                 entity_type: "ADDRESS".to_string(),
                 matched_text: trimmed.to_string(),
                 replacement: "[ADDRESS]".to_string(),
-                reason: "custom standalone county/city classification for change-of-name form".to_string(),
+                reason: "custom standalone county/city classification for change-of-name form"
+                    .to_string(),
                 start: *start,
                 end: *end,
             });
@@ -664,7 +707,8 @@ fn detect_change_of_name_form_segments(input_text: &str) -> Vec<CustomSegment> {
                 entity_type: "ADDRESS".to_string(),
                 matched_text: trimmed.to_string(),
                 replacement: "[ADDRESS]".to_string(),
-                reason: "custom standalone state/zip classification for change-of-name form".to_string(),
+                reason: "custom standalone state/zip classification for change-of-name form"
+                    .to_string(),
                 start: *start,
                 end: *end,
             });
@@ -691,7 +735,9 @@ fn detect_change_of_name_form_segments(input_text: &str) -> Vec<CustomSegment> {
         }
 
         let lowered = trimmed.to_ascii_lowercase();
-        if institution_keywords.iter().any(|keyword| lowered.contains(keyword))
+        if institution_keywords
+            .iter()
+            .any(|keyword| lowered.contains(keyword))
             && looks_like_title_case_phrase(trimmed)
             && !trimmed.contains(':')
         {
@@ -742,7 +788,9 @@ fn detect_student_score_report_segments(input_text: &str) -> Vec<CustomSegment> 
                     });
                 }
 
-                if let Some((addr_start, addr_end, addr_line)) = next_nonempty_line(&lines, index + 2) {
+                if let Some((addr_start, addr_end, addr_line)) =
+                    next_nonempty_line(&lines, index + 2)
+                {
                     if looks_like_street_address(addr_line.trim()) {
                         segments.push(CustomSegment {
                             entity_type: "ADDRESS".to_string(),
@@ -756,7 +804,9 @@ fn detect_student_score_report_segments(input_text: &str) -> Vec<CustomSegment> 
                     }
                 }
 
-                if let Some((city_start, city_end, city_line)) = next_nonempty_line(&lines, index + 3) {
+                if let Some((city_start, city_end, city_line)) =
+                    next_nonempty_line(&lines, index + 3)
+                {
                     if looks_like_city_state_zip_line(city_line.trim()) {
                         segments.push(CustomSegment {
                             entity_type: "ADDRESS".to_string(),
@@ -846,8 +896,7 @@ fn should_keep_library_entity(input_text: &str, entity: &RecognizerResult) -> bo
 }
 
 fn is_suppressed_labeled_field(input_text: &str, start: usize) -> bool {
-    let context_start = start.saturating_sub(64);
-    let context = input_text[context_start..start].to_ascii_lowercase();
+    let context = preceding_context(input_text, start, 64).to_ascii_lowercase();
     [
         "race/ethnicity:",
         "primary language:",
@@ -861,8 +910,7 @@ fn is_suppressed_labeled_field(input_text: &str, start: usize) -> bool {
 }
 
 fn looks_like_license_context(input_text: &str, start: usize) -> bool {
-    let context_start = start.saturating_sub(32);
-    let context = input_text[context_start..start].to_ascii_lowercase();
+    let context = preceding_context(input_text, start, 32).to_ascii_lowercase();
     context.contains("license")
 }
 
@@ -934,7 +982,8 @@ fn looks_like_form_person_line(text: &str) -> bool {
     (2..=4).contains(&words.len())
         && !text.contains(',')
         && words.iter().all(|word| {
-            let cleaned = word.trim_matches(|ch: char| !ch.is_alphabetic() && ch != '-' && ch != '\'');
+            let cleaned =
+                word.trim_matches(|ch: char| !ch.is_alphabetic() && ch != '-' && ch != '\'');
             !cleaned.is_empty()
                 && cleaned
                     .chars()
@@ -947,6 +996,62 @@ fn looks_like_city_state_zip_line(text: &str) -> bool {
     Regex::new(r"(?i)^[A-Za-z .'-]+,\s*[A-Z]{2}\s+\d{5}$")
         .expect("city/state/zip regex should compile")
         .is_match(text)
+}
+
+fn is_us_state_or_district_abbreviation(value: &str) -> bool {
+    matches!(
+        value,
+        "AL" | "AK"
+            | "AZ"
+            | "AR"
+            | "CA"
+            | "CO"
+            | "CT"
+            | "DE"
+            | "DC"
+            | "FL"
+            | "GA"
+            | "HI"
+            | "ID"
+            | "IL"
+            | "IN"
+            | "IA"
+            | "KS"
+            | "KY"
+            | "LA"
+            | "ME"
+            | "MD"
+            | "MA"
+            | "MI"
+            | "MN"
+            | "MS"
+            | "MO"
+            | "MT"
+            | "NE"
+            | "NV"
+            | "NH"
+            | "NJ"
+            | "NM"
+            | "NY"
+            | "NC"
+            | "ND"
+            | "OH"
+            | "OK"
+            | "OR"
+            | "PA"
+            | "RI"
+            | "SC"
+            | "SD"
+            | "TN"
+            | "TX"
+            | "UT"
+            | "VT"
+            | "VA"
+            | "WA"
+            | "WV"
+            | "WI"
+            | "WY"
+    )
 }
 
 fn looks_like_street_address(text: &str) -> bool {
@@ -1005,7 +1110,9 @@ fn propagate_custom_exact_matches(input_text: &str, seeds: &[CustomSegment]) -> 
         while let Some(relative_start) = input_text[search_from..].find(&seed.matched_text) {
             let start = search_from + relative_start;
             let end = start + seed.matched_text.len();
-            if start != seed.start && has_exact_match_boundaries(input_text, start, end, &seed.matched_text) {
+            if start != seed.start
+                && has_exact_match_boundaries(input_text, start, end, &seed.matched_text)
+            {
                 propagated.push(CustomSegment {
                     start,
                     end,
@@ -1037,10 +1144,7 @@ fn has_exact_match_boundaries(text: &str, start: usize, end: usize, matched_text
     };
 
     let right_ok = if is_wordish(last_char) {
-        text[end..]
-            .chars()
-            .next()
-            .is_none_or(|ch| !is_wordish(ch))
+        text[end..].chars().next().is_none_or(|ch| !is_wordish(ch))
     } else {
         true
     };
@@ -1063,7 +1167,10 @@ fn push_multiline_labeled_segments(
     let lines = line_spans(input_text);
     for (index, (_start, _end, line)) in lines.iter().enumerate() {
         let lowered = line.trim().to_ascii_lowercase();
-        if !labels.iter().any(|label| lowered == *label || lowered == format!("{label}:")) {
+        if !labels
+            .iter()
+            .any(|label| lowered == *label || lowered == format!("{label}:"))
+        {
             continue;
         }
 
@@ -1238,14 +1345,12 @@ fn classify_source(entity_type: &str, replacement: &str, recognizer_name: &str) 
 }
 
 fn looks_like_fax(input_text: &str, start: usize) -> bool {
-    let context_start = start.saturating_sub(12);
-    let context = input_text[context_start..start].to_ascii_lowercase();
+    let context = preceding_context(input_text, start, 12).to_ascii_lowercase();
     context.contains("fax")
 }
 
 fn looks_like_labeled_student_identifier(input_text: &str, start: usize) -> bool {
-    let context_start = start.saturating_sub(24);
-    let context = input_text[context_start..start].to_ascii_lowercase();
+    let context = preceding_context(input_text, start, 24).to_ascii_lowercase();
     context.contains("ssid:")
         || context.contains("student id:")
         || context.contains("student identifier:")
@@ -1254,11 +1359,9 @@ fn looks_like_labeled_student_identifier(input_text: &str, start: usize) -> bool
 
 fn preserve_only_year(text: &str) -> Option<String> {
     let trimmed = text.trim();
-    if trimmed.len() >= 4 {
-        let year = &trimmed[0..4];
-        if year.chars().all(|ch| ch.is_ascii_digit()) {
-            return Some(year.to_string());
-        }
+    let year: String = trimmed.chars().take(4).collect();
+    if year.len() == 4 && year.chars().all(|ch| ch.is_ascii_digit()) {
+        return Some(year);
     }
 
     None
@@ -1272,5 +1375,80 @@ fn safe_harbor_age_replacement(text: &str) -> Option<String> {
         Some("90 or older".to_string())
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn policy_context_windows_do_not_panic_when_start_minus_window_splits_utf8() {
+        let prefix = format!("SSID: –{}", "x".repeat(22));
+        let text = format!("{prefix}12345");
+        let start = prefix.len();
+
+        assert!(text.is_char_boundary(start));
+        assert!(!text.is_char_boundary(start - 24));
+
+        let entity = RecognizerResult::new(EntityType::Person, start, text.len(), 0.91, "test-ner");
+        let (_redacted, findings) = apply(&text, &[entity]);
+
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].matched_text, "12345");
+    }
+
+    #[test]
+    fn invalid_library_entity_span_is_skipped_before_policy_slicing() {
+        let text = "alpha – beta";
+        let inside_en_dash = text.find('–').expect("fixture has en dash") + 1;
+
+        assert!(!text.is_char_boundary(inside_en_dash));
+
+        let entity = RecognizerResult::new(
+            EntityType::Person,
+            inside_en_dash,
+            inside_en_dash + 1,
+            0.91,
+            "test-ner",
+        );
+        let (redacted, findings) = apply(text, &[entity]);
+
+        assert_eq!(redacted, text);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn city_state_detection_requires_uppercase_state_abbreviation() {
+        let false_positive_text = "Jane demonstrated anxious-like behaviors related to performance and a desire to do well, as expected.";
+        let (_redacted, findings) = apply(false_positive_text, &[]);
+        assert!(
+            findings.iter().all(|finding| finding.reason
+                != "custom city/state classification for birthplace and sub-state geography"),
+            "lowercase prose connector after comma must not be treated as a state abbreviation"
+        );
+
+        let false_positive_uppercase_text =
+            "Clinical inquiry clarified reality testing. Rather, SS reported no concerns.";
+        let (_redacted, findings) = apply(false_positive_uppercase_text, &[]);
+        assert!(
+            findings.iter().all(|finding| finding.reason
+                != "custom city/state classification for birthplace and sub-state geography"),
+            "ordinary prose before an uppercase acronym must not be treated as a city/state pair"
+        );
+
+        let real_city_state = "Birthplace: Santa Monica, CA";
+        let (_redacted, findings) = apply(real_city_state, &[]);
+        assert!(findings.iter().any(|finding| {
+            finding.matched_text == "Santa Monica, CA"
+                && finding.reason
+                    == "custom city/state classification for birthplace and sub-state geography"
+        }));
+    }
+
+    #[test]
+    fn preserve_only_year_reads_characters_not_raw_bytes() {
+        assert_eq!(preserve_only_year("2025-01-02"), Some("2025".to_string()));
+        assert_eq!(preserve_only_year("€€2025"), None);
     }
 }

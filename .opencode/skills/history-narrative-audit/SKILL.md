@@ -51,10 +51,8 @@ For adult cases, confirm that:
 - Presenting Complaints/Symptoms expands the same concerns named in Reason for
   Referral
 - those concerns appear in the **same order**
-- Reason for Referral includes the expected orientation elements for an adult
-  case: name, age in years, gender, handedness, outpatient neuropsychological
-  assessment framing, main concerns, onset framing, and the required purpose
-  sentence
+- Reason for Referral stays concise rather than expanding concerns with examples,
+  symptom lists, or downstream detail
 
 ### Child Structure Check
 
@@ -63,6 +61,8 @@ For child cases, confirm that:
 - no separate Presenting Complaints/Symptoms section was created
 - the main concerns from Reason for Referral were distributed into the relevant
   history sections
+- Reason for Referral stays concise rather than expanding concerns with examples,
+  symptom lists, or later-section detail
 
 ## Section Integrity Audit
 
@@ -75,6 +75,8 @@ For each section, ask:
 5. Is attribution needed and missing?
 6. Is any sentence interpretive rather than report-based?
 7. Does it still sound like intake notes?
+8. Is Reason for Referral doing more than brief identification + onset/scope +
+   closing sentence?
 
 ## Language Audit Rules
 
@@ -106,16 +108,6 @@ Flag missing attribution when:
 - the statement would sound too strong without attribution
 - the source itself matters to how the reader should weigh the statement
 
-### Acronym/Initialism Expansion
-
-Flag any acronym or initialism that appears without a first-reference expansion
-of the full term followed by the acronym in parentheses. After the first expanded
-reference, later uses may use the acronym alone.
-
-Also flag expansions that appear guessed, unsupported by the source material, or
-ambiguous in context. Revise by using the source-supported full term, avoiding
-the acronym, or marking the item for clarification.
-
 ### Intake-Note Style Drift
 
 Flag prose that is:
@@ -146,8 +138,27 @@ Flag content placed in the wrong section, such as:
 - child concerns forced into a Presenting Complaints section
 - family diagnoses linked to named relatives rather than summarized more
   privately
-- childhood or school-based concerns left in a generic bucket when they belong
-  in developmental, social, emotional/behavioral, or educational history
+
+## Developmental / Medical Coherence Audit
+
+Flag contradictions such as:
+
+- toileting described as fully within normal limits while nocturnal enuresis is
+  also reported without qualification
+- primarily developmental concerns fragmented across sections instead of kept
+  together with only a brief medical reference
+- sleep described vaguely (e.g. `sleep is unremarkable`) when clearer phrasing or
+  sleep duration was available
+
+## Family History Specificity Audit
+
+Flag when:
+
+- documented diagnosis names were weakened into vague labels such as `attention
+  problems`
+- a supported diagnosis was omitted from the immediate or extended family bucket
+- family-history rendering loses diagnostic specificity that was available in the
+  source material
 
 ## Consistency Audit Rules
 
@@ -156,8 +167,8 @@ Confirm that:
 - Reason for Referral concerns are carried through the report
 - no major concern is introduced and then dropped
 - no new unsupported major concern appears later
-- later concerns are framed either as major concerns, secondary historical
-  features, or secondary challenges tied to an existing concern
+- later concerns are framed either as major concerns or as secondary features
+  tied to an existing concern
 - section emphasis matches the referral question and reported impairment
 
 ## Previous Evaluations / Not Reported Audit
@@ -172,7 +183,6 @@ such as in:
 - Medical/Developmental History
 - treatment history
 - safety history
-- and previous-evaluation details that a reader would reasonably expect
 
 ## Audit Output Format
 
@@ -181,7 +191,7 @@ Prefer concise issue lists grouped by severity:
 - **must fix**: unsupported diagnosis, interpretive claim, wrong age structure,
   missing required adult ordering, major attribution failure
 - **should fix**: poor section placement, weak example density, repetitive prose,
-  privacy wording issues, acronym/initialism first-reference expansion problems
+  privacy wording issues
 - **polish**: phrasing improvements, smoothing, compression, tone cleanup
 
 For each flagged issue, state:
@@ -209,7 +219,6 @@ Ask:
 - Is interpretive language absent?
 - Are diagnoses limited to explicitly documented diagnoses?
 - Are attribution gaps identified?
-- Are acronyms/initialisms expanded on first reference and then used consistently?
 - Is family-history phrasing privacy-conscious?
 - Are examples balanced and functional?
 - Does the draft read like polished report prose rather than intake notes?

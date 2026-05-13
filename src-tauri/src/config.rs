@@ -292,11 +292,34 @@ mod tests {
 
         let config = Config::from_profile_and_case_context(profile, case_context);
 
-        assert_eq!(config.client.as_ref().map(|client| client.replacement.as_str()), Some("CLIENT"));
+        assert_eq!(
+            config
+                .client
+                .as_ref()
+                .map(|client| client.replacement.as_str()),
+            Some("CLIENT")
+        );
         assert_eq!(config.exact_entities.len(), 1);
-        assert_eq!(config.patterns.dates.as_ref().map(|rule| rule.replacement.as_str()), Some("[DATE]"));
-        assert_eq!(config.patterns.phones.as_ref().map(|rule| rule.replacement.as_str()), Some("[PHONE]"));
-        assert_eq!(config.ner.as_ref().map(|ner| ner.min_confidence), Some(0.82));
+        assert_eq!(
+            config
+                .patterns
+                .dates
+                .as_ref()
+                .map(|rule| rule.replacement.as_str()),
+            Some("[DATE]")
+        );
+        assert_eq!(
+            config
+                .patterns
+                .phones
+                .as_ref()
+                .map(|rule| rule.replacement.as_str()),
+            Some("[PHONE]")
+        );
+        assert_eq!(
+            config.ner.as_ref().map(|ner| ner.min_confidence),
+            Some(0.82)
+        );
         config.validate().unwrap();
         assert!(!config.is_empty());
     }

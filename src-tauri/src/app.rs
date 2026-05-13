@@ -3,21 +3,19 @@ use std::sync::Mutex;
 
 use crate::desktop::{
     DesktopAddRedactionRequest, DesktopFindAndRedactRequest, DesktopRedactionAcrossFilesRequest,
-    DesktopReplaceRedactionTermRequest,
-    DesktopRemoveRedactionTermRequest,
-    DesktopRemoveRedactionRequest, DesktopRunSettings, DesktopReplaceRequest,
-    DesktopReviewRequest,
-    add_manual_redaction as add_manual_redaction_service,
+    DesktopRemoveRedactionRequest, DesktopRemoveRedactionTermRequest,
+    DesktopReplaceRedactionTermRequest, DesktopReplaceRequest, DesktopReviewRequest,
+    DesktopRunSettings, add_manual_redaction as add_manual_redaction_service,
     apply_redaction_to_all_files as apply_redaction_to_all_files_service,
     find_and_redact_term as find_and_redact_term_service,
     inspect_manual_redaction as inspect_manual_redaction_service,
     inspect_redaction_across_files as inspect_redaction_across_files_service,
     merge_manual_redaction as merge_manual_redaction_service,
-    replace_redaction_term as replace_redaction_term_service,
-    remove_redaction_term as remove_redaction_term_service,
+    remove_redaction as remove_redaction_service,
     remove_redaction_from_all_files as remove_redaction_from_all_files_service,
-    remove_redaction as remove_redaction_service, run_replace_job as run_replace_service,
-    run_review_job as run_review_service,
+    remove_redaction_term as remove_redaction_term_service,
+    replace_redaction_term as replace_redaction_term_service,
+    run_replace_job as run_replace_service, run_review_job as run_review_service,
 };
 use tauri::{AppHandle, Manager, path::BaseDirectory};
 use tauri_plugin_opener::OpenerExt;

@@ -83,6 +83,66 @@ fn default_location_confidence() -> f32 {
     0.88
 }
 
+fn entity_type_for_label(label: &str) -> Option<EntityType> {
+    let bare_label = label
+        .strip_prefix("B-")
+        .or_else(|| label.strip_prefix("I-"))
+        .unwrap_or(label)
+        .replace(['-', '_'], "")
+        .to_ascii_uppercase();
+
+    match bare_label.as_str() {
+        "PER" | "PERSON" | "FIRSTNAME" | "MIDDLENAME" | "LASTNAME" | "GIVENNAME" | "SURNAME" => {
+            Some(EntityType::Person)
+        }
+        "ORG" | "ORGANIZATION" | "COMPANY" | "COMPANYNAME" => Some(EntityType::Organization),
+        "LOC"
+        | "LOCATION"
+        | "GPE"
+        | "CITY"
+        | "STATE"
+        | "COUNTY"
+        | "STREET"
+        | "BUILDINGNUMBER"
+        | "BUILDINGNUM"
+        | "SECONDARYADDRESS"
+        | "NEARBYGPSCOORDINATE" => Some(EntityType::Location),
+        "ZIP" | "ZIPCODE" | "POSTCODE" => Some(EntityType::UsZipCode),
+        "DATE" | "TIME" | "DATETIME" | "DOB" | "DATEOFBIRTH" => Some(EntityType::DateTime),
+        "AGE" => Some(EntityType::Age),
+        "EMAIL" | "EMAILADDRESS" => Some(EntityType::EmailAddress),
+        "PHONE" | "PHONENUMBER" | "TELEPHONE" | "TELEPHONENUM" => Some(EntityType::PhoneNumber),
+        "IP" | "IPV4" | "IPV6" => Some(EntityType::IpAddress),
+        "URL" => Some(EntityType::Url),
+        "CREDITCARD" | "CREDITCARDNUMBER" => Some(EntityType::CreditCard),
+        "IBAN" => Some(EntityType::Iban),
+        "SSN" | "SOCIALNUM" => Some(EntityType::UsSsn),
+        "DRIVERLICENSE" | "DRIVERLICENSENUM" => Some(EntityType::UsDriverLicense),
+        _ => None,
+    }
+}
+
+fn can_continue_entity_across_gap(text: &str, previous_end: usize, next_start: usize) -> bool {
+    previous_end <= next_start
+        && text.get(previous_end..next_start).is_some_and(|gap| {
+            gap.chars()
+                .all(|ch| ch.is_whitespace() || ch == '-' || ch == '’' || ch == '\'')
+        })
+}
+
+fn is_clinical_construct_false_positive(normalized_span: &str) -> bool {
+    matches!(
+        normalized_span,
+        "mood" | "anxiety" | "attention" | "depression" | "memory" | "behavior"
+    )
+}
+
+fn is_psychometric_label_false_positive(normalized_span: &str) -> bool {
+    normalized_span == "organization of materials"
+        || normalized_span == "tive composite"
+        || normalized_span.ends_with(" composite")
+}
+
 impl Default for NerConfig {
     fn default() -> Self {
         let mut label_mappings = HashMap::new();
@@ -163,6 +223,46 @@ impl std::fmt::Debug for NerRecognizer {
 impl NerRecognizer {
     fn debug_enabled() -> bool {
         std::env::var_os("TNS_DEBUG_NER").is_some()
+    }
+
+    fn with_model_sidecar_config(config: NerConfig) -> NerConfig {
+        if config.model_path.is_empty() {
+            return config;
+        }
+
+        let defaults = NerConfig::default();
+        let uses_default_labels = config.id2label == defaults.id2label
+            && config.label_mappings == defaults.label_mappings;
+        if !uses_default_labels {
+            return config;
+        }
+
+        let config_path = Path::new(&config.model_path)
+            .parent()
+            .map(|dir| dir.join("config.json"));
+        let Some(config_path) = config_path.filter(|path| path.exists()) else {
+            return config;
+        };
+
+        match Self::load_config_from_file(&config_path, &config.model_path) {
+            Ok(mut sidecar) => {
+                sidecar.tokenizer_path = config.tokenizer_path;
+                sidecar.min_confidence = config.min_confidence;
+                sidecar.max_seq_length = config.max_seq_length;
+                sidecar.chunk_overlap_tokens = config.chunk_overlap_tokens;
+                sidecar.min_person_confidence = config.min_person_confidence;
+                sidecar.min_organization_confidence = config.min_organization_confidence;
+                sidecar.min_location_confidence = config.min_location_confidence;
+                sidecar
+            }
+            Err(error) => {
+                warn!(
+                    "Failed to load NER config.json: {}. Using provided config.",
+                    error
+                );
+                config
+            }
+        }
     }
 
     /// Create a new NER recognizer from a model file.
@@ -247,23 +347,10 @@ impl NerRecognizer {
                     if label == "O" {
                         continue;
                     }
-                    let entity_type = label.split('-').next_back().unwrap_or(label);
-                    match entity_type {
-                        "PER" | "PERSON" => {
-                            map.insert(label.clone(), EntityType::Person);
-                        }
-                        "ORG" | "ORGANIZATION" => {
-                            map.insert(label.clone(), EntityType::Organization);
-                        }
-                        "LOC" | "LOCATION" | "GPE" => {
-                            map.insert(label.clone(), EntityType::Location);
-                        }
-                        "DATE" | "TIME" | "DATETIME" => {
-                            map.insert(label.clone(), EntityType::DateTime);
-                        }
-                        _ => {
-                            debug!("Unmapped NER label: {} — no EntityType match", label);
-                        }
+                    if let Some(entity_type) = entity_type_for_label(label) {
+                        map.insert(label.clone(), entity_type);
+                    } else {
+                        debug!("Unmapped NER label: {} — no EntityType match", label);
                     }
                 }
                 map
@@ -333,13 +420,18 @@ impl NerRecognizer {
 
     /// Create a new NER recognizer from configuration
     pub fn from_config(config: NerConfig) -> Result<Self> {
+        let config = Self::with_model_sidecar_config(config);
+
         if Self::debug_enabled() {
             eprintln!("[ner] from_config start");
         }
         // Try to load tokenizer if available
         let tokenizer = if let Some(ref tokenizer_path) = config.tokenizer_path {
             if Self::debug_enabled() {
-                eprintln!("[ner] loading tokenizer from explicit path: {}", tokenizer_path);
+                eprintln!(
+                    "[ner] loading tokenizer from explicit path: {}",
+                    tokenizer_path
+                );
             }
             debug!("Loading tokenizer from: {}", tokenizer_path);
             match TokenizerWrapper::from_file(tokenizer_path) {
@@ -362,7 +454,10 @@ impl NerRecognizer {
                 let tokenizer_json = dir.join("tokenizer.json");
                 if tokenizer_json.exists() {
                     if Self::debug_enabled() {
-                        eprintln!("[ner] loading tokenizer from model dir: {}", tokenizer_json.display());
+                        eprintln!(
+                            "[ner] loading tokenizer from model dir: {}",
+                            tokenizer_json.display()
+                        );
                     }
                     debug!("Loading tokenizer from: {}", tokenizer_json.display());
                     match TokenizerWrapper::from_file(&tokenizer_json) {
@@ -494,11 +589,7 @@ impl NerRecognizer {
 
     /// Map NER label to entity type
     fn map_label_to_entity(&self, label: &str) -> Option<EntityType> {
-        self.config
-            .label_mappings
-            .get(label)
-            .cloned()
-            .filter(|entity| *entity != EntityType::DateTime)
+        self.config.label_mappings.get(label).cloned()
     }
 
     fn threshold_for_entity(&self, entity: &EntityType) -> f32 {
@@ -528,14 +619,34 @@ impl NerRecognizer {
         }
 
         let normalized = span.to_ascii_lowercase();
+        if matches!(entity, EntityType::Person) && is_clinical_construct_false_positive(&normalized)
+        {
+            return false;
+        }
+
+        if matches!(entity, EntityType::Organization)
+            && is_psychometric_label_false_positive(&normalized)
+        {
+            return false;
+        }
+
         let blocked = match entity {
             EntityType::Person | EntityType::Organization => [
-                "client", "patient", "provider", "name", "date", "time", "phone", "email",
-                "address", "dob", "signature",
+                "client",
+                "patient",
+                "provider",
+                "name",
+                "date",
+                "time",
+                "phone",
+                "email",
+                "address",
+                "dob",
+                "signature",
             ],
             EntityType::Location => [
-                "address", "city", "state", "zip", "country", "location", "date", "time",
-                "phone", "email", "provider",
+                "address", "city", "state", "zip", "country", "location", "date", "time", "phone",
+                "email", "provider",
             ],
             _ => ["", "", "", "", "", "", "", "", "", "", ""],
         };
@@ -646,6 +757,29 @@ impl NerRecognizer {
                 .unwrap_or("O");
 
             if label.starts_with("B-") {
+                let next_entity_type = self.map_label_to_entity(label);
+
+                let continued_current = if let (Some(next_entity_type), Some(current)) =
+                    (next_entity_type.as_ref(), current_entity.as_mut())
+                {
+                    let (entity_type, _start, end, probs) = current;
+                    if next_entity_type == entity_type
+                        && can_continue_entity_across_gap(text, *end, offsets[idx].0)
+                    {
+                        *end = offsets[idx].1;
+                        probs.push(prob);
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                };
+
+                if continued_current {
+                    continue;
+                }
+
                 // Begin new entity - save previous if exists
                 if let Some((entity_type, start, end, probs)) = current_entity.take() {
                     let avg_confidence = probs.iter().sum::<f32>() / probs.len() as f32;
@@ -663,7 +797,7 @@ impl NerRecognizer {
                 }
 
                 // Start new entity
-                if let Some(entity_type) = self.map_label_to_entity(label) {
+                if let Some(entity_type) = next_entity_type {
                     let start = offsets[idx].0;
                     let end = offsets[idx].1;
                     current_entity = Some((entity_type, start, end, vec![prob]));
@@ -693,6 +827,10 @@ impl NerRecognizer {
                             current_entity = None;
                         }
                     }
+                } else if let Some(entity_type) = self.map_label_to_entity(label) {
+                    let start = offsets[idx].0;
+                    let end = offsets[idx].1;
+                    current_entity = Some((entity_type, start, end, vec![prob]));
                 }
             } else {
                 // "O" tag or unknown - end current entity
@@ -743,6 +881,17 @@ impl Recognizer for NerRecognizer {
             EntityType::Person,
             EntityType::Organization,
             EntityType::Location,
+            EntityType::DateTime,
+            EntityType::Age,
+            EntityType::EmailAddress,
+            EntityType::PhoneNumber,
+            EntityType::IpAddress,
+            EntityType::Url,
+            EntityType::CreditCard,
+            EntityType::Iban,
+            EntityType::UsSsn,
+            EntityType::UsDriverLicense,
+            EntityType::UsZipCode,
         ]
     }
 
@@ -769,7 +918,10 @@ impl Recognizer for NerRecognizer {
             let chunk_text = &text[start..end];
             let mut encoding = tokenizer.encode(chunk_text, true)?;
             if Self::debug_enabled() {
-                eprintln!("[ner] tokenized chunk {start}..{end}: {} tokens before pad", encoding.ids.len());
+                eprintln!(
+                    "[ner] tokenized chunk {start}..{end}: {} tokens before pad",
+                    encoding.ids.len()
+                );
             }
 
             let pad_id = tokenizer.get_padding_id().unwrap_or(0);
@@ -777,7 +929,10 @@ impl Recognizer for NerRecognizer {
 
             let logits = self.infer(&encoding.ids, &encoding.attention_mask)?;
             if Self::debug_enabled() {
-                eprintln!("[ner] logits returned for chunk {start}..{end}: {} token rows", logits.len());
+                eprintln!(
+                    "[ner] logits returned for chunk {start}..{end}: {} token rows",
+                    logits.len()
+                );
             }
 
             let mut predictions = Vec::new();
@@ -794,12 +949,8 @@ impl Recognizer for NerRecognizer {
                 probabilities.push(max_prob);
             }
 
-            let mut chunk_results = self.parse_bio_tags(
-                chunk_text,
-                &predictions,
-                &probabilities,
-                &encoding.offsets,
-            );
+            let mut chunk_results =
+                self.parse_bio_tags(chunk_text, &predictions, &probabilities, &encoding.offsets);
             for result in &mut chunk_results {
                 result.start += start;
                 result.end += start;
@@ -811,7 +962,9 @@ impl Recognizer for NerRecognizer {
             left.start
                 .cmp(&right.start)
                 .then_with(|| left.end.cmp(&right.end))
-                .then_with(|| format!("{:?}", left.entity_type).cmp(&format!("{:?}", right.entity_type)))
+                .then_with(|| {
+                    format!("{:?}", left.entity_type).cmp(&format!("{:?}", right.entity_type))
+                })
                 .then_with(|| {
                     right
                         .score
@@ -961,6 +1114,91 @@ mod tests {
     }
 
     #[test]
+    fn test_load_config_maps_pii_labels_from_id2label() {
+        let json = r#"{
+            "id2label": {
+                "0": "O",
+                "1": "B-FIRSTNAME",
+                "2": "I-LASTNAME",
+                "3": "I-DATEOFBIRTH",
+                "4": "I-TELEPHONENUM",
+                "5": "I-CITY",
+                "6": "I-SOCIALNUM"
+            }
+        }"#;
+
+        let f = write_temp_config(json);
+        let cfg = NerRecognizer::load_config_from_file(f.path(), "/runtime/model.onnx").unwrap();
+
+        assert_eq!(
+            cfg.label_mappings.get("B-FIRSTNAME"),
+            Some(&EntityType::Person)
+        );
+        assert_eq!(
+            cfg.label_mappings.get("I-LASTNAME"),
+            Some(&EntityType::Person)
+        );
+        assert_eq!(
+            cfg.label_mappings.get("I-DATEOFBIRTH"),
+            Some(&EntityType::DateTime)
+        );
+        assert_eq!(
+            cfg.label_mappings.get("I-TELEPHONENUM"),
+            Some(&EntityType::PhoneNumber)
+        );
+        assert_eq!(
+            cfg.label_mappings.get("I-CITY"),
+            Some(&EntityType::Location)
+        );
+        assert_eq!(
+            cfg.label_mappings.get("I-SOCIALNUM"),
+            Some(&EntityType::UsSsn)
+        );
+    }
+
+    #[test]
+    fn test_from_config_loads_model_sidecar_labels_for_runtime_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.json");
+        std::fs::write(
+            &config_path,
+            r#"{
+                "id2label": {
+                    "0": "O",
+                    "1": "B-FIRSTNAME",
+                    "2": "I-LASTNAME",
+                    "3": "B-DOB"
+                },
+                "min_confidence": 0.12
+            }"#,
+        )
+        .unwrap();
+
+        let recognizer = NerRecognizer::from_config(NerConfig {
+            model_path: dir.path().join("model.onnx").to_string_lossy().into_owned(),
+            tokenizer_path: Some("/runtime/tokenizer.json".to_string()),
+            min_confidence: 0.91,
+            ..Default::default()
+        })
+        .unwrap();
+
+        assert_eq!(
+            recognizer.config().label_mappings.get("B-FIRSTNAME"),
+            Some(&EntityType::Person)
+        );
+        assert_eq!(
+            recognizer.config().id2label.get(&3),
+            Some(&"B-DOB".to_string())
+        );
+        assert_eq!(
+            recognizer.config().tokenizer_path.as_deref(),
+            Some("/runtime/tokenizer.json")
+        );
+        assert_eq!(recognizer.config().min_confidence, 0.91);
+        assert!(!recognizer.is_available());
+    }
+
+    #[test]
     fn test_load_config_fallback_derives_label_mappings_from_id2label() {
         // config.json has id2label but no label_mappings → derived path
         let json = r#"{
@@ -1043,11 +1281,64 @@ mod tests {
     }
 
     #[test]
+    fn test_keep_span_filters_report_construct_false_positives() {
+        let recognizer = NerRecognizer::from_config(NerConfig::default()).unwrap();
+
+        assert!(!recognizer.keep_span(&EntityType::Person, "Mood", 0, 4));
+        assert!(!recognizer.keep_span(
+            &EntityType::Organization,
+            "Organization of Materials",
+            0,
+            "Organization of Materials".len()
+        ));
+        assert!(!recognizer.keep_span(
+            &EntityType::Organization,
+            "Executive Composite",
+            0,
+            "Executive Composite".len()
+        ));
+        assert!(recognizer.keep_span(
+            &EntityType::Organization,
+            "University of Southern California",
+            0,
+            "University of Southern California".len()
+        ));
+    }
+
+    #[test]
+    fn test_parse_bio_tags_merges_adjacent_b_tags_for_same_entity_type() {
+        let recognizer = NerRecognizer::from_config(NerConfig::default()).unwrap();
+        let text = "Surina Shah";
+        let results = recognizer.parse_bio_tags(text, &[1, 1], &[0.91, 0.89], &[(0, 6), (7, 11)]);
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].entity_type, EntityType::Person);
+        assert_eq!(results[0].start, 0);
+        assert_eq!(results[0].end, text.len());
+    }
+
+    #[test]
+    fn test_parse_bio_tags_does_not_merge_b_tags_across_words() {
+        let recognizer = NerRecognizer::from_config(NerConfig::default()).unwrap();
+        let text = "Jane and John";
+        let results = recognizer.parse_bio_tags(text, &[1, 1], &[0.91, 0.89], &[(0, 4), (9, 13)]);
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].start, 0);
+        assert_eq!(results[0].end, 4);
+        assert_eq!(results[1].start, 9);
+        assert_eq!(results[1].end, 13);
+    }
+
+    #[test]
     fn test_threshold_for_entity_uses_entity_specific_values() {
         let recognizer = NerRecognizer::from_config(NerConfig::default()).unwrap();
 
         assert_eq!(recognizer.threshold_for_entity(&EntityType::Person), 0.62);
-        assert_eq!(recognizer.threshold_for_entity(&EntityType::Organization), 0.82);
+        assert_eq!(
+            recognizer.threshold_for_entity(&EntityType::Organization),
+            0.82
+        );
         assert_eq!(recognizer.threshold_for_entity(&EntityType::Location), 0.88);
     }
 }
