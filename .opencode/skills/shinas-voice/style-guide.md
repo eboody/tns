@@ -199,9 +199,22 @@ Family History often begins with birthplace, moves, or current living context
 before summarizing family medical or psychological history.
 
 In child reports, history is more explicitly partitioned into developmental,
-medical, family, social, behavioral/emotional, and educational domains. The
+medical, family, social, behavioral/emotional, and educational domains. Social
+and behavioral/emotional material may each carry substantial history rather than
+appearing as a thin adjunct to academics. The
 voice often alternates between summary statements and source-specific paragraphs
 using parent, teacher, tutor, or self-report framing.
+
+Within that child structure, behavioral and emotional material is commonly
+handled together as one merged `Behavioral/Emotional History` section, while
+`Social History` remains separate.
+
+Preferred child heading order:
+`Reason for Referral -> Birth/Developmental History -> Medical History -> Family History -> Social History -> Behavioral/Emotional History -> Educational History -> Previous Evaluations`
+
+When current school placement is available, child Educational History is better
+oriented when it first names the student's grade and school/classroom setting
+before elaborating on academic strengths, challenges, and supports.
 
 #### Previous Evaluations
 

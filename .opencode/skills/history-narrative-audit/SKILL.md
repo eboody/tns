@@ -61,8 +61,13 @@ For child cases, confirm that:
 - no separate Presenting Complaints/Symptoms section was created
 - the main concerns from Reason for Referral were distributed into the relevant
   history sections
+- `Social History` is separate from `Behavioral/Emotional History`
+- in child cases, `Behavioral/Emotional History` should usually be one
+  integrated section rather than two artificially split sections
 - Reason for Referral stays concise rather than expanding concerns with examples,
   symptom lists, or later-section detail
+- Educational History names the child's current school placement when that
+  information was reported
 
 ## Section Integrity Audit
 
@@ -77,6 +82,8 @@ For each section, ask:
 7. Does it still sound like intake notes?
 8. Is Reason for Referral doing more than brief identification + onset/scope +
    closing sentence?
+9. For child psychosocial sections, is there enough developmental/history
+   content rather than only current symptoms?
 
 ## Language Audit Rules
 
@@ -127,6 +134,8 @@ Flag when:
 - a section contains so many examples that the main point gets buried
 - adult Presenting Complaints/Symptoms is underdeveloped relative to the referral
   concerns
+- child Social History or Behavioral/Emotional History is so sparse that a major
+  concern named in referral is effectively undocumented there
 
 ## Placement Audit Rules
 
@@ -134,10 +143,14 @@ Flag content placed in the wrong section, such as:
 
 - school social issues left in Educational History when they belong in Social History
 - school-based emotional/behavioral concerns left in Educational History when
-  they belong in Emotional/Behavioral History
+  they belong in Behavioral/Emotional History
 - child concerns forced into a Presenting Complaints section
 - family diagnoses linked to named relatives rather than summarized more
   privately
+
+Also flag Educational History when it skips current placement orientation despite
+reported information about grade, public/private school setting, or
+general/special education placement.
 
 ## Developmental / Medical Coherence Audit
 
@@ -216,6 +229,11 @@ Ask:
 - Is adult Presenting Complaints/Symptoms present only when appropriate?
 - Does adult concern ordering match Reason for Referral?
 - Were child concerns distributed correctly into history sections?
+- Were child concerns distributed correctly into Social, Behavioral/Emotional,
+  and Educational domains rather than being over-concentrated in Educational
+  History?
+- Does child Educational History identify current grade and school/classroom
+  placement when reported?
 - Is interpretive language absent?
 - Are diagnoses limited to explicitly documented diagnoses?
 - Are attribution gaps identified?

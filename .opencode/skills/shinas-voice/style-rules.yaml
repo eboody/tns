@@ -42,7 +42,7 @@ signal_separation:
     - Purpose sentence in Reason for Referral.
     - History-section openings that label material as unremarkable or remarkable.
     - Family-history movement from geography/living context into family-history summary.
-    - Child history distribution of concerns across Birth/Developmental, Medical, Family, Social/Behavioral/Emotional, and Educational sections.
+    - Child history distribution of concerns across Birth/Developmental, Medical, Family, Social, Behavioral/Emotional, and Educational sections.
   case_artifacts:
     - Repeated ADHD/anxiety/depression content across cases.
     - Any diagnosis-specific explanatory language from individual reports.
@@ -85,9 +85,12 @@ section_structure:
         - Introduce concern clusters directly in the referral sentence.
         - Do not create a separate Presenting Complaints/Symptoms section.
       history:
-        - Prefer subsections such as Birth/Developmental History, Medical History, Family History, Social/Behavioral/Emotional History, and Educational History.
+        - Prefer subsections such as Birth/Developmental History, Medical History, Family History, Social History, Behavioral/Emotional History, and Educational History.
+        - Preferred child heading order: Reason for Referral -> Birth/Developmental History -> Medical History -> Family History -> Social History -> Behavioral/Emotional History -> Educational History -> Previous Evaluations.
+        - In child reports, Behavioral/Emotional History is typically one merged section; Social History remains separate.
         - Use explicit parent/teacher/tutor/self-report framing.
-        - Mini-subheaders like Social, Behavioral, and Emotional are common within child psychosocial sections.
+        - Social and Behavioral/Emotional content are often developed as separate psychosocial surfaces, with mini-domain framing inside each when needed.
+        - Educational History commonly benefits from an orienting current-placement sentence before academic detail.
       previous_evaluations:
         - Keep concise and direct, usually a clear denial or brief school/observation summary.
 

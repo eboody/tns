@@ -1,3 +1,5 @@
+const UTF8_ENCODER = new TextEncoder()
+
 export function collectWorkspaceRedactionTerms(filePreviews) {
   const entries = new Map()
 
@@ -81,8 +83,9 @@ export function collectSuggestedRedactionTermsForTerms(existingTerms) {
 }
 
 export function collectSuggestedRedactionTermsForWorkspace(filePreviews, existingTerms) {
+  const occurrenceIndex = buildWorkspaceOccurrenceIndex(filePreviews)
   return collectSuggestedRedactionTermsForTerms(existingTerms)
-    .filter((candidate) => hasUnredactedWorkspaceOccurrence(filePreviews, candidate))
+    .filter((candidate) => hasUnredactedWorkspaceOccurrence(occurrenceIndex, candidate))
 }
 
 export function redactionTermKey(term) {
@@ -109,21 +112,38 @@ function normalizeTerm(value) {
   return typeof value === 'string' ? value.trim() : ''
 }
 
-function hasUnredactedWorkspaceOccurrence(filePreviews, candidate) {
-  return (Array.isArray(filePreviews) ? filePreviews : []).some((preview) =>
-    previewHasUnredactedOccurrence(preview, candidate)
+function buildWorkspaceOccurrenceIndex(filePreviews) {
+  return (Array.isArray(filePreviews) ? filePreviews : [])
+    .map((preview) => {
+      const originalText = normalizeTerm(preview?.originalText)
+      if (!originalText) {
+        return null
+      }
+
+      return {
+        originalText,
+        ranges: normalizedSortedRanges(preview?.redactionRanges)
+      }
+    })
+    .filter(Boolean)
+}
+
+function hasUnredactedWorkspaceOccurrence(occurrenceIndex, candidate) {
+  return occurrenceIndex.some(({ originalText, ranges }) =>
+    previewHasUnredactedOccurrence(originalText, ranges, candidate)
   )
 }
 
-function previewHasUnredactedOccurrence(preview, candidate) {
-  const originalText = normalizeTerm(preview?.originalText)
-  if (!originalText) {
-    return false
-  }
-
-  const ranges = normalizedSortedRanges(preview?.redactionRanges)
+function previewHasUnredactedOccurrence(originalText, ranges, candidate) {
   for (const match of literalCaseInsensitiveMatches(originalText, candidate)) {
-    if (!hasExactMatchBoundaries(originalText, match.start, match.end, match.text)) {
+    if (!hasExactMatchBoundaries(
+      originalText,
+      match.start,
+      match.end,
+      match.text,
+      match.startCodeUnits,
+      match.endCodeUnits
+    )) {
       continue
     }
 
@@ -135,35 +155,99 @@ function previewHasUnredactedOccurrence(preview, candidate) {
   return false
 }
 
-function literalCaseInsensitiveMatches(text, candidate) {
+function* literalCaseInsensitiveMatches(text, candidate) {
   const escaped = candidate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const regex = new RegExp(escaped, 'gi')
-  const matches = []
+  const offsets = createUtf8OffsetMapper(text)
 
   for (const match of text.matchAll(regex)) {
-    const start = match.index ?? 0
     const matchedText = match[0] ?? ''
-    matches.push({ start, end: start + matchedText.length, text: matchedText })
-  }
+    const startCodeUnits = match.index ?? 0
+    const endCodeUnits = startCodeUnits + matchedText.length
 
-  return matches
+    yield {
+      start: offsets.byteOffsetForCodeUnit(startCodeUnits),
+      end: offsets.byteOffsetForCodeUnit(endCodeUnits),
+      text: matchedText,
+      startCodeUnits,
+      endCodeUnits
+    }
+  }
 }
 
-function hasExactMatchBoundaries(text, start, end, matchedText) {
+function hasExactMatchBoundaries(text, start, end, matchedText, startCodeUnits, endCodeUnits) {
   const firstChar = matchedText[0]
   const lastChar = matchedText.at(-1)
   if (!firstChar || !lastChar) {
     return false
   }
 
+  const resolvedStartCodeUnits = Number.isFinite(startCodeUnits)
+    ? startCodeUnits
+    : utf8ByteOffsetToCodeUnitOffset(text, start)
+  const resolvedEndCodeUnits = Number.isFinite(endCodeUnits)
+    ? endCodeUnits
+    : utf8ByteOffsetToCodeUnitOffset(text, end)
   const leftOk = isWordish(firstChar)
-    ? !isWordish(text[start - 1] ?? '')
+    ? !isWordish(text[resolvedStartCodeUnits - 1] ?? '')
     : true
   const rightOk = isWordish(lastChar)
-    ? !isWordish(text[end] ?? '')
+    ? !isWordish(text[resolvedEndCodeUnits] ?? '')
     : true
 
   return leftOk && rightOk
+}
+
+function createUtf8OffsetMapper(text) {
+  const codeUnitToByte = new Array(text.length + 1)
+  const byteToCodeUnit = new Map()
+  let byteOffset = 0
+
+  byteToCodeUnit.set(0, 0)
+
+  for (let index = 0; index < text.length; index += 1) {
+    codeUnitToByte[index] = byteOffset
+    const codePoint = text.codePointAt(index)
+    const char = String.fromCodePoint(codePoint)
+    byteOffset += utf8ByteLength(char)
+
+    if (codePoint > 0xffff) {
+      index += 1
+      codeUnitToByte[index] = byteOffset
+    }
+
+    byteToCodeUnit.set(byteOffset, index + 1)
+  }
+
+  codeUnitToByte[text.length] = byteOffset
+
+  return {
+    byteOffsetForCodeUnit(codeUnitOffset) {
+      return codeUnitToByte[Math.max(0, Math.min(codeUnitOffset, text.length))] ?? byteOffset
+    },
+    codeUnitOffsetForByte(byteOffsetValue) {
+      if (byteToCodeUnit.has(byteOffsetValue)) {
+        return byteToCodeUnit.get(byteOffsetValue)
+      }
+
+      let closestCodeUnit = text.length
+      for (const [knownByteOffset, codeUnitOffset] of byteToCodeUnit) {
+        if (knownByteOffset > byteOffsetValue) {
+          break
+        }
+        closestCodeUnit = codeUnitOffset
+      }
+      return closestCodeUnit
+    }
+  }
+}
+
+function utf8ByteOffsetToCodeUnitOffset(text, byteOffset) {
+  return createUtf8OffsetMapper(text).codeUnitOffsetForByte(byteOffset)
+}
+
+function utf8ByteLength(text) {
+  return UTF8_ENCODER.encode(text).length
 }
 
 function isWordish(char) {
@@ -181,15 +265,18 @@ function normalizedSortedRanges(ranges) {
 }
 
 function overlapsAnySortedRange(start, end, ranges) {
-  for (const range of ranges) {
-    if (range.start >= end) {
-      return false
-    }
+  let low = 0
+  let high = ranges.length
 
-    if (start < range.end && end > range.start) {
-      return true
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2)
+    if (ranges[mid].end <= start) {
+      low = mid + 1
+    } else {
+      high = mid
     }
   }
 
-  return false
+  const range = ranges[low]
+  return Boolean(range && range.start < end && start < range.end)
 }

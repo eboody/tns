@@ -58,6 +58,8 @@ const loadingMessage = document.getElementById('loadingMessage')
 const workspace = signal(createWorkspaceState(
   'Desktop shell loaded. Choose a file or folder to start local processing automatically.'
 ))
+const LARGE_PREVIEW_SCROLL_SYNC_TEXT_LIMIT = 300_000
+const LARGE_PREVIEW_SCROLL_SYNC_HTML_LIMIT = 900_000
 let savedRedactionTerms = loadSavedRedactionTerms()
 const redactionSidebar = createRedactionSidebarState({ draftPreviewDelayMs: 140 })
 const draftPreviewState = createPreviewDraftState({ redactionSidebar })
@@ -70,6 +72,8 @@ let recentSelectionIntentUntil = 0
 let lastSidebarPreviewSet = null
 let lastSidebarPreviewPath = null
 let lastSidebarTermsSignature = ''
+let lastRenderedBeforeHtml = null
+let lastRenderedAfterHtml = null
 const activeRedactionTermId = signal(null)
 const liveFindTerm = signal('')
 let debugInputSequence = 0
@@ -641,10 +645,13 @@ function renderPreview(preview) {
     previewPanel.hidden = false
     previewInteractions.hidePreviewActionTooltip()
     previewHighlightCount.textContent = '0 highlighted spans'
+    previewPanel.classList.remove('large-preview-scroll')
     previewNote.hidden = true
     previewNote.textContent = ''
     beforePreview.textContent = 'Original content preview will appear here.'
     afterPreview.textContent = 'Redacted output preview will appear here.'
+    lastRenderedBeforeHtml = null
+    lastRenderedAfterHtml = null
     beforePreview.scrollTop = 0
     afterPreview.scrollTop = 0
     return
@@ -656,15 +663,32 @@ function renderPreview(preview) {
   const liveTerm = liveFindTerm.value
   const beforeHtml = applyLiveFindHighlight(draftPreviewState.draftBeforeHtml.value, liveTerm)
   const afterHtml = applyLiveFindHighlight(draftPreviewState.draftAfterHtml.value, liveTerm)
+  const largePreviewScroll = isLargePreviewForScroll(preview, beforeHtml, afterHtml)
   const previewDeferredNote = draftPreviewState.livePreviewDeferred.value
     ? 'Showing a focused first-match preview for this large file while editing current terms. Save applies the textbox change across the document.'
     : null
+  const scrollPerformanceNote = largePreviewScroll
+    ? 'Synced preview scrolling is paused for this large file to keep scrolling responsive.'
+    : null
 
-  previewNote.hidden = !(note || previewDeferredNote)
-  previewNote.textContent = [note, previewDeferredNote].filter(Boolean).join(' ')
-  beforePreview.innerHTML = beforeHtml
-  afterPreview.innerHTML = afterHtml
+  previewPanel.classList.toggle('large-preview-scroll', largePreviewScroll)
+  previewNote.hidden = !(note || previewDeferredNote || scrollPerformanceNote)
+  previewNote.textContent = [note, previewDeferredNote, scrollPerformanceNote].filter(Boolean).join(' ')
+  if (beforeHtml !== lastRenderedBeforeHtml) {
+    beforePreview.innerHTML = beforeHtml
+    lastRenderedBeforeHtml = beforeHtml
+  }
+  if (afterHtml !== lastRenderedAfterHtml) {
+    afterPreview.innerHTML = afterHtml
+    lastRenderedAfterHtml = afterHtml
+  }
   previewHighlightCount.textContent = `${draftPreviewState.draftHighlightCount.value} highlighted spans`
+}
+
+function isLargePreviewForScroll(preview, beforeHtml, afterHtml) {
+  const originalLength = typeof preview?.originalText === 'string' ? preview.originalText.length : 0
+  return originalLength > LARGE_PREVIEW_SCROLL_SYNC_TEXT_LIMIT
+    || beforeHtml.length + afterHtml.length > LARGE_PREVIEW_SCROLL_SYNC_HTML_LIMIT
 }
 
 function applyLiveFindHighlight(html, term) {
@@ -739,6 +763,10 @@ function escapeRegex(value) {
 
 function schedulePreviewScrollSync(source, target) {
   if (suppressPreviewScrollSync) {
+    return
+  }
+
+  if (previewPanel.classList.contains('large-preview-scroll')) {
     return
   }
 

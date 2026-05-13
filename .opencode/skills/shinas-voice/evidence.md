@@ -84,7 +84,7 @@ Report set reviewed:
   - JB Presenting Complaints/Symptoms and Psychological History
   - MW Presenting Complaints/Symptoms and Social History
   - RM Presenting Complaints/Symptoms and Psychosocial History
-  - SUR Social/Behavioral/Emotional History and Educational History
+  - SUR Social and Behavioral/Emotional History and Educational History
 - Why it qualifies:
   - Paragraphs regularly begin with a broad concern statement, then elaborate with examples and close with impact or management difficulty.
 - Boilerplate check:
@@ -95,9 +95,9 @@ Report set reviewed:
 - Confidence: `high`
 - Signal type: `section-constrained`
 - Supported by:
-  - JAM DOT 2024 Report, Behavioral/Emotional/Social History and Educational History
-  - JAC DEL 2025 Report, Social/Behavioral/Emotional History and Educational History
-  - SUR SHA 2025 Neuropsych Assessment Report, Social/Behavioral/Emotional History and Educational History
+  - JAM DOT 2024 Report, Social and Behavioral/Emotional History with Educational History
+  - JAC DEL 2025 Report, Social and Behavioral/Emotional History with Educational History
+  - SUR SHA 2025 Neuropsych Assessment Report, Social and Behavioral/Emotional History with Educational History
 - Why it qualifies:
   - The child reports repeatedly alternate among parent, teacher, tutor, and self-report within the same broad domain.
   - Mini-subdomain headings such as `Social`, `Behavioral`, and `Emotional` recur.

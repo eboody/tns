@@ -122,8 +122,8 @@ Normalize evidence into domains used by later history drafting:
 - developmental history
 - medical history
 - family history
-- emotional/behavioral history
 - social history
+- behavioral/emotional history
 - educational history
 - prior evaluations
 - treatment history
@@ -236,13 +236,44 @@ Keep prior evaluations normalized briefly:
 - diagnosis if formally stated
 - brief impression only when needed
 
+### Child Psychosocial Routing
+
+For child cases, normalize psychosocial evidence into distinct but coordinated
+targets:
+
+- `social history` -> peer interest, reciprocity, friendship development,
+  play/social initiation, social boundaries, and current social functioning
+- `behavioral/emotional history` -> regulation, impulsivity, flexibility,
+  compliance, frustration behavior, mood, anxiety, treatment, and safety
+
+Do not let school-source wording collapse these into `educational history`.
+When a teacher or school record describes peer functioning, route that evidence
+to `social history`. When it describes regulation, reactivity, impulsivity, or
+coping, route that evidence to `behavioral/emotional history`.
+
+When the evidence supports both behavioral and emotional themes, prepare it for
+one integrated `behavioral/emotional history` section rather than splitting it
+artificially into parallel mini-clusters.
+
+### Current Educational Placement Minimum
+
+For child educational normalization, preserve the current placement frame when
+available:
+
+- current grade
+- public vs private school setting
+- general education vs special education classroom setting
+
+Treat this placement tuple as core orientation data for later Educational
+History drafting, alongside academics, supports, and interventions.
+
 ### School Information Placement
 
 If school records contain information that belongs more naturally elsewhere,
 label it for that later section:
 
 - peer interaction -> social history
-- emotional or behavioral concerns -> emotional/behavioral history
+- emotional or behavioral concerns -> behavioral/emotional history
 - work habits, grades, supports -> educational history
 
 ## Handoff to Drafting Skill
@@ -254,6 +285,8 @@ can answer:
 - What concerns belong in Reason for Referral?
 - For adult cases, what complaint clusters need expansion and in what order?
 - For child cases, how should concerns be distributed across history sections?
+- For child cases, what current school-placement facts should anchor Educational
+  History?
 - Which claims require explicit attribution?
 - Which disagreements must remain visible?
 - Which concrete examples are worth carrying forward?

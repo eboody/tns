@@ -700,7 +700,7 @@ pub fn find_and_redact_term(
         matched_text: term,
         replacement: "[MANUAL_REDACTION]".to_string(),
         reason: "desktop manual find-and-redact".to_string(),
-        match_mode: MatchMode::Literal,
+        match_mode: MatchMode::WholeTerm,
     };
     let existing_reason = propagation_rule.reason.clone();
     let existing_term = propagation_rule.matched_text.clone();
@@ -3698,7 +3698,7 @@ mod tests {
     }
 
     #[test]
-    fn find_and_redact_term_can_match_inside_larger_words() {
+    fn find_and_redact_term_does_not_match_inside_larger_words() {
         let temp = tempdir().unwrap();
         let input_dir = temp.path().join("input");
 
@@ -3729,17 +3729,9 @@ mod tests {
         })
         .unwrap();
 
-        assert_eq!(applied.updated_targets, 1);
-        let audit_report =
-            read_editable_audit_report(&applied.updates[0].preview.audit_output_path).unwrap();
-        assert_eq!(
-            audit_report
-                .replacements
-                .iter()
-                .filter(|record| record.matched_text == "John")
-                .count(),
-            2
-        );
+        assert_eq!(applied.updated_targets, 0);
+        assert_eq!(applied.unchanged_targets, 1);
+        assert!(applied.updates.is_empty());
     }
 
     #[test]
@@ -3876,7 +3868,7 @@ mod tests {
         .unwrap();
 
         let applied = find_and_redact_term(DesktopFindAndRedactRequest {
-            term: "ohn Doe".to_string(),
+            term: "John".to_string(),
             targets: result
                 .file_previews
                 .iter()
@@ -3891,7 +3883,7 @@ mod tests {
         .unwrap();
 
         let replaced = replace_redaction_term(DesktopReplaceRedactionTermRequest {
-            previous_term: "ohn Doe".to_string(),
+            previous_term: "John".to_string(),
             next_term: "John Doe".to_string(),
             targets: applied
                 .updates

@@ -97,3 +97,52 @@ test('collectSuggestedRedactionTermsForWorkspace keeps suggestions with uncovere
 
   assert.deepEqual(suggestions, ['John'])
 })
+
+test('collectSuggestedRedactionTermsForWorkspace does not offer partial-word occurrences', () => {
+  const suggestions = collectSuggestedRedactionTermsForWorkspace(
+    [
+      {
+        originalText: 'Jane Doe does not need a suggestion from does.',
+        redactionRanges: [{ start: 0, end: 8 }]
+      }
+    ],
+    [
+      {
+        matchedText: 'Jane Doe',
+        replacement: '[CLIENT]',
+        entityType: 'CLIENT_NAME',
+        occurrences: 1,
+        key: 'jane doe::[CLIENT]::CLIENT_NAME'
+      }
+    ]
+  )
+
+  assert.deepEqual(suggestions, [])
+})
+
+test('collectSuggestedRedactionTermsForWorkspace compares suggestions against byte-offset ranges', () => {
+  const prefix = 'é '
+  const coveredName = 'Jane Doe'
+  const suggestions = collectSuggestedRedactionTermsForWorkspace(
+    [
+      {
+        originalText: `${prefix}${coveredName}`,
+        redactionRanges: [{
+          start: new TextEncoder().encode(prefix).length,
+          end: new TextEncoder().encode(`${prefix}${coveredName}`).length
+        }]
+      }
+    ],
+    [
+      {
+        matchedText: coveredName,
+        replacement: '[CLIENT]',
+        entityType: 'CLIENT_NAME',
+        occurrences: 1,
+        key: 'jane doe::[CLIENT]::CLIENT_NAME'
+      }
+    ]
+  )
+
+  assert.deepEqual(suggestions, [])
+})

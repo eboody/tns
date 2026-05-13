@@ -391,16 +391,16 @@ test('pending operations can be upserted for reactive textbox matching', () => {
   assert.equal(state.saveButtonEnabled.value, false)
 })
 
-test('find redaction terms can match partial words', () => {
+test('find redaction terms respect whole-term boundaries', () => {
   const redactionSidebar = { hasPendingEdits: signal(false), pendingEdits: signal([]) }
   const state = createPreviewDraftState({ redactionSidebar })
 
   state.syncWorkspace({
     filePreviews: [{
       path: '/tmp/a.md',
-      originalText: 'John J. Doe met John Doe.',
-      originalHtml: 'John J. Doe met John Doe.',
-      redactedHtml: 'John J. Doe met John Doe.'
+      originalText: 'Johnathan and Johnson met Johnny.',
+      originalHtml: 'Johnathan and Johnson met Johnny.',
+      redactedHtml: 'Johnathan and Johnson met Johnny.'
     }],
     selectedPreviewPath: '/tmp/a.md',
     processingInFlight: false
@@ -409,12 +409,12 @@ test('find redaction terms can match partial words', () => {
   state.upsertPendingOperation('live-find', {
     draftEffect: {
       kind: 'find-and-redact-term',
-      term: 'John J. Do'
+      term: 'John'
     }
   })
 
-  assert.match(state.draftAfterHtml.value, /<mark[^>]*>\[MANUAL_REDACTION_1\]<\/mark>e met John Doe\./)
-  assert.equal(state.saveButtonEnabled.value, true)
+  assert.equal(state.draftAfterHtml.value, 'Johnathan and Johnson met Johnny.')
+  assert.deepEqual(state.selectedDraftTerms.value, [])
 })
 
 test('draft merge can absorb text adjacent to an existing redaction', () => {

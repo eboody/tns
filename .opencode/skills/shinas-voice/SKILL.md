@@ -187,12 +187,19 @@ boundaries of the already-correct draft**.
 
 - preserve the upstream child section and subsection structure exactly
 - do not rename or reorder subsections unless explicitly instructed upstream
+- child history normally uses one integrated `Behavioral/Emotional History`
+  section; preserve that merged child psychosocial section rather than splitting
+  it during style transfer
 
 ### Relevant History Sections
 
 - prefer polished declarative openings when they do not alter substance
 - preserve attribution boundaries
 - smooth transitions between chronology, examples, and current impact
+- in child Social History and Behavioral/Emotional History, preserve historical
+  depth rather than compressing the section into a current-symptom summary
+- in child Educational History, preserve any upstream orientation sentence that
+  states current grade, school type, or classroom placement
 
 ### Previous Evaluations
 

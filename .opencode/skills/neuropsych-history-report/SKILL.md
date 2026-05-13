@@ -78,11 +78,42 @@ Use:
 Use:
 
 - Reason for Referral
-- Relevant History sections
+- Birth/Developmental History
+- Medical History
+- Family History
+- Social History
+- Behavioral/Emotional History
+- Educational History
 - Previous Evaluations
 
 Child cases **do not** have a separate Presenting Complaints/Symptoms section.
 Reported concerns should be distributed into the relevant history sections.
+
+For child cases, treat `Social History`, `Behavioral/Emotional History`, and
+`Educational History` as a coordinated routing surface:
+
+- `Social History` holds social-development trajectory, friendship patterns,
+  reciprocity, peer engagement, and current social functioning
+- `Behavioral/Emotional History` holds self-regulation, impulsivity,
+  compliance/flexibility, emotional reactivity, mood/anxiety themes, treatment,
+  and safety/substance history
+- `Educational History` holds school placement, academic functioning,
+  interventions, supports, and the effect of symptoms on classroom learning
+
+For child cases, merge **behavioral** and **emotional** history into one
+integrated `Behavioral/Emotional History` section by default. Do **not** merge
+`Social History` into that section. The merge rule is specifically for the
+behavioral + emotional child surface, where those themes often overlap and are
+best understood together across home and school contexts.
+
+Preferred child heading order:
+
+`Reason for Referral -> Birth/Developmental History -> Medical History -> Family History -> Social History -> Behavioral/Emotional History -> Educational History -> Previous Evaluations`
+
+Do not leave psychosocial history artificially thin because a school source
+mentioned it under academics. Route the fact to the domain it actually
+represents, while keeping school-placement and academic-functioning facts in
+Educational History.
 
 ## Global Writing Rules
 
@@ -290,9 +321,14 @@ For child cases:
 - distribute those concerns into:
   - developmental history
   - medical history
-  - emotional/behavioral history
   - social history
+  - behavioral/emotional history
   - educational history
+
+When school, parent, or collateral sources provide psychosocial detail, do not
+compress it into Educational History alone. Carry enough domain history forward
+to make `Social History` and `Behavioral/Emotional History` read like true
+history sections rather than thin symptom placeholders.
 
 ### Medical History Filter
 
@@ -427,11 +463,13 @@ Include:
   history
 - cultural, ethnic, or language background when relevant
 
-### Emotional/Behavioral History
+### Behavioral/Emotional History
 
 Purpose:
 
 - describe long-standing emotional/behavioral patterns
+- include enough historical context to show how those patterns developed and
+  have changed across settings/time
 - note changes over time
 - summarize treatment history
 - describe current emotional status
@@ -446,10 +484,26 @@ Possible themes include:
 - anxiety or worry
 - frustration tolerance
 - rigidity/behavioral regulation
+- impulsivity, activity level, and follow-through
+- compliance, flexibility, and response to limits
 - treatment history
 - safety/substance history
 
 Use outside informants when available and attribute when needed.
+
+For child cases, use one integrated `Behavioral/Emotional History` section by
+default whenever the case includes both behavioral-regulation and emotional
+themes, or when separating them would duplicate examples, fragment one pattern
+across two headings, or leave one section artificially thin.
+
+Do not split child behavioral and emotional material into separate sections
+unless there is a specific user instruction or a genuinely unusual case reason
+to keep them distinct.
+
+In child cases especially, this section should usually include both:
+
+- historical patterning, not just current symptoms
+- examples from home and/or school when those settings help clarify the pattern
 
 Default rough order:
 
@@ -477,9 +531,16 @@ Include:
 
 - early social development
 - whether appropriate play/social interest was noted
+- social reciprocity and conversational style when reported
 - difficulties making friends
 - difficulties with social boundaries
 - whether the child asked for playdates
+- quality, stability, and initiation of peer relationships over time
+- current social functioning across school/home/community when reported
+
+Do not underwrite this section because peer information also appears in teacher
+or academic sources. If the fact is about friendships, reciprocity, social
+interest, or peer functioning, route it here even when the source is school-based.
 
 #### Adult Social History
 
@@ -500,6 +561,7 @@ Include:
 
 - early academic functioning
 - later academic functioning
+- current educational placement
 - learning strengths and challenges over time
 - supports/interventions/tutoring
 - accommodations
@@ -507,6 +569,18 @@ Include:
 - effect of symptoms on school functioning
 - current educational status
 - highest level of education
+
+For child cases, `current educational placement` should usually name, when
+reported:
+
+- current grade
+- school setting (`public` / `private`)
+- classroom setting (`general education` / `special education` / mixed or other
+  clearly described placement)
+
+If one of these placement facts is expected but unavailable, it is acceptable to
+leave it out or mark it `not reported` based on the surrounding report style; do
+not invent or infer it.
 
 Use school records and collateral to capture:
 
@@ -519,7 +593,10 @@ Use school records and collateral to capture:
 If school-based information belongs more naturally elsewhere, place it there:
 
 - social comments -> Social History
-- emotional/behavioral comments -> Emotional/Behavioral History
+- emotional/behavioral comments -> Behavioral/Emotional History
+
+Educational History should still orient the reader to the child's present school
+placement before moving into performance, supports, and school-related concerns.
 
 If performance was strong, still include the **effort cost, strain, extra time,
 or difficulty** behind it when that was reported.
@@ -554,7 +631,7 @@ Do not overuse it in every section.
 
 ## Narrative Shape Guidance
 
-For narrative sections such as Presenting Complaints, Emotional/Behavioral
+For narrative sections such as Presenting Complaints, Behavioral/Emotional
 History, Social History, and Educational History, the usual paragraph shape is:
 
 1. main pattern
@@ -614,8 +691,14 @@ Therefore the writing should be clear, restrained, and privacy-conscious.
 - Were diagnoses mentioned only when explicitly documented?
 - Were source attributions added where needed?
 - Were concerns ordered consistently from referral into adult presenting complaints?
-- Were child concerns distributed into history sections rather than forced into a
-  presenting complaints section?
+- Were child concerns distributed into Birth/Developmental, Medical, Family,
+  Social, Behavioral/Emotional, Educational, and Previous Evaluations sections
+  rather than forced into a presenting complaints section?
+- Did Social History and Behavioral/Emotional History each contain real history,
+  not just thin current-symptom fragments?
+- Did child Educational History describe the current school placement (grade,
+  public/private, and general/special education setting) when that information
+  was reported?
 - Does each important pattern have at least one concrete example?
 - Is family history privacy-conscious?
 - Does the final history sound like polished report prose rather than intake notes?

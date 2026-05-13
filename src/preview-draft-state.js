@@ -523,8 +523,8 @@ function applyFindAndRedactTermEffect(records, originalText, effect, operationId
     label: 'Manual redaction',
     operationId,
     sourceKind: 'find-and-redact-term',
-    sourceMode: 'literal_matches',
-    matchMode: 'literal'
+    sourceMode: 'whole_term_matches',
+    matchMode: 'whole_term'
   }], remainingRecords, effect.excludedRecords)
 
   return normalizeRecordOrder([...remainingRecords, ...additions])
