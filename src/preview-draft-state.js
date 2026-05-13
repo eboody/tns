@@ -858,12 +858,17 @@ function buildExactMatchRedactions(originalText, rules, existingRecords, exclude
 
   for (const rule of [...rules].sort(compareExactMatchRules)) {
     for (const match of literalCaseInsensitiveMatches(originalText, rule.matchedText)) {
-      const candidate = sliceUtf8Bytes(originalText, match.start, match.end)
-      if (rule.matchMode !== 'literal' && !hasExactMatchBoundaries(originalText, match.start, match.end, candidate)) {
+      const candidate = match.text
+      if (rule.matchMode !== 'literal' && !hasExactMatchBoundaries(
+        originalText,
+        candidate,
+        match.startCodeUnits,
+        match.endCodeUnits
+      )) {
         continue
       }
 
-      if (overlapsExistingReplacement(occupied, match.start, match.end)) {
+      if (overlapsSortedRecords(occupied, match.start, match.end)) {
         continue
       }
 
@@ -877,7 +882,7 @@ function buildExactMatchRedactions(originalText, rules, existingRecords, exclude
       if (isExcludedDraftRecord(record, excludedRecords)) {
         continue
       }
-      occupied.push(record)
+      insertSortedRecord(occupied, record)
       additions.push(record)
     }
   }
@@ -989,6 +994,51 @@ function overlapsExistingReplacement(records, start, end) {
   return records.some((record) => start < record.end && end > record.start)
 }
 
+function overlapsSortedRecords(records, start, end) {
+  const index = firstRecordEndingAfter(records, start)
+  const record = records[index]
+  return Boolean(record && record.start < end && start < record.end)
+}
+
+function insertSortedRecord(records, record) {
+  const last = records.at(-1)
+  if (!last || last.start < record.start || (last.start === record.start && last.end <= record.end)) {
+    records.push(record)
+    return
+  }
+
+  let low = 0
+  let high = records.length
+
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2)
+    const candidate = records[mid]
+    if (candidate.start < record.start || (candidate.start === record.start && candidate.end <= record.end)) {
+      low = mid + 1
+    } else {
+      high = mid
+    }
+  }
+
+  records.splice(low, 0, record)
+}
+
+function firstRecordEndingAfter(records, start) {
+  let low = 0
+  let high = records.length
+
+  while (low < high) {
+    const mid = Math.floor((low + high) / 2)
+    if (records[mid].end <= start) {
+      low = mid + 1
+    } else {
+      high = mid
+    }
+  }
+
+  return low
+}
+
 function literalCaseInsensitiveMatches(text, candidate) {
   const escaped = candidate.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const regex = new RegExp(escaped, 'giu')
@@ -1002,22 +1052,23 @@ function literalCaseInsensitiveMatches(text, candidate) {
 
     matches.push({
       start: offsets.byteOffsetForCodeUnit(startCodeUnits),
-      end: offsets.byteOffsetForCodeUnit(endCodeUnits)
+      end: offsets.byteOffsetForCodeUnit(endCodeUnits),
+      text: matchedText,
+      startCodeUnits,
+      endCodeUnits
     })
   }
 
   return matches
 }
 
-function hasExactMatchBoundaries(text, start, end, matchedText) {
+function hasExactMatchBoundaries(text, matchedText, startCodeUnits, endCodeUnits) {
   const firstChar = matchedText[0]
   const lastChar = matchedText.at(-1)
   if (!firstChar || !lastChar) {
     return false
   }
 
-  const startCodeUnits = utf8ByteOffsetToCodeUnitOffset(text, start)
-  const endCodeUnits = utf8ByteOffsetToCodeUnitOffset(text, end)
   const leftOk = isWordish(firstChar) ? !isWordish(text[startCodeUnits - 1] ?? '') : true
   const rightOk = isWordish(lastChar) ? !isWordish(text[endCodeUnits] ?? '') : true
 
