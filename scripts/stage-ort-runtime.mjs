@@ -69,6 +69,8 @@ const TARGETS = {
   },
 }
 
+const DEFAULT_BUILD_TARGETS = ['linux-x64', 'macos-arm64', 'windows-x64']
+
 const STAGED_RUNTIME_FILES = [
   'libonnxruntime.so.1.25.1',
   'libonnxruntime_providers_shared.so',
@@ -79,22 +81,30 @@ const STAGED_RUNTIME_FILES = [
 ]
 
 async function main() {
-  if (process.argv.slice(2).includes('--model-only')) {
+  const argv = process.argv.slice(2)
+
+  if (argv.includes('--model-only')) {
     await mkdir(modelDir, { recursive: true })
     await stageModelArtifacts()
     return
   }
 
-  const target = parseTarget(process.argv.slice(2))
-  const spec = TARGETS[target]
-  if (!spec) {
-    throw new Error(`unsupported target: ${target}`)
-  }
-
+  const targets = parseTargets(argv)
   await mkdir(modelDir, { recursive: true })
   await stageModelArtifacts()
   await mkdir(capiDir, { recursive: true })
   await clearStagedRuntimeFiles()
+
+  for (const target of targets) {
+    await stageRuntimeTarget(target)
+  }
+}
+
+async function stageRuntimeTarget(target) {
+  const spec = TARGETS[target]
+  if (!spec) {
+    throw new Error(`unsupported target: ${target}`)
+  }
 
   const tempDir = await mkdtemp(path.join(os.tmpdir(), 'tns-ort-'))
   const archivePath = path.join(tempDir, spec.assetName)
@@ -173,6 +183,19 @@ function parseTarget(argv) {
   }
 
   return detectHostTarget()
+}
+
+function parseTargets(argv) {
+  if (argv.includes('--all-targets')) {
+    return DEFAULT_BUILD_TARGETS
+  }
+
+  const explicitTarget = parseTarget(argv)
+  if (explicitTarget === 'all') {
+    return DEFAULT_BUILD_TARGETS
+  }
+
+  return [explicitTarget]
 }
 
 function detectHostTarget() {
