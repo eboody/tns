@@ -15,6 +15,15 @@ const OCRS_TOOL_ENV: &str = "TNS_OCRS_TOOL";
 const OCRS_DETECT_MODEL_ENV: &str = "TNS_OCRS_DETECT_MODEL";
 const OCRS_REC_MODEL_ENV: &str = "TNS_OCRS_REC_MODEL";
 const TESSERACT_TOOL_ENV: &str = "TNS_TESSERACT_TOOL";
+const OCR_RUNTIME_CACHE_ENV: &[&str] = &[
+    PDFTOPPM_TOOL_ENV,
+    CUSTOM_OCR_TOOL_ENV,
+    OCRS_TOOL_ENV,
+    OCRS_DETECT_MODEL_ENV,
+    OCRS_REC_MODEL_ENV,
+    TESSERACT_TOOL_ENV,
+    "PATH",
+];
 
 #[derive(Debug, Clone)]
 pub struct OcrExtraction {
@@ -114,6 +123,19 @@ pub fn extract_image_via_ocr_attempt(path: &Path) -> ExtractionAttempt<OcrExtrac
         &configured_ocr_engines(),
         ExtractionStrategy::ImageOcr,
     )
+}
+
+pub fn ocr_runtime_cache_signature() -> String {
+    OCR_RUNTIME_CACHE_ENV
+        .iter()
+        .map(|env_name| {
+            let value = std::env::var_os(env_name)
+                .map(|value| value.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            format!("{env_name}={value}")
+        })
+        .collect::<Vec<_>>()
+        .join(";")
 }
 
 fn extract_pdf_via_ocr_with_tools(

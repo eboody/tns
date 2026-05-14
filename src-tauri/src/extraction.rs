@@ -1,4 +1,10 @@
-use std::{fs, path::Path};
+use std::{
+    collections::VecDeque,
+    fs,
+    path::{Path, PathBuf},
+    sync::{Mutex, OnceLock},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -121,6 +127,30 @@ pub struct ExtractedInput {
     pub attempts: Vec<ExtractionAttemptRecord>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OcrCacheKind {
+    Pdf,
+    Image,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OcrCacheKey {
+    kind: OcrCacheKind,
+    path: PathBuf,
+    len: u64,
+    modified_nanos: Option<u128>,
+    runtime_signature: String,
+}
+
+#[derive(Debug, Default)]
+struct OcrExtractionCache {
+    entries: VecDeque<(OcrCacheKey, ExtractedInput)>,
+}
+
+const OCR_CACHE_LIMIT: usize = 16;
+
+static OCR_EXTRACTION_CACHE: OnceLock<Mutex<OcrExtractionCache>> = OnceLock::new();
+
 impl ExtractedInput {
     fn successful(
         text: String,
@@ -196,15 +226,8 @@ pub fn is_supported_image_extension(extension: &str) -> bool {
 fn extract_pdf_input(input: &Path) -> Result<ExtractedInput> {
     let lopdf = pdf_extract::extract_pdf_with_lopdf(input);
     let pdftotext = pdf_extract::extract_pdf_with_pdftotext(input);
-    let ocr =
-        ocr_extract::extract_pdf_via_ocr_attempt(input).map(|ocr| pdf_extract::PdfExtraction {
-            text: ocr.text,
-            text_degraded_detected: false,
-            low_confidence_review_required: true,
-            quality_penalty: usize::MAX / 4,
-        });
 
-    let selected = match (&lopdf, &pdftotext) {
+    let selected_text = match (&lopdf, &pdftotext) {
         (
             crate::extractor_pipeline::ExtractionAttempt::Extracted {
                 value: lopdf_value, ..
@@ -214,15 +237,30 @@ fn extract_pdf_input(input: &Path) -> Result<ExtractedInput> {
                 ..
             },
         ) if pdf_extract::should_prefer_pdftotext(lopdf_value, pdftotext_value) => {
-            select_first_success(
-                [pdftotext, lopdf, ocr],
+            Some(select_first_success(
+                [pdftotext.clone(), lopdf.clone()],
                 "PDF contains no extractable text; treat as non-extractable or low-confidence",
-            )?
+            )?)
         }
-        _ => select_first_success(
-            [lopdf, pdftotext, ocr],
-            "PDF contains no extractable text; treat as non-extractable or low-confidence",
-        )?,
+        (crate::extractor_pipeline::ExtractionAttempt::Extracted { .. }, _) => {
+            Some(select_first_success(
+                [lopdf.clone(), pdftotext.clone()],
+                "PDF contains no extractable text; treat as non-extractable or low-confidence",
+            )?)
+        }
+        (_, crate::extractor_pipeline::ExtractionAttempt::Extracted { .. }) => {
+            Some(select_first_success(
+                [pdftotext.clone(), lopdf.clone()],
+                "PDF contains no extractable text; treat as non-extractable or low-confidence",
+            )?)
+        }
+        _ => None,
+    };
+
+    let Some(selected) = selected_text else {
+        return cached_ocr_extraction(input, OcrCacheKind::Pdf, || {
+            extract_pdf_ocr_input_with_attempts(input, lopdf, pdftotext)
+        });
     };
 
     let mut extracted = match selected.strategy {
@@ -244,8 +282,40 @@ fn extract_pdf_input(input: &Path) -> Result<ExtractedInput> {
     Ok(extracted)
 }
 
+fn extract_pdf_ocr_input_with_attempts(
+    input: &Path,
+    lopdf: crate::extractor_pipeline::ExtractionAttempt<pdf_extract::PdfExtraction>,
+    pdftotext: crate::extractor_pipeline::ExtractionAttempt<pdf_extract::PdfExtraction>,
+) -> Result<ExtractedInput> {
+    let ocr =
+        ocr_extract::extract_pdf_via_ocr_attempt(input).map(|ocr| pdf_extract::PdfExtraction {
+            text: ocr.text,
+            text_degraded_detected: false,
+            low_confidence_review_required: true,
+            quality_penalty: usize::MAX / 4,
+        });
+
+    let selected = select_first_success(
+        [lopdf, pdftotext, ocr],
+        "PDF contains no extractable text; treat as non-extractable or low-confidence",
+    )?;
+
+    let mut extracted = match selected.strategy {
+        ExtractionStrategy::PdfOcr => ExtractedInput::successful(
+            selected.value.text,
+            ExtractionFidelity::ocr(false, true, false),
+            selected.strategy,
+        ),
+        _ => unreachable!("text PDF extraction should have been selected before OCR fallback"),
+    };
+    extracted.attempts = selected.attempts;
+    Ok(extracted)
+}
+
 fn extract_image_input(input: &Path) -> Result<ExtractedInput> {
-    extract_image_input_with_attempt(ocr_extract::extract_image_via_ocr_attempt(input))
+    cached_ocr_extraction(input, OcrCacheKind::Image, || {
+        extract_image_input_with_attempt(ocr_extract::extract_image_via_ocr_attempt(input))
+    })
 }
 
 fn extract_image_input_with_attempt(
@@ -263,6 +333,80 @@ fn extract_image_input_with_attempt(
     );
     extracted.attempts = selected.attempts;
     Ok(extracted)
+}
+
+fn cached_ocr_extraction(
+    input: &Path,
+    kind: OcrCacheKind,
+    extract: impl FnOnce() -> Result<ExtractedInput>,
+) -> Result<ExtractedInput> {
+    let Some(key) = ocr_cache_key(input, kind) else {
+        return extract();
+    };
+
+    if let Some(extracted) = lookup_cached_ocr_extraction(&key) {
+        return Ok(extracted);
+    }
+
+    let extracted = extract()?;
+    if extracted.fidelity.provenance == ExtractionProvenance::OcrText {
+        store_cached_ocr_extraction(key, extracted.clone());
+    }
+    Ok(extracted)
+}
+
+fn ocr_cache_key(input: &Path, kind: OcrCacheKind) -> Option<OcrCacheKey> {
+    let metadata = fs::metadata(input).ok()?;
+    let modified_nanos = metadata.modified().ok().and_then(system_time_nanos);
+    Some(OcrCacheKey {
+        kind,
+        path: input.canonicalize().unwrap_or_else(|_| input.to_path_buf()),
+        len: metadata.len(),
+        modified_nanos,
+        runtime_signature: ocr_extract::ocr_runtime_cache_signature(),
+    })
+}
+
+fn system_time_nanos(time: SystemTime) -> Option<u128> {
+    time.duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|duration| duration.as_nanos())
+}
+
+fn lookup_cached_ocr_extraction(key: &OcrCacheKey) -> Option<ExtractedInput> {
+    let cache = OCR_EXTRACTION_CACHE
+        .get_or_init(|| Mutex::new(OcrExtractionCache::default()))
+        .lock()
+        .ok()?;
+    cache
+        .entries
+        .iter()
+        .find(|(cached_key, _)| cached_key == key)
+        .map(|(_, extracted)| extracted.clone())
+}
+
+fn store_cached_ocr_extraction(key: OcrCacheKey, extracted: ExtractedInput) {
+    let Ok(mut cache) = OCR_EXTRACTION_CACHE
+        .get_or_init(|| Mutex::new(OcrExtractionCache::default()))
+        .lock()
+    else {
+        return;
+    };
+
+    cache.entries.retain(|(cached_key, _)| cached_key != &key);
+    cache.entries.push_back((key, extracted));
+    while cache.entries.len() > OCR_CACHE_LIMIT {
+        cache.entries.pop_front();
+    }
+}
+
+#[cfg(test)]
+fn clear_ocr_extraction_cache_for_tests() {
+    if let Some(cache) = OCR_EXTRACTION_CACHE.get()
+        && let Ok(mut cache) = cache.lock()
+    {
+        cache.entries.clear();
+    }
 }
 
 pub fn classify_extraction_status(
@@ -291,14 +435,16 @@ pub fn extraction_status_label(status: ExtractionStatus) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        ExtractedInput, ExtractionFidelity, ExtractionProvenance, ExtractionStrategy,
+        ExtractedInput, ExtractionFidelity, ExtractionProvenance, ExtractionStrategy, OcrCacheKind,
+        cached_ocr_extraction, clear_ocr_extraction_cache_for_tests,
         extract_image_input_with_attempt, extraction_strategy_label, is_supported_image_extension,
         normalized_extension,
     };
     use crate::audit::ExtractionStatus;
     use crate::extractor_pipeline::ExtractionAttempt;
     use crate::ocr_extract::OcrExtraction;
-    use std::path::Path;
+    use std::{cell::Cell, fs, path::Path};
+    use tempfile::tempdir;
 
     #[test]
     fn plain_text_fidelity_is_clean() {
@@ -402,5 +548,31 @@ mod tests {
                 && fidelity.structural_loss_suspected
                 && fidelity.low_confidence_review_required
         ));
+    }
+
+    #[test]
+    fn ocr_extraction_cache_reuses_unchanged_ocr_input() {
+        clear_ocr_extraction_cache_for_tests();
+        let temp = tempdir().unwrap();
+        let input = temp.path().join("scan.png");
+        fs::write(&input, b"fake image bytes").unwrap();
+        let calls = Cell::new(0usize);
+
+        for _ in 0..2 {
+            let extracted = cached_ocr_extraction(&input, OcrCacheKind::Image, || {
+                calls.set(calls.get() + 1);
+                Ok(ExtractedInput::successful(
+                    "cached OCR text".to_string(),
+                    ExtractionFidelity::ocr(false, true, false),
+                    ExtractionStrategy::ImageOcr,
+                ))
+            })
+            .unwrap();
+
+            assert_eq!(extracted.text, "cached OCR text");
+        }
+
+        assert_eq!(calls.get(), 1);
+        clear_ocr_extraction_cache_for_tests();
     }
 }
