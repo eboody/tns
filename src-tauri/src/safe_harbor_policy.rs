@@ -936,6 +936,9 @@ fn looks_like_real_domain(text: &str) -> bool {
     if tld.len() < 2 || tld.len() > 10 || !tld.chars().all(|ch| ch.is_ascii_lowercase()) {
         return false;
     }
+    if matches!(tld, "of" | "or") {
+        return false;
+    }
 
     labels.any(|label| !label.is_empty())
 }
@@ -1444,6 +1447,13 @@ mod tests {
                 && finding.reason
                     == "custom city/state classification for birthplace and sub-state geography"
         }));
+    }
+
+    #[test]
+    fn domain_detection_ignores_ocr_punctuation_before_short_connectors() {
+        assert!(!looks_like_real_domain("out.of"));
+        assert!(!looks_like_real_domain("59.or"));
+        assert!(looks_like_real_domain("example.edu"));
     }
 
     #[test]
