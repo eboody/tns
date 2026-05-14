@@ -1,0 +1,74 @@
+name: Build macOS app
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/macos-app.yml"
+      - "index.html"
+      - "package-lock.json"
+      - "package.json"
+      - "scripts/**"
+      - "src/**"
+      - "src-tauri/**"
+      - "vendor/**"
+      - "vite.config.js"
+
+jobs:
+  build-macos:
+    name: Build macOS OCR bundle
+    runs-on: macos-14
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Verify Apple Silicon runner
+        run: |
+          arch="$(uname -m)"
+          echo "runner architecture: ${arch}"
+          test "${arch}" = "arm64"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo registry and build outputs
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install OCR host tools
+        run: |
+          brew update
+          brew install poppler
+          cargo install ocrs-cli --locked
+
+      - name: Install JavaScript dependencies
+        run: npm ci
+
+      - name: Stage macOS OCR runtime
+        run: npm run stage:ocr:host
+        env:
+          TNS_OCRS_SOURCE: ${{ env.HOME }}/.cargo/bin/ocrs
+
+      - name: Verify staged OCR runtime
+        run: npm run stage:ocr:check
+
+      - name: Build macOS app and DMG
+        run: npm run bundle:macos:ocr
+
+      - name: Upload macOS app artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tns-deid-macos-ocr
+          path: |
+            src-tauri/target/release/bundle/macos/*.app
+            src-tauri/target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
