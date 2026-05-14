@@ -15,3 +15,7 @@ Expected staged layout:
   downloads.
 - `bin/tesseract` or `bin/tesseract.exe` plus `tessdata/` when using
   Tesseract.
+
+The bundled `ocrs` path scales small source images before OCR to improve
+recognition of low-resolution scans. Set `TNS_OCR_PREPROCESS=off` when you need
+to compare raw OCR engine behavior or avoid the quality/speed tradeoff.

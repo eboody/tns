@@ -8,6 +8,7 @@ use std::{
 
 use crate::error::{AppError, Result};
 use crate::{extraction::ExtractionStrategy, extractor_pipeline::ExtractionAttempt};
+use image::imageops::FilterType;
 
 const PDFTOPPM_TOOL_ENV: &str = "TNS_PDFTOPPM_TOOL";
 const CUSTOM_OCR_TOOL_ENV: &str = "TNS_OCR_TOOL";
@@ -15,6 +16,7 @@ const OCRS_TOOL_ENV: &str = "TNS_OCRS_TOOL";
 const OCRS_DETECT_MODEL_ENV: &str = "TNS_OCRS_DETECT_MODEL";
 const OCRS_REC_MODEL_ENV: &str = "TNS_OCRS_REC_MODEL";
 const TESSERACT_TOOL_ENV: &str = "TNS_TESSERACT_TOOL";
+const OCR_PREPROCESS_ENV: &str = "TNS_OCR_PREPROCESS";
 const OCR_RUNTIME_CACHE_ENV: &[&str] = &[
     PDFTOPPM_TOOL_ENV,
     CUSTOM_OCR_TOOL_ENV,
@@ -22,8 +24,10 @@ const OCR_RUNTIME_CACHE_ENV: &[&str] = &[
     OCRS_DETECT_MODEL_ENV,
     OCRS_REC_MODEL_ENV,
     TESSERACT_TOOL_ENV,
+    OCR_PREPROCESS_ENV,
     "PATH",
 ];
+const OCRS_PREPROCESS_MAX_INPUT_DIMENSION: u32 = 1_600;
 
 #[derive(Debug, Clone)]
 pub struct OcrExtraction {
@@ -37,6 +41,7 @@ struct OcrEngine {
     mode: OcrEngineMode,
     availability: OcrEngineAvailability,
     args: Vec<OsString>,
+    preprocessing: OcrImagePreprocessing,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -51,6 +56,12 @@ enum OcrEngineAvailability {
     AssumeConfigured,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OcrImagePreprocessing {
+    None,
+    Scale2Png,
+}
+
 impl OcrEngine {
     fn stdout_image_arg(name: impl Into<String>, command: impl Into<PathBuf>) -> Self {
         Self {
@@ -59,6 +70,7 @@ impl OcrEngine {
             mode: OcrEngineMode::StdoutImageArg,
             availability: OcrEngineAvailability::HelpProbe,
             args: Vec::new(),
+            preprocessing: OcrImagePreprocessing::None,
         }
     }
 
@@ -69,6 +81,7 @@ impl OcrEngine {
             mode: OcrEngineMode::StdoutImageArg,
             availability: OcrEngineAvailability::AssumeConfigured,
             args: Vec::new(),
+            preprocessing: OcrImagePreprocessing::None,
         }
     }
 
@@ -79,6 +92,7 @@ impl OcrEngine {
             mode: OcrEngineMode::TesseractStdout,
             availability: OcrEngineAvailability::HelpProbe,
             args: Vec::new(),
+            preprocessing: OcrImagePreprocessing::None,
         }
     }
 
@@ -89,11 +103,17 @@ impl OcrEngine {
             mode: OcrEngineMode::TesseractStdout,
             availability: OcrEngineAvailability::AssumeConfigured,
             args: Vec::new(),
+            preprocessing: OcrImagePreprocessing::None,
         }
     }
 
     fn with_args(mut self, args: Vec<OsString>) -> Self {
         self.args = args;
+        self
+    }
+
+    fn with_preprocessing(mut self, preprocessing: OcrImagePreprocessing) -> Self {
+        self.preprocessing = preprocessing;
         self
     }
 
@@ -223,18 +243,34 @@ fn configured_ocr_engines() -> Vec<OcrEngine> {
 
     let mut engines = Vec::new();
     let ocrs_model_args = configured_ocrs_model_args();
+    let ocrs_preprocessing = configured_ocrs_preprocessing();
     engines.push(
         match configured_tool_from_env(OCRS_TOOL_ENV) {
             Some(command) => OcrEngine::configured_stdout_image_arg("ocrs", command),
             None => OcrEngine::stdout_image_arg("ocrs", "ocrs"),
         }
-        .with_args(ocrs_model_args),
+        .with_args(ocrs_model_args)
+        .with_preprocessing(ocrs_preprocessing),
     );
     engines.push(match configured_tool_from_env(TESSERACT_TOOL_ENV) {
         Some(command) => OcrEngine::configured_tesseract(command),
         None => OcrEngine::tesseract("tesseract"),
     });
     engines
+}
+
+fn configured_ocrs_preprocessing() -> OcrImagePreprocessing {
+    match std::env::var(OCR_PREPROCESS_ENV) {
+        Ok(value)
+            if matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "0" | "off" | "false"
+            ) =>
+        {
+            OcrImagePreprocessing::None
+        }
+        _ => OcrImagePreprocessing::Scale2Png,
+    }
 }
 
 fn configured_ocrs_model_args() -> Vec<OsString> {
@@ -317,14 +353,18 @@ fn extract_images_via_ocr_with_engine(
 ) -> ExtractionAttempt<OcrExtraction> {
     let mut pages = Vec::new();
     for image_path in image_paths {
+        let prepared_image = match PreparedOcrImage::new(&image_path, engine.preprocessing) {
+            Ok(prepared_image) => prepared_image,
+            Err(detail) => return ExtractionAttempt::failed(strategy, detail),
+        };
         let mut command = Command::new(&engine.command);
         command.args(&engine.args);
         match engine.mode {
             OcrEngineMode::StdoutImageArg => {
-                command.arg(&image_path);
+                command.arg(prepared_image.path());
             }
             OcrEngineMode::TesseractStdout => {
-                command.arg(&image_path).arg("stdout");
+                command.arg(prepared_image.path()).arg("stdout");
             }
         }
 
@@ -377,6 +417,68 @@ fn extract_images_via_ocr_with_engine(
     )
 }
 
+struct PreparedOcrImage {
+    path: PathBuf,
+    scratch_dir: Option<PathBuf>,
+}
+
+impl PreparedOcrImage {
+    fn new(
+        image_path: &Path,
+        preprocessing: OcrImagePreprocessing,
+    ) -> std::result::Result<Self, String> {
+        match preprocessing {
+            OcrImagePreprocessing::None => Ok(Self {
+                path: image_path.to_path_buf(),
+                scratch_dir: None,
+            }),
+            OcrImagePreprocessing::Scale2Png => prepare_scaled_ocr_image(image_path),
+        }
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+impl Drop for PreparedOcrImage {
+    fn drop(&mut self) {
+        if let Some(scratch_dir) = self.scratch_dir.as_ref() {
+            cleanup_scratch_dir(scratch_dir);
+        }
+    }
+}
+
+fn prepare_scaled_ocr_image(image_path: &Path) -> std::result::Result<PreparedOcrImage, String> {
+    let image = image::open(image_path)
+        .map_err(|error| format!("failed to read image for OCR preprocessing: {error}"))?;
+    let width = image.width();
+    let height = image.height();
+
+    if width.max(height) >= OCRS_PREPROCESS_MAX_INPUT_DIMENSION {
+        return Ok(PreparedOcrImage {
+            path: image_path.to_path_buf(),
+            scratch_dir: None,
+        });
+    }
+
+    let scratch_dir = create_scratch_dir().map_err(|error| error.to_string())?;
+    let prepared_path = scratch_dir.join("preprocessed.png");
+    let scaled = image.resize(
+        width.saturating_mul(2),
+        height.saturating_mul(2),
+        FilterType::Lanczos3,
+    );
+    scaled
+        .save(&prepared_path)
+        .map_err(|error| format!("failed to write OCR preprocessed image: {error}"))?;
+
+    Ok(PreparedOcrImage {
+        path: prepared_path,
+        scratch_dir: Some(scratch_dir),
+    })
+}
+
 fn ocr_failure_detail(details: &[String]) -> String {
     let joined = if details.is_empty() {
         "no OCR engines configured".to_string()
@@ -422,7 +524,10 @@ mod tests {
 
     use crate::{extraction::ExtractionStrategy, extractor_pipeline::ExtractionAttempt};
 
-    use super::{OcrEngine, extract_images_via_ocr_with_engines, extract_pdf_via_ocr_with_tools};
+    use super::{
+        OcrEngine, OcrImagePreprocessing, extract_images_via_ocr_with_engines,
+        extract_pdf_via_ocr_with_tools,
+    };
 
     #[test]
     fn ocr_fallback_collects_page_text_from_external_tools() {
@@ -621,6 +726,35 @@ esac\n",
         assert!(matches!(
             extracted,
             ExtractionAttempt::Extracted { value, .. } if value.text == "local model OCR text"
+        ));
+    }
+
+    #[test]
+    fn ocrs_engine_can_preprocess_small_images_before_ocr() {
+        let temp = tempdir().unwrap();
+        let image = temp.path().join("scan.png");
+        image::RgbImage::new(10, 10).save(&image).unwrap();
+
+        let ocrs = temp.path().join("fake-ocrs.sh");
+        fs::write(
+            &ocrs,
+            "#!/usr/bin/env bash\nif [ \"$1\" = \"--help\" ]; then exit 0; fi\nif [ \"$(basename \"$1\")\" = \"preprocessed.png\" ]; then printf 'preprocessed OCR text'; else exit 2; fi\n",
+        )
+        .unwrap();
+        let mut perms = fs::metadata(&ocrs).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&ocrs, perms).unwrap();
+
+        let extracted = extract_images_via_ocr_with_engines(
+            vec![image],
+            &[OcrEngine::stdout_image_arg("ocrs", ocrs)
+                .with_preprocessing(OcrImagePreprocessing::Scale2Png)],
+            ExtractionStrategy::ImageOcr,
+        );
+
+        assert!(matches!(
+            extracted,
+            ExtractionAttempt::Extracted { value, .. } if value.text == "preprocessed OCR text"
         ));
     }
 

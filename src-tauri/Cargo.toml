@@ -19,6 +19,7 @@ tauri-build = { version = "2", features = [] }
 anyhow = "1.0"
 clap = { version = "4.5.8", features = ["derive"] }
 globset = "0.4.15"
+image = { version = "0.25.10", default-features = false, features = ["bmp", "jpeg", "png", "tiff", "webp"] }
 lopdf = "0.40.0"
 ort = "2.0.0-rc.12"
 quick-xml = "0.39.3"
