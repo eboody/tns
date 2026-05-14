@@ -32,6 +32,10 @@ const NER_MODEL_RESOURCE_PATH: &str = "ner/model.onnx";
 const NER_TOKENIZER_RESOURCE_PATH: &str = "ner/tokenizer.json";
 const DEV_NER_MODEL_RESOURCE_PATH: &str = "../ml/ner/model.onnx";
 const DEV_NER_TOKENIZER_RESOURCE_PATH: &str = "../ml/ner/tokenizer.json";
+const OCR_BIN_RESOURCE_DIR: &str = "ocr/bin";
+const OCR_TESSDATA_RESOURCE_DIR: &str = "ocr/tessdata";
+const DEV_OCR_BIN_RESOURCE_DIR: &str = "../ml/ocr/bin";
+const DEV_OCR_TESSDATA_RESOURCE_DIR: &str = "../ml/ocr/tessdata";
 
 #[tauri::command]
 fn run_review_job(
@@ -213,6 +217,91 @@ fn configure_default_auto_ner_assets(app: &AppHandle) {
     }
 }
 
+fn configure_default_bundled_ocr_tools(app: &AppHandle) {
+    configure_bundled_tool(
+        app,
+        "TNS_PDFTOPPM_TOOL",
+        executable_resource_path(OCR_BIN_RESOURCE_DIR, "pdftoppm"),
+        executable_resource_path(DEV_OCR_BIN_RESOURCE_DIR, "pdftoppm"),
+    );
+    configure_bundled_tool(
+        app,
+        "TNS_OCRS_TOOL",
+        executable_resource_path(OCR_BIN_RESOURCE_DIR, "ocrs"),
+        executable_resource_path(DEV_OCR_BIN_RESOURCE_DIR, "ocrs"),
+    );
+    configure_bundled_tool(
+        app,
+        "TNS_TESSERACT_TOOL",
+        executable_resource_path(OCR_BIN_RESOURCE_DIR, "tesseract"),
+        executable_resource_path(DEV_OCR_BIN_RESOURCE_DIR, "tesseract"),
+    );
+    configure_bundled_directory(
+        app,
+        "TESSDATA_PREFIX",
+        OCR_TESSDATA_RESOURCE_DIR,
+        DEV_OCR_TESSDATA_RESOURCE_DIR,
+    );
+}
+
+fn configure_bundled_tool(
+    app: &AppHandle,
+    env_name: &str,
+    bundled_resource_path: String,
+    dev_resource_path: String,
+) {
+    if std::env::var_os(env_name).is_some() {
+        return;
+    }
+
+    let Some(path) = [bundled_resource_path, dev_resource_path]
+        .iter()
+        .filter_map(|resource_path| resolve_resource_file(app, resource_path))
+        .find(|path| path.is_file())
+    else {
+        return;
+    };
+
+    unsafe {
+        std::env::set_var(env_name, path);
+    }
+}
+
+fn configure_bundled_directory(
+    app: &AppHandle,
+    env_name: &str,
+    bundled_resource_path: &str,
+    dev_resource_path: &str,
+) {
+    if std::env::var_os(env_name).is_some() {
+        return;
+    }
+
+    let Some(path) = [bundled_resource_path, dev_resource_path]
+        .iter()
+        .filter_map(|resource_path| resolve_resource_file(app, resource_path))
+        .find(|path| path.is_dir())
+    else {
+        return;
+    };
+
+    unsafe {
+        std::env::set_var(env_name, path);
+    }
+}
+
+fn executable_resource_path(directory: &str, stem: &str) -> String {
+    format!("{directory}/{}", executable_file_name(stem))
+}
+
+fn executable_file_name(stem: &str) -> String {
+    if cfg!(windows) {
+        format!("{stem}.exe")
+    } else {
+        stem.to_string()
+    }
+}
+
 fn resolve_default_auto_ner_assets(app: &AppHandle) -> Option<(PathBuf, PathBuf)> {
     [
         resolve_ner_assets(app, NER_MODEL_RESOURCE_PATH, NER_TOKENIZER_RESOURCE_PATH),
@@ -243,11 +332,18 @@ fn resolve_ner_assets(
     Some((model_path, tokenizer_path))
 }
 
+fn resolve_resource_file(app: &AppHandle, resource_path: &str) -> Option<PathBuf> {
+    app.path()
+        .resolve(resource_path, BaseDirectory::Resource)
+        .ok()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             configure_default_auto_ner_assets(app.handle());
+            configure_default_bundled_ocr_tools(app.handle());
             Ok(())
         })
         .manage(LastReplaceArtifactsState::default())
@@ -275,7 +371,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::artifact_open_target;
+    use super::{artifact_open_target, executable_file_name, executable_resource_path};
     use std::{fs, path::Path};
     use tempfile::tempdir;
 
@@ -296,5 +392,23 @@ mod tests {
         fs::create_dir_all(&path).unwrap();
 
         assert_eq!(artifact_open_target(&path).unwrap(), path);
+    }
+
+    #[test]
+    fn bundled_ocr_executable_paths_match_host_platform() {
+        let executable = executable_file_name("tesseract");
+        if cfg!(windows) {
+            assert_eq!(executable, "tesseract.exe");
+            assert_eq!(
+                executable_resource_path("ocr/bin", "pdftoppm"),
+                "ocr/bin/pdftoppm.exe"
+            );
+        } else {
+            assert_eq!(executable, "tesseract");
+            assert_eq!(
+                executable_resource_path("ocr/bin", "pdftoppm"),
+                "ocr/bin/pdftoppm"
+            );
+        }
     }
 }

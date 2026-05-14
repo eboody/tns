@@ -30,6 +30,7 @@ async function main() {
     console.log('staged ONNX Runtime assets for the host platform')
   }
   console.log('build examples: npm run bundle:linux | npm run bundle:macos | npm run bundle:windows')
+  console.log('OCR packaging: stage pdftoppm plus ocrs/tesseract with npm run stage:ocr, then use bundle:*:ocr')
 }
 
 function parseOptions(argv) {

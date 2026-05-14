@@ -8,6 +8,11 @@ use std::{
 use crate::error::{AppError, Result};
 use crate::{extraction::ExtractionStrategy, extractor_pipeline::ExtractionAttempt};
 
+const PDFTOPPM_TOOL_ENV: &str = "TNS_PDFTOPPM_TOOL";
+const CUSTOM_OCR_TOOL_ENV: &str = "TNS_OCR_TOOL";
+const OCRS_TOOL_ENV: &str = "TNS_OCRS_TOOL";
+const TESSERACT_TOOL_ENV: &str = "TNS_TESSERACT_TOOL";
+
 #[derive(Debug, Clone)]
 pub struct OcrExtraction {
     pub text: String,
@@ -61,6 +66,15 @@ impl OcrEngine {
         }
     }
 
+    fn configured_tesseract(command: impl Into<PathBuf>) -> Self {
+        Self {
+            name: "tesseract".to_string(),
+            command: command.into(),
+            mode: OcrEngineMode::TesseractStdout,
+            availability: OcrEngineAvailability::AssumeConfigured,
+        }
+    }
+
     fn is_available(&self) -> bool {
         match self.availability {
             OcrEngineAvailability::HelpProbe => tool_available(&self.command),
@@ -78,7 +92,7 @@ pub fn extract_pdf_via_ocr(path: &Path) -> Result<Option<OcrExtraction>> {
 }
 
 pub fn extract_pdf_via_ocr_attempt(path: &Path) -> ExtractionAttempt<OcrExtraction> {
-    extract_pdf_via_ocr_with_tools(path, "pdftoppm", configured_ocr_engines())
+    extract_pdf_via_ocr_with_tools(path, &configured_pdftoppm_tool(), configured_ocr_engines())
 }
 
 pub fn extract_image_via_ocr_attempt(path: &Path) -> ExtractionAttempt<OcrExtraction> {
@@ -91,13 +105,13 @@ pub fn extract_image_via_ocr_attempt(path: &Path) -> ExtractionAttempt<OcrExtrac
 
 fn extract_pdf_via_ocr_with_tools(
     path: &Path,
-    pdftoppm_tool: &str,
+    pdftoppm_tool: &Path,
     ocr_engines: Vec<OcrEngine>,
 ) -> ExtractionAttempt<OcrExtraction> {
     if !tool_available(pdftoppm_tool) {
         return ExtractionAttempt::unavailable(
             ExtractionStrategy::PdfOcr,
-            Some(format!("{pdftoppm_tool} unavailable")),
+            Some(format!("{} unavailable", pdftoppm_tool.display())),
         );
     }
 
@@ -114,7 +128,7 @@ fn extract_pdf_via_ocr_with_tools(
         .arg(path)
         .arg(&prefix)
         .status()
-        .map_err(|error| format!("failed to run {pdftoppm_tool}: {error}"));
+        .map_err(|error| format!("failed to run {}: {error}", pdftoppm_tool.display()));
 
     let pdftoppm_status = match pdftoppm_status {
         Ok(status) => status,
@@ -128,7 +142,10 @@ fn extract_pdf_via_ocr_with_tools(
         cleanup_scratch_dir(&scratch);
         return ExtractionAttempt::failed(
             ExtractionStrategy::PdfOcr,
-            format!("{pdftoppm_tool} failed while preparing OCR fallback images"),
+            format!(
+                "{} failed while preparing OCR fallback images",
+                pdftoppm_tool.display()
+            ),
         );
     }
 
@@ -160,20 +177,31 @@ fn extract_pdf_via_ocr_with_tools(
     extracted
 }
 
+fn configured_pdftoppm_tool() -> PathBuf {
+    configured_tool_from_env(PDFTOPPM_TOOL_ENV).unwrap_or_else(|| PathBuf::from("pdftoppm"))
+}
+
 fn configured_ocr_engines() -> Vec<OcrEngine> {
-    if let Some(command) = std::env::var_os("TNS_OCR_TOOL") {
-        if !command.is_empty() {
-            return vec![OcrEngine::configured_stdout_image_arg(
-                "custom",
-                PathBuf::from(command),
-            )];
-        }
+    if let Some(command) = configured_tool_from_env(CUSTOM_OCR_TOOL_ENV) {
+        return vec![OcrEngine::configured_stdout_image_arg("custom", command)];
     }
 
-    vec![
-        OcrEngine::stdout_image_arg("ocrs", "ocrs"),
-        OcrEngine::tesseract("tesseract"),
-    ]
+    let mut engines = Vec::new();
+    engines.push(match configured_tool_from_env(OCRS_TOOL_ENV) {
+        Some(command) => OcrEngine::configured_stdout_image_arg("ocrs", command),
+        None => OcrEngine::stdout_image_arg("ocrs", "ocrs"),
+    });
+    engines.push(match configured_tool_from_env(TESSERACT_TOOL_ENV) {
+        Some(command) => OcrEngine::configured_tesseract(command),
+        None => OcrEngine::tesseract("tesseract"),
+    });
+    engines
+}
+
+fn configured_tool_from_env(env_name: &str) -> Option<PathBuf> {
+    std::env::var_os(env_name)
+        .filter(|command| !command.is_empty())
+        .map(PathBuf::from)
 }
 
 fn extract_images_via_ocr_with_engines(
@@ -300,7 +328,7 @@ fn ocr_failure_detail(details: &[String]) -> String {
         details.join("; ")
     };
     format!(
-        "OCR requires an installed OCR engine ({joined}). Install ocrs or tesseract, or set TNS_OCR_TOOL to a command that accepts an image path and writes recognized text to stdout."
+        "OCR requires an installed OCR engine ({joined}). Install ocrs or tesseract, set TNS_OCR_TOOL to a command that accepts an image path and writes recognized text to stdout, or bundle tools with TNS_OCRS_TOOL/TNS_TESSERACT_TOOL."
     )
 }
 
@@ -370,7 +398,7 @@ esac\n",
 
         let extracted = extract_pdf_via_ocr_with_tools(
             &pdf,
-            pdftoppm.to_str().unwrap(),
+            &pdftoppm,
             vec![OcrEngine::stdout_image_arg("ocrs", ocrs.clone())],
         );
 

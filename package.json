@@ -14,6 +14,9 @@
     "setup:ml": "npm run ner:download && npm run stage:runtime",
     "setup:build": "node ./scripts/setup-build-workspace.mjs",
     "setup:build:host": "node ./scripts/setup-build-workspace.mjs --host-target",
+    "stage:ocr": "node ./scripts/stage-ocr-runtime.mjs",
+    "stage:ocr:host": "node ./scripts/stage-ocr-runtime.mjs --from-host",
+    "stage:ocr:check": "node ./scripts/stage-ocr-runtime.mjs --check-only --require-complete",
     "stage:runtime": "node ./scripts/stage-ort-runtime.mjs",
     "stage:runtime:all": "node ./scripts/stage-ort-runtime.mjs --all-targets",
     "stage:runtime:linux": "node ./scripts/stage-ort-runtime.mjs --target linux-x64",
@@ -25,7 +28,10 @@
     "bundle:linux:appimage": "npm run stage:runtime && tauri build --config src-tauri/tauri.linux.conf.json --bundles appimage",
     "bundle:macos": "npm run stage:runtime && tauri build --config src-tauri/tauri.macos.conf.json --bundles app,dmg",
     "bundle:windows": "npm run stage:runtime:windows && tauri build --config src-tauri/tauri.windows.conf.json --bundles nsis",
-    "bundle:windows:msi": "npm run stage:runtime:windows && tauri build --config src-tauri/tauri.windows.conf.json --bundles msi"
+    "bundle:windows:msi": "npm run stage:runtime:windows && tauri build --config src-tauri/tauri.windows.conf.json --bundles msi",
+    "bundle:linux:ocr": "npm run stage:runtime && npm run stage:ocr:check && tauri build --config src-tauri/tauri.linux.conf.json --bundles deb,rpm",
+    "bundle:macos:ocr": "npm run stage:runtime && npm run stage:ocr:check && tauri build --config src-tauri/tauri.macos.conf.json --bundles app,dmg",
+    "bundle:windows:ocr": "npm run stage:runtime:windows && npm run stage:ocr:check && tauri build --config src-tauri/tauri.windows.conf.json --bundles nsis"
   },
   "devDependencies": {
     "adm-zip": "^0.5.16",
