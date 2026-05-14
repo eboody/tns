@@ -54,9 +54,18 @@ jobs:
         run: npm ci
 
       - name: Stage macOS OCR runtime
-        run: npm run stage:ocr:host
-        env:
-          TNS_OCRS_SOURCE: ${{ env.HOME }}/.cargo/bin/ocrs
+        run: |
+          export PATH="${HOME}/.cargo/bin:${PATH}"
+
+          pdftoppm_path="$(command -v pdftoppm)"
+          ocrs_path="$(command -v ocrs)"
+
+          echo "pdftoppm: ${pdftoppm_path}"
+          echo "ocrs: ${ocrs_path}"
+
+          TNS_PDFTOPPM_SOURCE="${pdftoppm_path}" \
+            TNS_OCRS_SOURCE="${ocrs_path}" \
+            npm run stage:ocr:host
 
       - name: Verify staged OCR runtime
         run: npm run stage:ocr:check
