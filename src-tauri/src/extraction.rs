@@ -28,6 +28,7 @@ pub enum ExtractionStrategy {
     PdfLopdf,
     PdfPdftotext,
     PdfOcr,
+    ImageOcr,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -55,6 +56,7 @@ pub fn extraction_strategy_label(strategy: ExtractionStrategy) -> &'static str {
         ExtractionStrategy::PdfLopdf => "pdf_lopdf",
         ExtractionStrategy::PdfPdftotext => "pdf_pdftotext",
         ExtractionStrategy::PdfOcr => "pdf_ocr",
+        ExtractionStrategy::ImageOcr => "image_ocr",
     }
 }
 
@@ -147,7 +149,7 @@ impl ExtractedInput {
 }
 
 pub fn extract_input(input: &Path) -> Result<ExtractedInput> {
-    match input.extension().and_then(|ext| ext.to_str()) {
+    match normalized_extension(input).as_deref() {
         Some("md" | "txt") => fs::read_to_string(input)
             .map(|text| {
                 ExtractedInput::successful(
@@ -172,8 +174,23 @@ pub fn extract_input(input: &Path) -> Result<ExtractedInput> {
             ))
         }
         Some("pdf") => extract_pdf_input(input),
+        Some(extension) if is_supported_image_extension(extension) => extract_image_input(input),
         _ => Err(AppError::UnsupportedInputFormat(input.to_path_buf())),
     }
+}
+
+pub fn normalized_extension(input: &Path) -> Option<String> {
+    input
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase)
+}
+
+pub fn is_supported_image_extension(extension: &str) -> bool {
+    matches!(
+        extension,
+        "png" | "jpg" | "jpeg" | "tif" | "tiff" | "bmp" | "webp"
+    )
 }
 
 fn extract_pdf_input(input: &Path) -> Result<ExtractedInput> {
@@ -227,6 +244,27 @@ fn extract_pdf_input(input: &Path) -> Result<ExtractedInput> {
     Ok(extracted)
 }
 
+fn extract_image_input(input: &Path) -> Result<ExtractedInput> {
+    extract_image_input_with_attempt(ocr_extract::extract_image_via_ocr_attempt(input))
+}
+
+fn extract_image_input_with_attempt(
+    ocr: crate::extractor_pipeline::ExtractionAttempt<ocr_extract::OcrExtraction>,
+) -> Result<ExtractedInput> {
+    let selected = select_first_success(
+        [ocr],
+        "Image OCR produced no text; install/configure OCR tooling or provide a text-based source",
+    )?;
+
+    let mut extracted = ExtractedInput::successful(
+        selected.value.text,
+        ExtractionFidelity::ocr(false, true, false),
+        ExtractionStrategy::ImageOcr,
+    );
+    extracted.attempts = selected.attempts;
+    Ok(extracted)
+}
+
 pub fn classify_extraction_status(
     non_text_omissions_detected: bool,
     text_degraded_detected: bool,
@@ -253,9 +291,14 @@ pub fn extraction_status_label(status: ExtractionStatus) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::{
-        ExtractionFidelity, ExtractionProvenance, ExtractionStrategy, extraction_strategy_label,
+        ExtractedInput, ExtractionFidelity, ExtractionProvenance, ExtractionStrategy,
+        extract_image_input_with_attempt, extraction_strategy_label, is_supported_image_extension,
+        normalized_extension,
     };
     use crate::audit::ExtractionStatus;
+    use crate::extractor_pipeline::ExtractionAttempt;
+    use crate::ocr_extract::OcrExtraction;
+    use std::path::Path;
 
     #[test]
     fn plain_text_fidelity_is_clean() {
@@ -316,5 +359,48 @@ mod tests {
             extraction_strategy_label(ExtractionStrategy::PdfPdftotext),
             "pdf_pdftotext"
         );
+        assert_eq!(
+            extraction_strategy_label(ExtractionStrategy::PdfOcr),
+            "pdf_ocr"
+        );
+        assert_eq!(
+            extraction_strategy_label(ExtractionStrategy::ImageOcr),
+            "image_ocr"
+        );
+    }
+
+    #[test]
+    fn image_extensions_are_normalized_and_supported() {
+        assert_eq!(
+            normalized_extension(Path::new("transcript.JPG")).as_deref(),
+            Some("jpg")
+        );
+        assert!(is_supported_image_extension("png"));
+        assert!(is_supported_image_extension("tiff"));
+        assert!(!is_supported_image_extension("gif"));
+    }
+
+    #[test]
+    fn image_ocr_attempt_becomes_low_confidence_extracted_input() {
+        let extracted = extract_image_input_with_attempt(ExtractionAttempt::extracted(
+            ExtractionStrategy::ImageOcr,
+            OcrExtraction {
+                text: "OCR transcript text".to_string(),
+            },
+        ))
+        .unwrap();
+
+        assert!(matches!(
+            extracted,
+            ExtractedInput {
+                text,
+                fidelity,
+                strategy: ExtractionStrategy::ImageOcr,
+                ..
+            } if text == "OCR transcript text"
+                && fidelity.provenance == ExtractionProvenance::OcrText
+                && fidelity.structural_loss_suspected
+                && fidelity.low_confidence_review_required
+        ));
     }
 }

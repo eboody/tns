@@ -22,6 +22,7 @@ use error::{AppError, Result};
 use extraction::{
     ExtractionFidelity, ExtractionProvenance, ExtractionStrategy, classify_extraction_status,
     extract_input, extraction_provenance_label, extraction_status_label, extraction_strategy_label,
+    is_supported_image_extension, normalized_extension,
 };
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use redact_core::AnalyzerEngine;
@@ -326,7 +327,7 @@ fn run_directory(options: RunOptions) -> Result<RunSummary> {
             mode: options.mode,
         }) {
             Ok(summary) => summary,
-            Err(AppError::Analysis(_)) => {
+            Err(AppError::Analysis(detail)) => {
                 file_statuses.push(RunFileStatus {
                     path: relative.clone(),
                     status: RunFileStatusKind::ExtractionFailed,
@@ -340,7 +341,7 @@ fn run_directory(options: RunOptions) -> Result<RunSummary> {
                     output_path: None,
                     audit_output_path: None,
                 });
-                extraction_failed.push(relative.clone());
+                extraction_failed.push((relative.clone(), detail));
                 review_sensitive.push(relative);
                 continue;
             }
@@ -791,10 +792,11 @@ fn validate_supported_input(input: &Path) -> Result<()> {
 }
 
 fn is_supported_input(input: &Path) -> bool {
-    matches!(
-        input.extension().and_then(|ext| ext.to_str()),
-        Some("md" | "txt" | "docx" | "pdf")
-    )
+    let extension = normalized_extension(input);
+    matches!(extension.as_deref(), Some("md" | "txt" | "docx" | "pdf"))
+        || extension
+            .as_deref()
+            .is_some_and(is_supported_image_extension)
 }
 
 fn write_text_file(path: &Path, contents: &str) -> Result<()> {
@@ -817,10 +819,12 @@ fn default_output_path(input: &Path, suffix: &str, preserve_input_extension: boo
         .file_stem()
         .and_then(|stem| stem.to_str())
         .unwrap_or("output");
-    let extension = if matches!(
-        input.extension().and_then(|ext| ext.to_str()),
-        Some("docx" | "pdf")
-    ) && preserve_input_extension
+    let extension = if matches!(normalized_extension(input).as_deref(), Some("docx" | "pdf"))
+        && preserve_input_extension
+        || (preserve_input_extension
+            && normalized_extension(input)
+                .as_deref()
+                .is_some_and(is_supported_image_extension))
     {
         ".md".to_string()
     } else if preserve_input_extension {
@@ -896,7 +900,7 @@ fn build_batch_summary(
     processed: &[PathBuf],
     skipped: &[PathBuf],
     unsupported: &[PathBuf],
-    extraction_failed: &[PathBuf],
+    extraction_failed: &[(PathBuf, String)],
     review_sensitive: &[PathBuf],
     non_text_omission_files: &[PathBuf],
     text_degraded_files: &[PathBuf],
@@ -956,8 +960,8 @@ fn build_batch_summary(
     }
     if !extraction_failed.is_empty() {
         lines.push("Extraction failed:".to_string());
-        for path in extraction_failed {
-            lines.push(format!("- {}", path.display()));
+        for (path, detail) in extraction_failed {
+            lines.push(format!("- {}: {}", path.display(), detail));
         }
     }
     if !review_sensitive.is_empty() {
@@ -1054,7 +1058,10 @@ mod tests {
     use redact_core::recognizers::Recognizer;
     use redact_core::{RecognizerResult, types::EntityType};
 
-    use super::{COVERAGE_NOTE, ExtractionStatus, FindingSource, RunMode, RunOptions, run};
+    use super::{
+        COVERAGE_NOTE, ExtractionStatus, FindingSource, RunMode, RunOptions, build_batch_summary,
+        default_output_path, is_supported_input, run,
+    };
     use crate::audit::{AuditReport, ReviewFlags};
     use std::fs;
     use std::io::Write;
@@ -1155,6 +1162,44 @@ mod tests {
         );
         let output = fs::read_to_string(summary.output_path.unwrap()).unwrap();
         assert_eq!(output, "Email [EMAIL_ADDRESS].");
+    }
+
+    #[test]
+    fn supported_inputs_include_images_case_insensitively() {
+        assert!(is_supported_input(Path::new("transcript.PNG")));
+        assert!(is_supported_input(Path::new("transcript.tiff")));
+        assert!(!is_supported_input(Path::new("animation.gif")));
+    }
+
+    #[test]
+    fn default_output_path_writes_image_ocr_results_as_markdown() {
+        assert_eq!(
+            default_output_path(Path::new("scan.PNG"), ".deidentified", true),
+            PathBuf::from("scan.deidentified.md")
+        );
+    }
+
+    #[test]
+    fn directory_summary_includes_extraction_failure_details() {
+        let summary = build_batch_summary(
+            Path::new("/workspace"),
+            &[],
+            &[],
+            &[],
+            &[(
+                PathBuf::from("scan.png"),
+                "OCR requires an installed OCR engine".to_string(),
+            )],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+            &[],
+        );
+
+        assert!(summary.contains("- scan.png: OCR requires an installed OCR engine"));
     }
 
     #[test]
