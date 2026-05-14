@@ -10,5 +10,8 @@ Expected staged layout:
 - `bin/pdftoppm` or `bin/pdftoppm.exe` for PDF page rasterization.
 - `bin/ocrs` or `bin/ocrs.exe` for an OCR command that accepts an image path
   and writes recognized text to stdout.
+- `models/ocrs/text-detection.rten` and `models/ocrs/text-recognition.rten`
+  when using `ocrs`, so packaged builds do not need first-run network model
+  downloads.
 - `bin/tesseract` or `bin/tesseract.exe` plus `tessdata/` when using
   Tesseract.

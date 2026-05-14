@@ -1,7 +1,9 @@
-import { access, chmod, cp, mkdir, readdir, rm, stat } from 'node:fs/promises'
+import { createWriteStream } from 'node:fs'
+import { access, chmod, cp, mkdir, readdir, rename, rm, stat } from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { execFile } from 'node:child_process'
+import { pipeline } from 'node:stream/promises'
 import { promisify } from 'node:util'
 
 const execFileAsync = promisify(execFile)
@@ -11,6 +13,23 @@ const repoRoot = path.resolve(__dirname, '..')
 const ocrDir = path.join(repoRoot, 'ml', 'ocr')
 const binDir = path.join(ocrDir, 'bin')
 const tessdataDir = path.join(ocrDir, 'tessdata')
+const ocrsModelDir = path.join(ocrDir, 'models', 'ocrs')
+
+const OCRS_DETECTION_MODEL_URL = 'https://ocrs-models.s3-accelerate.amazonaws.com/text-detection.rten'
+const OCRS_RECOGNITION_MODEL_URL = 'https://ocrs-models.s3-accelerate.amazonaws.com/text-recognition.rten'
+
+const OCRS_MODEL_SPECS = [
+  {
+    name: 'text-detection.rten',
+    env: 'TNS_OCRS_DETECTION_MODEL_SOURCE',
+    url: OCRS_DETECTION_MODEL_URL,
+  },
+  {
+    name: 'text-recognition.rten',
+    env: 'TNS_OCRS_RECOGNITION_MODEL_SOURCE',
+    url: OCRS_RECOGNITION_MODEL_URL,
+  },
+]
 
 const TOOL_SPECS = [
   { name: 'pdftoppm', env: 'TNS_PDFTOPPM_SOURCE', requiredForComplete: true },
@@ -23,6 +42,7 @@ async function main() {
 
   await mkdir(binDir, { recursive: true })
   await mkdir(tessdataDir, { recursive: true })
+  await mkdir(ocrsModelDir, { recursive: true })
 
   if (options.clear) {
     await clearStagedOcrRuntime()
@@ -30,6 +50,7 @@ async function main() {
 
   if (!options.checkOnly) {
     await stageTools(options)
+    await stageOcrsModels(options)
     await stageTessdata(options)
   }
 
@@ -40,6 +61,8 @@ function parseOptions(argv) {
   const options = {
     binSource: process.env.TNS_OCR_BIN_SOURCE?.trim() || null,
     tessdataSource: process.env.TNS_TESSDATA_SOURCE?.trim() || null,
+    ocrsModelSource: process.env.TNS_OCRS_MODEL_SOURCE?.trim() || null,
+    skipOcrsModels: false,
     fromHost: false,
     checkOnly: false,
     requireComplete: false,
@@ -54,6 +77,14 @@ function parseOptions(argv) {
     }
     if (arg === '--tessdata-source') {
       options.tessdataSource = readOptionValue(argv, ++index, arg)
+      continue
+    }
+    if (arg === '--ocrs-model-source') {
+      options.ocrsModelSource = readOptionValue(argv, ++index, arg)
+      continue
+    }
+    if (arg === '--skip-ocrs-models') {
+      options.skipOcrsModels = true
       continue
     }
     if (arg === '--from-host') {
@@ -76,6 +107,27 @@ function parseOptions(argv) {
   }
 
   return options
+}
+
+async function stageOcrsModels(options) {
+  if (options.skipOcrsModels) {
+    return
+  }
+
+  await mkdir(ocrsModelDir, { recursive: true })
+  for (const spec of OCRS_MODEL_SPECS) {
+    const destination = path.join(ocrsModelDir, spec.name)
+    const source = process.env[spec.env]?.trim()
+      || (options.ocrsModelSource ? path.join(options.ocrsModelSource, spec.name) : null)
+
+    if (source) {
+      await stageArtifact(source, destination)
+      console.log(`staged ocrs model ${spec.name} from ${describeSource(source)}`)
+      continue
+    }
+
+    await stageDefaultArtifact(destination, spec.url, spec.name)
+  }
 }
 
 function readOptionValue(argv, index, flag) {
@@ -147,8 +199,11 @@ async function reportStagedRuntime(options) {
   }
 
   const hasTessdata = await directoryHasEntries(tessdataDir)
+  const hasOcrsModels = await ocrsModelsAreStaged()
   const hasPdfRasterizer = stagedTools.includes('pdftoppm')
-  const hasOcrEngine = stagedTools.includes('ocrs') || stagedTools.includes('tesseract')
+  const hasUsableOcrs = stagedTools.includes('ocrs') && hasOcrsModels
+  const hasUsableTesseract = stagedTools.includes('tesseract') && hasTessdata
+  const hasOcrEngine = hasUsableOcrs || hasUsableTesseract
 
   if (stagedTools.length > 0) {
     console.log(`staged OCR tools: ${stagedTools.join(', ')}`)
@@ -158,6 +213,14 @@ async function reportStagedRuntime(options) {
 
   if (hasTessdata) {
     console.log('staged Tesseract tessdata directory')
+  }
+
+  if (hasOcrsModels) {
+    console.log('staged ocrs detection and recognition models')
+  }
+
+  if (stagedTools.includes('ocrs') && !hasOcrsModels) {
+    console.warn('warning: staged ocrs without local models; pass --ocrs-model-source or allow default model download')
   }
 
   if (stagedTools.includes('tesseract') && !hasTessdata) {
@@ -180,8 +243,58 @@ async function reportStagedRuntime(options) {
 async function clearStagedOcrRuntime() {
   await rm(binDir, { recursive: true, force: true })
   await rm(tessdataDir, { recursive: true, force: true })
+  await rm(ocrsModelDir, { recursive: true, force: true })
   await mkdir(binDir, { recursive: true })
   await mkdir(tessdataDir, { recursive: true })
+  await mkdir(ocrsModelDir, { recursive: true })
+}
+
+async function stageDefaultArtifact(destination, url, name) {
+  if (await exists(destination)) {
+    console.log(`using existing ocrs model ${name}`)
+    return
+  }
+
+  const tempPath = `${destination}.download`
+  await rm(tempPath, { force: true })
+  await download(url, tempPath)
+  await rename(tempPath, destination)
+  console.log(`downloaded ocrs model ${name} from ${url}`)
+}
+
+async function stageArtifact(source, destination) {
+  if (isHttpUrl(source)) {
+    await download(source, destination)
+    return
+  }
+
+  await assertFile(source, `ocrs model source is not a file: ${source}`)
+  await cp(source, destination)
+}
+
+async function download(url, destination) {
+  const response = await fetch(url)
+  if (!response.ok || !response.body) {
+    throw new Error(`failed to download ${url}: ${response.status} ${response.statusText}`)
+  }
+  await pipeline(response.body, createWriteStream(destination))
+}
+
+function isHttpUrl(value) {
+  return value.startsWith('http://') || value.startsWith('https://')
+}
+
+function describeSource(source) {
+  return isHttpUrl(source) ? `URL ${source}` : `path ${source}`
+}
+
+async function ocrsModelsAreStaged() {
+  for (const spec of OCRS_MODEL_SPECS) {
+    if (!(await exists(path.join(ocrsModelDir, spec.name)))) {
+      return false
+    }
+  }
+  return true
 }
 
 function executableFileName(name) {

@@ -34,8 +34,13 @@ const DEV_NER_MODEL_RESOURCE_PATH: &str = "../ml/ner/model.onnx";
 const DEV_NER_TOKENIZER_RESOURCE_PATH: &str = "../ml/ner/tokenizer.json";
 const OCR_BIN_RESOURCE_DIR: &str = "ocr/bin";
 const OCR_TESSDATA_RESOURCE_DIR: &str = "ocr/tessdata";
+const OCRS_DETECTION_MODEL_RESOURCE_PATH: &str = "ocr/models/ocrs/text-detection.rten";
+const OCRS_RECOGNITION_MODEL_RESOURCE_PATH: &str = "ocr/models/ocrs/text-recognition.rten";
 const DEV_OCR_BIN_RESOURCE_DIR: &str = "../ml/ocr/bin";
 const DEV_OCR_TESSDATA_RESOURCE_DIR: &str = "../ml/ocr/tessdata";
+const DEV_OCRS_DETECTION_MODEL_RESOURCE_PATH: &str = "../ml/ocr/models/ocrs/text-detection.rten";
+const DEV_OCRS_RECOGNITION_MODEL_RESOURCE_PATH: &str =
+    "../ml/ocr/models/ocrs/text-recognition.rten";
 
 #[tauri::command]
 fn run_review_job(
@@ -236,6 +241,18 @@ fn configure_default_bundled_ocr_tools(app: &AppHandle) {
         executable_resource_path(OCR_BIN_RESOURCE_DIR, "tesseract"),
         executable_resource_path(DEV_OCR_BIN_RESOURCE_DIR, "tesseract"),
     );
+    configure_bundled_file(
+        app,
+        "TNS_OCRS_DETECT_MODEL",
+        OCRS_DETECTION_MODEL_RESOURCE_PATH,
+        DEV_OCRS_DETECTION_MODEL_RESOURCE_PATH,
+    );
+    configure_bundled_file(
+        app,
+        "TNS_OCRS_REC_MODEL",
+        OCRS_RECOGNITION_MODEL_RESOURCE_PATH,
+        DEV_OCRS_RECOGNITION_MODEL_RESOURCE_PATH,
+    );
     configure_bundled_directory(
         app,
         "TESSDATA_PREFIX",
@@ -249,6 +266,15 @@ fn configure_bundled_tool(
     env_name: &str,
     bundled_resource_path: String,
     dev_resource_path: String,
+) {
+    configure_bundled_file(app, env_name, &bundled_resource_path, &dev_resource_path)
+}
+
+fn configure_bundled_file(
+    app: &AppHandle,
+    env_name: &str,
+    bundled_resource_path: &str,
+    dev_resource_path: &str,
 ) {
     if std::env::var_os(env_name).is_some() {
         return;

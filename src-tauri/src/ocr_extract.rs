@@ -1,4 +1,5 @@
 use std::{
+    ffi::OsString,
     fs,
     path::{Path, PathBuf},
     process::{Command, Stdio},
@@ -11,6 +12,8 @@ use crate::{extraction::ExtractionStrategy, extractor_pipeline::ExtractionAttemp
 const PDFTOPPM_TOOL_ENV: &str = "TNS_PDFTOPPM_TOOL";
 const CUSTOM_OCR_TOOL_ENV: &str = "TNS_OCR_TOOL";
 const OCRS_TOOL_ENV: &str = "TNS_OCRS_TOOL";
+const OCRS_DETECT_MODEL_ENV: &str = "TNS_OCRS_DETECT_MODEL";
+const OCRS_REC_MODEL_ENV: &str = "TNS_OCRS_REC_MODEL";
 const TESSERACT_TOOL_ENV: &str = "TNS_TESSERACT_TOOL";
 
 #[derive(Debug, Clone)]
@@ -24,6 +27,7 @@ struct OcrEngine {
     command: PathBuf,
     mode: OcrEngineMode,
     availability: OcrEngineAvailability,
+    args: Vec<OsString>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -45,6 +49,7 @@ impl OcrEngine {
             command: command.into(),
             mode: OcrEngineMode::StdoutImageArg,
             availability: OcrEngineAvailability::HelpProbe,
+            args: Vec::new(),
         }
     }
 
@@ -54,6 +59,7 @@ impl OcrEngine {
             command: command.into(),
             mode: OcrEngineMode::StdoutImageArg,
             availability: OcrEngineAvailability::AssumeConfigured,
+            args: Vec::new(),
         }
     }
 
@@ -63,6 +69,7 @@ impl OcrEngine {
             command: command.into(),
             mode: OcrEngineMode::TesseractStdout,
             availability: OcrEngineAvailability::HelpProbe,
+            args: Vec::new(),
         }
     }
 
@@ -72,7 +79,13 @@ impl OcrEngine {
             command: command.into(),
             mode: OcrEngineMode::TesseractStdout,
             availability: OcrEngineAvailability::AssumeConfigured,
+            args: Vec::new(),
         }
+    }
+
+    fn with_args(mut self, args: Vec<OsString>) -> Self {
+        self.args = args;
+        self
     }
 
     fn is_available(&self) -> bool {
@@ -187,15 +200,35 @@ fn configured_ocr_engines() -> Vec<OcrEngine> {
     }
 
     let mut engines = Vec::new();
-    engines.push(match configured_tool_from_env(OCRS_TOOL_ENV) {
-        Some(command) => OcrEngine::configured_stdout_image_arg("ocrs", command),
-        None => OcrEngine::stdout_image_arg("ocrs", "ocrs"),
-    });
+    let ocrs_model_args = configured_ocrs_model_args();
+    engines.push(
+        match configured_tool_from_env(OCRS_TOOL_ENV) {
+            Some(command) => OcrEngine::configured_stdout_image_arg("ocrs", command),
+            None => OcrEngine::stdout_image_arg("ocrs", "ocrs"),
+        }
+        .with_args(ocrs_model_args),
+    );
     engines.push(match configured_tool_from_env(TESSERACT_TOOL_ENV) {
         Some(command) => OcrEngine::configured_tesseract(command),
         None => OcrEngine::tesseract("tesseract"),
     });
     engines
+}
+
+fn configured_ocrs_model_args() -> Vec<OsString> {
+    let Some(detection_model) = configured_tool_from_env(OCRS_DETECT_MODEL_ENV) else {
+        return Vec::new();
+    };
+    let Some(recognition_model) = configured_tool_from_env(OCRS_REC_MODEL_ENV) else {
+        return Vec::new();
+    };
+
+    vec![
+        OsString::from("--detect-model"),
+        detection_model.into_os_string(),
+        OsString::from("--rec-model"),
+        recognition_model.into_os_string(),
+    ]
 }
 
 fn configured_tool_from_env(env_name: &str) -> Option<PathBuf> {
@@ -263,6 +296,7 @@ fn extract_images_via_ocr_with_engine(
     let mut pages = Vec::new();
     for image_path in image_paths {
         let mut command = Command::new(&engine.command);
+        command.args(&engine.args);
         match engine.mode {
             OcrEngineMode::StdoutImageArg => {
                 command.arg(&image_path);
@@ -530,6 +564,41 @@ esac\n",
         assert!(matches!(
             extracted,
             ExtractionAttempt::Extracted { value, .. } if value.text == "configured OCR text"
+        ));
+    }
+
+    #[test]
+    fn ocrs_engine_can_receive_local_model_paths_before_image_path() {
+        let temp = tempdir().unwrap();
+        let image = temp.path().join("scan.png");
+        fs::write(&image, b"fake image bytes").unwrap();
+        let detect_model = temp.path().join("text-detection.rten");
+        let rec_model = temp.path().join("text-recognition.rten");
+
+        let ocrs = temp.path().join("fake-ocrs.sh");
+        fs::write(
+            &ocrs,
+            "#!/usr/bin/env bash\nif [ \"$1\" = \"--help\" ]; then exit 0; fi\nif [ \"$1\" = \"--detect-model\" ] && [ \"$3\" = \"--rec-model\" ] && [ \"$5\" != \"\" ]; then printf 'local model OCR text'; else exit 2; fi\n",
+        )
+        .unwrap();
+        let mut perms = fs::metadata(&ocrs).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&ocrs, perms).unwrap();
+
+        let extracted = extract_images_via_ocr_with_engines(
+            vec![image],
+            &[OcrEngine::stdout_image_arg("ocrs", ocrs).with_args(vec![
+                "--detect-model".into(),
+                detect_model.into_os_string(),
+                "--rec-model".into(),
+                rec_model.into_os_string(),
+            ])],
+            ExtractionStrategy::ImageOcr,
+        );
+
+        assert!(matches!(
+            extracted,
+            ExtractionAttempt::Extracted { value, .. } if value.text == "local model OCR text"
         ));
     }
 
