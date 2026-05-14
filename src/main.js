@@ -12,6 +12,7 @@ import {
   createRedactionSidebarState
 } from './redaction-sidebar-state.js'
 import { buildReviewNotice } from './review-notice.js'
+import { imageOcrSourcePath } from './ocr-preview.js'
 import {
   createWorkspaceState,
   failProcessing,
@@ -44,6 +45,14 @@ const selectedFileStatus = document.getElementById('selectedFileStatus')
 const previewHighlightCount = document.getElementById('previewHighlightCount')
 const toggleHighlights = document.getElementById('toggleHighlights')
 const previewNote = document.getElementById('previewNote')
+const ocrImageReview = document.getElementById('ocrImageReview')
+const ocrSourceImage = document.getElementById('ocrSourceImage')
+const ocrImageError = document.getElementById('ocrImageError')
+const editOcrText = document.getElementById('editOcrText')
+const ocrTextEditor = document.getElementById('ocrTextEditor')
+const ocrCorrectedText = document.getElementById('ocrCorrectedText')
+const saveOcrText = document.getElementById('saveOcrText')
+const cancelOcrText = document.getElementById('cancelOcrText')
 const beforePreview = document.getElementById('beforePreview')
 const afterPreview = document.getElementById('afterPreview')
 const previewActionTooltip = document.getElementById('previewActionTooltip')
@@ -68,6 +77,9 @@ redactionSidebar.setPersistedTerms(savedRedactionTerms)
 let previewScrollSyncFrame = null
 let suppressPreviewScrollSync = false
 let saveRedactionEditsInFlight = false
+let saveOcrTextInFlight = false
+let ocrEditorPreviewPath = null
+let ocrImageLoadToken = 0
 let recentSelectionIntentUntil = 0
 let lastSidebarPreviewSet = null
 let lastSidebarPreviewPath = null
@@ -119,6 +131,18 @@ if (window.location.hostname === '127.0.0.1' || window.location.hostname === 'lo
 
 toggleHighlights.addEventListener('click', () => {
   workspace.value = toggleWorkspaceHighlights(workspace.peek())
+})
+
+editOcrText.addEventListener('click', () => {
+  startOcrTextCorrection()
+})
+
+cancelOcrText.addEventListener('click', () => {
+  closeOcrTextCorrection()
+})
+
+saveOcrText.addEventListener('click', async () => {
+  await saveOcrTextCorrection()
 })
 
 function syncRedactionSidebar(state, force = false) {
@@ -378,6 +402,8 @@ effect(() => {
   pickFolder.disabled = !enabled
   findAndRedactButton.disabled = !enabled || !hasPreviews
   redactionTermInput.disabled = !enabled || !hasPreviews
+  editOcrText.disabled = !enabled || draftPreviewState.hasPendingChanges.value || saveOcrTextInFlight
+  saveOcrText.disabled = !enabled || saveOcrTextInFlight
 })
 
 effect(() => {
@@ -648,6 +674,7 @@ function renderPreview(preview) {
     previewPanel.classList.remove('large-preview-scroll')
     previewNote.hidden = true
     previewNote.textContent = ''
+    hideOcrImageReview()
     beforePreview.textContent = 'Original content preview will appear here.'
     afterPreview.textContent = 'Redacted output preview will appear here.'
     lastRenderedBeforeHtml = null
@@ -672,6 +699,7 @@ function renderPreview(preview) {
     : null
 
   previewPanel.classList.toggle('large-preview-scroll', largePreviewScroll)
+  renderOcrImageReview(preview)
   previewNote.hidden = !(note || previewDeferredNote || scrollPerformanceNote)
   previewNote.textContent = [note, previewDeferredNote, scrollPerformanceNote].filter(Boolean).join(' ')
   if (beforeHtml !== lastRenderedBeforeHtml) {
@@ -683,6 +711,113 @@ function renderPreview(preview) {
     lastRenderedAfterHtml = afterHtml
   }
   previewHighlightCount.textContent = `${draftPreviewState.draftHighlightCount.value} highlighted spans`
+}
+
+function renderOcrImageReview(preview) {
+  const sourcePath = imageOcrSourcePath(preview)
+  if (!sourcePath) {
+    hideOcrImageReview()
+    return
+  }
+
+  if (ocrEditorPreviewPath !== null && ocrEditorPreviewPath !== (preview.path ?? null)) {
+    closeOcrTextCorrection()
+  }
+
+  const loadToken = ++ocrImageLoadToken
+  ocrImageError.hidden = true
+  ocrImageError.textContent = ''
+  ocrSourceImage.removeAttribute('src')
+  ocrSourceImage.alt = `Original image used for OCR: ${preview.path ?? sourcePath}`
+  ocrImageReview.hidden = false
+  void loadOcrSourceImage(preview, loadToken)
+}
+
+function hideOcrImageReview() {
+  ocrImageLoadToken += 1
+  closeOcrTextCorrection()
+  ocrImageReview.hidden = true
+  ocrImageError.hidden = true
+  ocrImageError.textContent = ''
+  ocrSourceImage.removeAttribute('src')
+  ocrSourceImage.alt = 'Original image used for OCR'
+}
+
+async function loadOcrSourceImage(preview, loadToken) {
+  try {
+    const result = await invoke('load_ocr_source_image', {
+      request: {
+        preview: toPreviewRequest(preview)
+      }
+    })
+    if (loadToken !== ocrImageLoadToken) {
+      return
+    }
+    ocrSourceImage.src = result.dataUrl ?? ''
+    if (result.path) {
+      ocrSourceImage.alt = `Original image used for OCR: ${result.path}`
+    }
+  } catch (error) {
+    if (loadToken !== ocrImageLoadToken) {
+      return
+    }
+    ocrImageError.textContent = `Original image preview unavailable: ${String(error)}`
+    ocrImageError.hidden = false
+  }
+}
+
+function startOcrTextCorrection() {
+  const preview = getCurrentPreview()
+  if (!preview || !imageOcrSourcePath(preview)) {
+    return
+  }
+  if (draftPreviewState.hasPendingChanges.value) {
+    appendSummary('Save pending redaction edits before correcting OCR text.')
+    return
+  }
+
+  ocrEditorPreviewPath = preview.path ?? null
+  ocrCorrectedText.value = preview.originalText ?? ''
+  ocrTextEditor.hidden = false
+  ocrCorrectedText.focus()
+}
+
+function closeOcrTextCorrection() {
+  ocrEditorPreviewPath = null
+  ocrCorrectedText.value = ''
+  ocrTextEditor.hidden = true
+}
+
+async function saveOcrTextCorrection() {
+  const preview = getCurrentPreview()
+  if (!preview || !imageOcrSourcePath(preview) || saveOcrTextInFlight) {
+    return
+  }
+
+  const correctedText = ocrCorrectedText.value.trimEnd()
+  if (!correctedText.trim()) {
+    appendSummary('Corrected OCR text cannot be empty.')
+    return
+  }
+
+  saveOcrTextInFlight = true
+  saveOcrText.disabled = true
+  editOcrText.disabled = true
+  try {
+    const result = await invoke('correct_ocr_text', {
+      request: {
+        preview: toPreviewRequest(preview),
+        correctedText
+      }
+    })
+    replacePreviewState(result.preview, result.replacements ?? 0)
+    closeOcrTextCorrection()
+    appendSummary(`Saved corrected OCR text for ${preview.path ?? 'selected file'} and rebuilt redactions.`)
+  } catch (error) {
+    appendSummary(`Correct OCR text error: ${String(error)}`)
+  } finally {
+    saveOcrTextInFlight = false
+  }
 }
 
 function isLargePreviewForScroll(preview, beforeHtml, afterHtml) {

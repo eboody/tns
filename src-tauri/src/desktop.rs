@@ -4,6 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -140,6 +141,7 @@ pub struct DesktopReplaceResult {
 pub struct DesktopFilePreview {
     pub path: PathBuf,
     pub input_path: PathBuf,
+    pub ocr_source_image_path: Option<PathBuf>,
     pub output_path: PathBuf,
     pub audit_output_path: PathBuf,
     pub original_text: Option<String>,
@@ -310,6 +312,26 @@ pub struct DesktopAcrossFilesAvailability {
 pub struct DesktopFindAndRedactRequest {
     pub term: String,
     pub targets: Vec<DesktopPreviewArtifactRequest>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopCorrectOcrTextRequest {
+    pub preview: DesktopPreviewArtifactRequest,
+    pub corrected_text: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopOcrSourceImageRequest {
+    pub preview: DesktopPreviewArtifactRequest,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopOcrSourceImage {
+    pub path: PathBuf,
+    pub data_url: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -868,6 +890,107 @@ pub fn replace_redaction_term(
     })
 }
 
+pub fn correct_ocr_text(
+    request: DesktopCorrectOcrTextRequest,
+) -> Result<DesktopPreviewUpdateResult> {
+    let corrected_text = request.corrected_text.trim_end().to_string();
+    if corrected_text.trim().is_empty() {
+        return Err(crate::error::AppError::InvalidPreviewEdit(
+            "corrected OCR text cannot be empty".to_string(),
+        ));
+    }
+
+    let mut audit_report = read_editable_audit_report(&request.preview.audit_output_path)?;
+    if audit_report
+        .review_flags
+        .pointer("/extraction_fidelity/provenance")
+        != Some(&json!("ocr_text"))
+    {
+        return Err(crate::error::AppError::InvalidPreviewEdit(
+            "OCR text correction is only available for OCR-derived previews".to_string(),
+        ));
+    }
+
+    let ocr_source_image_path = audit_report
+        .review_flags
+        .get("ocr_source_image_path")
+        .and_then(Value::as_str)
+        .map(PathBuf::from)
+        .or_else(|| {
+            Some(audit_report.input_path.clone()).filter(|path| is_previewable_image(path))
+        });
+
+    let corrected_source_path = corrected_ocr_source_path(&request.preview.output_path);
+    if let Some(parent) = corrected_source_path.parent() {
+        fs::create_dir_all(parent).map_err(|source| crate::error::AppError::CreateDirectory {
+            path: parent.to_path_buf(),
+            source,
+        })?;
+    }
+    fs::write(&corrected_source_path, &corrected_text).map_err(|source| {
+        crate::error::AppError::WriteFile {
+            path: corrected_source_path.clone(),
+            source,
+        }
+    })?;
+
+    let structured = crate::apply_deidentification_pipeline(&corrected_text, None)?;
+    audit_report.input_path = corrected_source_path;
+    audit_report.replacements = structured
+        .findings
+        .into_iter()
+        .map(editable_record_from_finding)
+        .collect();
+    if let Some(source_image_path) = ocr_source_image_path {
+        audit_report.review_flags["ocr_source_image_path"] =
+            json!(source_image_path.to_string_lossy().into_owned());
+    }
+    sort_and_validate_replacements(&mut audit_report.replacements)?;
+
+    persist_preview_edit(
+        request.preview.path,
+        request.preview.output_path,
+        request.preview.audit_output_path,
+        corrected_text,
+        audit_report,
+    )
+}
+
+pub fn load_ocr_source_image(
+    request: DesktopOcrSourceImageRequest,
+) -> Result<DesktopOcrSourceImage> {
+    let audit_report = read_editable_audit_report(&request.preview.audit_output_path)?;
+    let Some(source_image_path) = ocr_source_image_path(&audit_report) else {
+        return Err(crate::error::AppError::InvalidPreviewEdit(
+            "no OCR source image is available for this preview".to_string(),
+        ));
+    };
+    if !source_image_path.is_file() || !is_previewable_image(&source_image_path) {
+        return Err(crate::error::AppError::InvalidPreviewEdit(format!(
+            "OCR source image is not available: {}",
+            source_image_path.display()
+        )));
+    }
+
+    let bytes =
+        fs::read(&source_image_path).map_err(|source| crate::error::AppError::ReadFile {
+            path: source_image_path.clone(),
+            source,
+        })?;
+    let mime = image_mime_type(&source_image_path).ok_or_else(|| {
+        crate::error::AppError::InvalidPreviewEdit(format!(
+            "OCR source image type is not previewable: {}",
+            source_image_path.display()
+        ))
+    })?;
+    let encoded = BASE64_STANDARD.encode(bytes);
+
+    Ok(DesktopOcrSourceImage {
+        path: source_image_path,
+        data_url: format!("data:{mime};base64,{encoded}"),
+    })
+}
+
 pub fn apply_redaction_to_all_files(
     request: DesktopRedactionAcrossFilesRequest,
 ) -> Result<DesktopAcrossFilesUpdateResult> {
@@ -1384,6 +1507,7 @@ fn build_preview(
     Ok(DesktopFilePreview {
         path,
         input_path: audit_report.input_path.clone(),
+        ocr_source_image_path: ocr_source_image_path(audit_report),
         output_path,
         audit_output_path,
         original_text: original_text.clone(),
@@ -1407,6 +1531,69 @@ fn build_preview(
             low_confidence_review_required,
         ),
     })
+}
+
+fn ocr_source_image_path(audit_report: &EditableAuditPreviewReport) -> Option<PathBuf> {
+    if audit_report
+        .review_flags
+        .pointer("/extraction_fidelity/provenance")
+        != Some(&json!("ocr_text"))
+    {
+        return None;
+    }
+
+    audit_report
+        .review_flags
+        .get("ocr_source_image_path")
+        .and_then(Value::as_str)
+        .map(PathBuf::from)
+        .or_else(|| Some(audit_report.input_path.clone()).filter(|path| is_previewable_image(path)))
+}
+
+fn is_previewable_image(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(extraction::is_supported_image_extension)
+}
+
+fn image_mime_type(path: &Path) -> Option<&'static str> {
+    match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("png") => Some("image/png"),
+        Some("jpg" | "jpeg") => Some("image/jpeg"),
+        Some("tif" | "tiff") => Some("image/tiff"),
+        Some("bmp") => Some("image/bmp"),
+        Some("webp") => Some("image/webp"),
+        _ => None,
+    }
+}
+
+fn corrected_ocr_source_path(output_path: &Path) -> PathBuf {
+    let parent = output_path.parent().unwrap_or_else(|| Path::new(""));
+    let file_name = output_path
+        .file_name()
+        .and_then(|file_name| file_name.to_str())
+        .unwrap_or("corrected-ocr.md");
+
+    parent.join(".ocr-reviewed").join(file_name)
+}
+
+fn editable_record_from_finding(finding: crate::audit::Finding) -> EditableAuditPreviewRecord {
+    EditableAuditPreviewRecord {
+        source: json!(finding.source),
+        entity_type: finding.entity_type,
+        matched_text: finding.matched_text,
+        replacement: finding.replacement,
+        reason: finding.reason,
+        score: finding.score,
+        start: finding.start,
+        end: finding.end,
+        suppressed_replacements: Vec::new(),
+    }
 }
 
 fn build_preview_redaction_terms(
@@ -1974,20 +2161,21 @@ mod tests {
     use lopdf::{Document, Object, Stream, dictionary};
 
     use super::{
-        DesktopAddRedactionRequest, DesktopCaseContextSettings, DesktopExactEntitySettings,
-        DesktopExistingRedactionRequest, DesktopFindAndRedactRequest, DesktopNerSettings,
-        DesktopPatternRuleSettings, DesktopPatternSettings, DesktopPreviewArtifactRequest,
-        DesktopProfileSettings, DesktopRedactionAcrossFilesRequest, DesktopRemoveRedactionRequest,
+        DesktopAddRedactionRequest, DesktopCaseContextSettings, DesktopCorrectOcrTextRequest,
+        DesktopExactEntitySettings, DesktopExistingRedactionRequest, DesktopFindAndRedactRequest,
+        DesktopNerSettings, DesktopOcrSourceImageRequest, DesktopPatternRuleSettings,
+        DesktopPatternSettings, DesktopPreviewArtifactRequest, DesktopProfileSettings,
+        DesktopRedactionAcrossFilesRequest, DesktopRemoveRedactionRequest,
         DesktopRemoveRedactionTermRequest, DesktopReplaceRedactionTermRequest,
         DesktopReplaceRequest, DesktopReviewReason, DesktopReviewRequest, DesktopRunSettings,
         EditableAuditPreviewRecord, ManualRedactionScope, PreviewSelectionSource,
         add_manual_redaction, apply_redaction_to_all_files,
-        build_manual_replacements_for_exact_matches, find_and_redact_term,
-        inspect_manual_redaction, inspect_redaction_across_files, load_preview_input_as_markdown,
-        map_original_highlights, merge_manual_redaction, persist_preview_edit,
-        read_editable_audit_report, remove_redaction, remove_redaction_from_all_files,
-        remove_redaction_term, replace_redaction_term, run_replace_job, run_review_job,
-        sort_and_validate_replacements,
+        build_manual_replacements_for_exact_matches, correct_ocr_text, find_and_redact_term,
+        inspect_manual_redaction, inspect_redaction_across_files, load_ocr_source_image,
+        load_preview_input_as_markdown, map_original_highlights, merge_manual_redaction,
+        persist_preview_edit, read_editable_audit_report, remove_redaction,
+        remove_redaction_from_all_files, remove_redaction_term, replace_redaction_term,
+        run_replace_job, run_review_job, sort_and_validate_replacements,
     };
 
     #[test]
@@ -2097,6 +2285,131 @@ mod tests {
         );
         assert!(input_dir.join("redacted/note.md").exists());
         assert!(input_dir.join("redacted/.audit/note.audit.json").exists());
+    }
+
+    #[test]
+    fn correct_ocr_text_reanchors_audit_to_reviewed_markdown_source() {
+        let temp = tempdir().unwrap();
+        let input_image = temp.path().join("scan.png");
+        let output_path = temp.path().join("redacted/scan.md");
+        let audit_path = temp.path().join("redacted/.audit/scan.audit.json");
+        fs::create_dir_all(output_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(audit_path.parent().unwrap()).unwrap();
+        fs::write(
+            &input_image,
+            b"not a real image; audit fixture owns provenance",
+        )
+        .unwrap();
+        fs::write(&output_path, "bad OCR").unwrap();
+        fs::write(
+            &audit_path,
+            serde_json::to_string_pretty(&json!({
+                "input_path": input_image,
+                "output_path": output_path,
+                "review_flags": {
+                    "ml_active": false,
+                    "has_ml_findings": false,
+                    "extraction_fidelity": {
+                        "provenance": "ocr_text",
+                        "non_text_omissions_detected": false,
+                        "text_degraded_detected": true,
+                        "structural_loss_suspected": true,
+                        "low_confidence_review_required": true
+                    },
+                    "non_text_omissions_detected": false,
+                    "text_degraded_detected": true,
+                    "extraction_status": "text_degraded",
+                    "residual_review_gaps": []
+                },
+                "replacements": []
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let result = correct_ocr_text(DesktopCorrectOcrTextRequest {
+            preview: DesktopPreviewArtifactRequest {
+                path: PathBuf::from("scan.png"),
+                input_path: temp.path().join("scan.png"),
+                output_path: output_path.clone(),
+                audit_output_path: audit_path.clone(),
+            },
+            corrected_text: "Student email jane@example.com".to_string(),
+        })
+        .unwrap();
+
+        let audit = read_editable_audit_report(&audit_path).unwrap();
+        assert!(audit.input_path.ends_with("redacted/.ocr-reviewed/scan.md"));
+        assert_eq!(
+            fs::read_to_string(&audit.input_path).unwrap(),
+            "Student email jane@example.com"
+        );
+        assert_eq!(
+            load_preview_input_as_markdown(&audit.input_path).unwrap(),
+            "Student email jane@example.com"
+        );
+        assert_eq!(result.preview.path, PathBuf::from("scan.png"));
+        assert_eq!(result.preview.input_path, audit.input_path);
+        assert_eq!(
+            result.preview.ocr_source_image_path,
+            Some(temp.path().join("scan.png"))
+        );
+        assert_eq!(result.replacements, 1);
+        assert!(
+            fs::read_to_string(output_path)
+                .unwrap()
+                .contains("[EMAIL_ADDRESS]")
+        );
+    }
+
+    #[test]
+    fn load_ocr_source_image_returns_data_url_from_audit_authorized_source() {
+        let temp = tempdir().unwrap();
+        let input_image = temp.path().join("scan.png");
+        let output_path = temp.path().join("redacted/scan.md");
+        let audit_path = temp.path().join("redacted/.audit/scan.audit.json");
+        fs::create_dir_all(output_path.parent().unwrap()).unwrap();
+        fs::create_dir_all(audit_path.parent().unwrap()).unwrap();
+        image::RgbImage::new(1, 1).save(&input_image).unwrap();
+        fs::write(&output_path, "OCR text").unwrap();
+        fs::write(
+            &audit_path,
+            serde_json::to_string_pretty(&json!({
+                "input_path": input_image,
+                "output_path": output_path,
+                "review_flags": {
+                    "ml_active": false,
+                    "has_ml_findings": false,
+                    "extraction_fidelity": {
+                        "provenance": "ocr_text",
+                        "non_text_omissions_detected": false,
+                        "text_degraded_detected": true,
+                        "structural_loss_suspected": true,
+                        "low_confidence_review_required": true
+                    },
+                    "non_text_omissions_detected": false,
+                    "text_degraded_detected": true,
+                    "extraction_status": "text_degraded",
+                    "residual_review_gaps": []
+                },
+                "replacements": []
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let image = load_ocr_source_image(DesktopOcrSourceImageRequest {
+            preview: DesktopPreviewArtifactRequest {
+                path: PathBuf::from("scan.png"),
+                input_path: input_image.clone(),
+                output_path,
+                audit_output_path: audit_path,
+            },
+        })
+        .unwrap();
+
+        assert_eq!(image.path, input_image);
+        assert!(image.data_url.starts_with("data:image/png;base64,"));
     }
 
     #[test]

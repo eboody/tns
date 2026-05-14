@@ -9,12 +9,18 @@ const REASON_LABELS = {
     'Structural extraction loss is suspected for this file, so table or form layout meaning may be flattened.'
 }
 
+const OCR_REVIEW_NOTICE =
+  'OCR was used for this file, so spelling, casing, and layout may be wrong; compare the extracted text against the original image before relying on it.'
+
 export function buildReviewNotice(review) {
   if (!review || !Array.isArray(review.reasons)) {
     return null
   }
 
   const explanatorySentences = review.reasons.map((reason) => REASON_LABELS[reason]).filter(Boolean)
+  if (review.extractionProvenance === 'ocr_text') {
+    explanatorySentences.push(OCR_REVIEW_NOTICE)
+  }
 
   if (explanatorySentences.length === 0) {
     return null

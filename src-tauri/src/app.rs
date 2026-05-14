@@ -2,14 +2,17 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use crate::desktop::{
-    DesktopAddRedactionRequest, DesktopFindAndRedactRequest, DesktopRedactionAcrossFilesRequest,
+    DesktopAddRedactionRequest, DesktopCorrectOcrTextRequest, DesktopFindAndRedactRequest,
+    DesktopOcrSourceImageRequest, DesktopRedactionAcrossFilesRequest,
     DesktopRemoveRedactionRequest, DesktopRemoveRedactionTermRequest,
     DesktopReplaceRedactionTermRequest, DesktopReplaceRequest, DesktopReviewRequest,
     DesktopRunSettings, add_manual_redaction as add_manual_redaction_service,
     apply_redaction_to_all_files as apply_redaction_to_all_files_service,
+    correct_ocr_text as correct_ocr_text_service,
     find_and_redact_term as find_and_redact_term_service,
     inspect_manual_redaction as inspect_manual_redaction_service,
     inspect_redaction_across_files as inspect_redaction_across_files_service,
+    load_ocr_source_image as load_ocr_source_image_service,
     merge_manual_redaction as merge_manual_redaction_service,
     remove_redaction as remove_redaction_service,
     remove_redaction_from_all_files as remove_redaction_from_all_files_service,
@@ -44,12 +47,14 @@ const DEV_OCRS_RECOGNITION_MODEL_RESOURCE_PATH: &str =
 
 #[tauri::command]
 fn run_review_job(
+    app: AppHandle,
     input: String,
     config: Option<String>,
     settings: Option<DesktopRunSettings>,
     include_patterns: Vec<String>,
     exclude_patterns: Vec<String>,
 ) -> Result<crate::desktop::DesktopReviewResult, String> {
+    configure_default_runtime_assets(&app);
     run_review_service(DesktopReviewRequest {
         input: input.into(),
         config: config.map(Into::into),
@@ -62,6 +67,7 @@ fn run_review_job(
 
 #[tauri::command]
 fn run_replace_job(
+    app: AppHandle,
     artifacts: tauri::State<'_, LastReplaceArtifactsState>,
     input: String,
     config: Option<String>,
@@ -69,6 +75,7 @@ fn run_replace_job(
     include_patterns: Vec<String>,
     exclude_patterns: Vec<String>,
 ) -> Result<crate::desktop::DesktopReplaceResult, String> {
+    configure_default_runtime_assets(&app);
     let result = run_replace_service(DesktopReplaceRequest {
         input: input.into(),
         config: config.map(Into::into),
@@ -156,6 +163,20 @@ fn replace_redaction_term(
 }
 
 #[tauri::command]
+fn correct_ocr_text(
+    request: DesktopCorrectOcrTextRequest,
+) -> Result<crate::desktop::DesktopPreviewUpdateResult, String> {
+    correct_ocr_text_service(request).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+fn load_ocr_source_image(
+    request: DesktopOcrSourceImageRequest,
+) -> Result<crate::desktop::DesktopOcrSourceImage, String> {
+    load_ocr_source_image_service(request).map_err(|error| error.to_string())
+}
+
+#[tauri::command]
 fn open_last_output_path(
     app: tauri::AppHandle,
     artifacts: tauri::State<'_, LastReplaceArtifactsState>,
@@ -205,6 +226,11 @@ fn artifact_open_target(path: &std::path::Path) -> Result<PathBuf, String> {
     path.parent()
         .map(|parent| parent.to_path_buf())
         .ok_or_else(|| format!("Path has no parent directory to open: {}", path.display()))
+}
+
+fn configure_default_runtime_assets(app: &AppHandle) {
+    configure_default_auto_ner_assets(app);
+    configure_default_bundled_ocr_tools(app);
 }
 
 fn configure_default_auto_ner_assets(app: &AppHandle) {
@@ -359,17 +385,31 @@ fn resolve_ner_assets(
 }
 
 fn resolve_resource_file(app: &AppHandle, resource_path: &str) -> Option<PathBuf> {
-    app.path()
+    let tauri_resource = app
+        .path()
         .resolve(resource_path, BaseDirectory::Resource)
-        .ok()
+        .ok();
+
+    if tauri_resource.as_ref().is_some_and(|path| path.exists()) {
+        return tauri_resource;
+    }
+
+    resolve_dev_resource_file(resource_path).or(tauri_resource)
+}
+
+fn resolve_dev_resource_file(resource_path: &str) -> Option<PathBuf> {
+    resource_path.strip_prefix("../").map(|relative| {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join(relative)
+    })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
-            configure_default_auto_ner_assets(app.handle());
-            configure_default_bundled_ocr_tools(app.handle());
+            configure_default_runtime_assets(app.handle());
             Ok(())
         })
         .manage(LastReplaceArtifactsState::default())
@@ -388,6 +428,8 @@ pub fn run() {
             find_and_redact_term,
             remove_redaction_term,
             replace_redaction_term,
+            correct_ocr_text,
+            load_ocr_source_image,
             open_last_output_path,
             open_last_audit_output_path
         ])
@@ -397,7 +439,10 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{artifact_open_target, executable_file_name, executable_resource_path};
+    use super::{
+        artifact_open_target, executable_file_name, executable_resource_path,
+        resolve_dev_resource_file,
+    };
     use std::{fs, path::Path};
     use tempfile::tempdir;
 
@@ -436,5 +481,13 @@ mod tests {
                 "ocr/bin/pdftoppm"
             );
         }
+    }
+
+    #[test]
+    fn dev_resource_paths_resolve_from_cargo_manifest_directory() {
+        let path = resolve_dev_resource_file("../ml/ocr/bin/ocrs").unwrap();
+
+        assert!(path.ends_with(Path::new("ml/ocr/bin/ocrs")));
+        assert!(path.is_absolute());
     }
 }

@@ -578,7 +578,7 @@ fn apply_redact_core_with_config(
     apply_redact_core_with_recognizers(input_text, config, Vec::new())
 }
 
-fn apply_deidentification_pipeline(
+pub(crate) fn apply_deidentification_pipeline(
     input_text: &str,
     config_path: Option<&Path>,
 ) -> Result<StructuredRun> {

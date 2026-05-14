@@ -26,3 +26,16 @@ test('buildReviewNotice returns null when a note only repeats non-explanatory me
     null
   )
 })
+
+test('buildReviewNotice explains OCR provenance even without structural reasons', () => {
+  const notice = buildReviewNotice({
+    extractionProvenance: 'ocr_text',
+    requiresManualReview: true,
+    reasons: []
+  })
+
+  assert.equal(
+    notice,
+    'OCR was used for this file, so spelling, casing, and layout may be wrong; compare the extracted text against the original image before relying on it.'
+  )
+})

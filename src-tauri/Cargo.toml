@@ -17,6 +17,7 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 anyhow = "1.0"
+base64 = "0.22"
 clap = { version = "4.5.8", features = ["derive"] }
 globset = "0.4.15"
 image = { version = "0.25.10", default-features = false, features = ["bmp", "jpeg", "png", "tiff", "webp"] }

@@ -93,6 +93,31 @@
             <span class="legend-chip legend-after">Redacted replacement output</span>
           </div>
 
+          <section id="ocrImageReview" class="ocr-image-review" hidden>
+            <div class="ocr-image-review-copy">
+              <h3>Original image for OCR review</h3>
+              <p>OCR text is a low-confidence working extraction. Compare names, grades, dates, and table layout against this image before relying on the text.</p>
+            </div>
+            <div class="ocr-review-actions">
+              <button id="editOcrText" type="button" class="secondary-button">Correct OCR text</button>
+            </div>
+            <div id="ocrTextEditor" class="ocr-text-editor" hidden>
+              <label class="field-group">
+                <span>Reviewed OCR text</span>
+                <textarea id="ocrCorrectedText" rows="12" spellcheck="true"></textarea>
+              </label>
+              <div class="actions-row">
+                <button id="saveOcrText" type="button">Save corrected OCR text</button>
+                <button id="cancelOcrText" type="button" class="secondary-button">Cancel</button>
+              </div>
+              <p class="ocr-editor-note">Saving rebuilds redactions from this corrected text and keeps the original image attached for review.</p>
+            </div>
+            <div class="ocr-image-frame">
+              <img id="ocrSourceImage" alt="Original image used for OCR" />
+            </div>
+            <p id="ocrImageError" class="ocr-image-error" hidden></p>
+          </section>
+
           <div class="preview-grid">
             <section class="preview-column">
               <h3>Before</h3>
