@@ -24,6 +24,7 @@
     "stage:runtime:macos": "node ./scripts/stage-ort-runtime.mjs --target macos-arm64",
     "stage:runtime:windows": "node ./scripts/stage-ort-runtime.mjs --target windows-x64",
     "stage:runtime:windows:arm64": "node ./scripts/stage-ort-runtime.mjs --target windows-arm64",
+    "stage:icons": "node ./scripts/stage-tauri-icons.mjs",
     "bundle:linux": "npm run stage:runtime && tauri build --config src-tauri/tauri.linux.conf.json --bundles deb,rpm",
     "bundle:linux:appimage": "npm run stage:runtime && tauri build --config src-tauri/tauri.linux.conf.json --bundles appimage",
     "bundle:macos": "npm run stage:runtime && tauri build --config src-tauri/tauri.macos.conf.json --bundles app,dmg",
