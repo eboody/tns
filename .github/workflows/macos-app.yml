@@ -53,25 +53,8 @@ jobs:
       - name: Install JavaScript dependencies
         run: npm ci
 
-      - name: Stage macOS OCR runtime
-        run: |
-          export PATH="${HOME}/.cargo/bin:${PATH}"
-
-          pdftoppm_path="$(command -v pdftoppm)"
-          ocrs_path="$(command -v ocrs)"
-
-          echo "pdftoppm: ${pdftoppm_path}"
-          echo "ocrs: ${ocrs_path}"
-
-          TNS_PDFTOPPM_SOURCE="${pdftoppm_path}" \
-            TNS_OCRS_SOURCE="${ocrs_path}" \
-            npm run stage:ocr:host
-
-      - name: Verify staged OCR runtime
-        run: npm run stage:ocr:check
-
       - name: Build macOS app and DMG
-        run: npm run bundle:macos:ocr
+        run: npm run bundle:macos
 
       - name: Upload macOS app artifacts
         uses: actions/upload-artifact@v4
