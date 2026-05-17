@@ -148,6 +148,8 @@ struct OcrExtractionCache {
 }
 
 const OCR_CACHE_LIMIT: usize = 16;
+const MIN_SUBSTANTIVE_PDF_ALNUM_CHARS: usize = 12;
+const MIN_SUBSTANTIVE_PDF_WORDS: usize = 3;
 
 static OCR_EXTRACTION_CACHE: OnceLock<Mutex<OcrExtractionCache>> = OnceLock::new();
 
@@ -263,6 +265,19 @@ fn extract_pdf_input(input: &Path) -> Result<ExtractedInput> {
         });
     };
 
+    if matches!(
+        selected.strategy,
+        ExtractionStrategy::PdfLopdf | ExtractionStrategy::PdfPdftotext
+    ) && pdf_text_needs_ocr_fallback(&selected.value.text)
+    {
+        return cached_ocr_extraction(input, OcrCacheKind::Pdf, || {
+            extract_pdf_ocr_input_after_sparse_text(
+                selected,
+                ocr_extract::extract_pdf_via_ocr_attempt(input),
+            )
+        });
+    }
+
     let mut extracted = match selected.strategy {
         ExtractionStrategy::PdfLopdf | ExtractionStrategy::PdfPdftotext => {
             let fidelity = ExtractionFidelity::pdf(
@@ -280,6 +295,27 @@ fn extract_pdf_input(input: &Path) -> Result<ExtractedInput> {
     };
     extracted.attempts = selected.attempts;
     Ok(extracted)
+}
+
+fn pdf_text_needs_ocr_fallback(text: &str) -> bool {
+    !pdf_text_has_substantive_content(text)
+}
+
+fn pdf_text_has_substantive_content(text: &str) -> bool {
+    let alnum_count = text
+        .chars()
+        .filter(|char| char.is_alphanumeric())
+        .take(MIN_SUBSTANTIVE_PDF_ALNUM_CHARS)
+        .count();
+    if alnum_count >= MIN_SUBSTANTIVE_PDF_ALNUM_CHARS {
+        return true;
+    }
+
+    text.split_whitespace()
+        .filter(|word| word.chars().filter(|char| char.is_alphanumeric()).count() >= 2)
+        .take(MIN_SUBSTANTIVE_PDF_WORDS)
+        .count()
+        >= MIN_SUBSTANTIVE_PDF_WORDS
 }
 
 fn extract_pdf_ocr_input_with_attempts(
@@ -309,6 +345,30 @@ fn extract_pdf_ocr_input_with_attempts(
         _ => unreachable!("text PDF extraction should have been selected before OCR fallback"),
     };
     extracted.attempts = selected.attempts;
+    Ok(extracted)
+}
+
+fn extract_pdf_ocr_input_after_sparse_text(
+    sparse_text: crate::extractor_pipeline::SelectedExtraction<pdf_extract::PdfExtraction>,
+    ocr: crate::extractor_pipeline::ExtractionAttempt<ocr_extract::OcrExtraction>,
+) -> Result<ExtractedInput> {
+    let selected = select_first_success(
+        [ocr.map(|ocr| pdf_extract::PdfExtraction {
+            text: ocr.text,
+            text_degraded_detected: false,
+            low_confidence_review_required: true,
+            quality_penalty: usize::MAX / 4,
+        })],
+        "PDF contains only sparse extractable text; OCR is required for scanned or image-only content",
+    )?;
+
+    let mut extracted = ExtractedInput::successful(
+        selected.value.text,
+        ExtractionFidelity::ocr(false, true, false),
+        ExtractionStrategy::PdfOcr,
+    );
+    extracted.attempts = sparse_text.attempts;
+    extracted.attempts.extend(selected.attempts);
     Ok(extracted)
 }
 
@@ -437,12 +497,16 @@ mod tests {
     use super::{
         ExtractedInput, ExtractionFidelity, ExtractionProvenance, ExtractionStrategy, OcrCacheKind,
         cached_ocr_extraction, clear_ocr_extraction_cache_for_tests,
-        extract_image_input_with_attempt, extraction_strategy_label, is_supported_image_extension,
-        normalized_extension,
+        extract_image_input_with_attempt, extract_pdf_ocr_input_after_sparse_text,
+        extraction_strategy_label, is_supported_image_extension, normalized_extension,
+        pdf_text_has_substantive_content, pdf_text_needs_ocr_fallback,
     };
     use crate::audit::ExtractionStatus;
-    use crate::extractor_pipeline::ExtractionAttempt;
+    use crate::extractor_pipeline::{
+        ExtractionAttempt, ExtractionAttemptRecord, SelectedExtraction,
+    };
     use crate::ocr_extract::OcrExtraction;
+    use crate::pdf_extract::PdfExtraction;
     use std::{cell::Cell, fs, path::Path};
     use tempfile::tempdir;
 
@@ -548,6 +612,76 @@ mod tests {
                 && fidelity.structural_loss_suspected
                 && fidelity.low_confidence_review_required
         ));
+    }
+
+    #[test]
+    fn sparse_pdf_text_requires_ocr_fallback() {
+        assert!(pdf_text_needs_ocr_fallback(""));
+        assert!(pdf_text_needs_ocr_fallback("Scanned by"));
+        assert!(pdf_text_needs_ocr_fallback("."));
+        assert!(pdf_text_has_substantive_content(
+            "Jane Doe emailed jane@example.com."
+        ));
+    }
+
+    #[test]
+    fn sparse_pdf_text_uses_ocr_attempt_instead_of_placeholder_text() {
+        let sparse_text = SelectedExtraction {
+            strategy: ExtractionStrategy::PdfLopdf,
+            value: PdfExtraction {
+                text: "Scanned by".to_string(),
+                text_degraded_detected: false,
+                low_confidence_review_required: false,
+                quality_penalty: 0,
+            },
+            attempts: vec![ExtractionAttemptRecord::succeeded(
+                ExtractionStrategy::PdfLopdf,
+            )],
+        };
+
+        let extracted = extract_pdf_ocr_input_after_sparse_text(
+            sparse_text,
+            ExtractionAttempt::extracted(
+                ExtractionStrategy::PdfOcr,
+                OcrExtraction {
+                    text: "OCR transcript text".to_string(),
+                },
+            ),
+        )
+        .unwrap();
+
+        assert_eq!(extracted.text, "OCR transcript text");
+        assert_eq!(extracted.strategy, ExtractionStrategy::PdfOcr);
+        assert_eq!(extracted.fidelity.provenance, ExtractionProvenance::OcrText);
+        assert_eq!(extracted.attempts.len(), 2);
+    }
+
+    #[test]
+    fn sparse_pdf_text_fails_if_ocr_is_unavailable() {
+        let sparse_text = SelectedExtraction {
+            strategy: ExtractionStrategy::PdfLopdf,
+            value: PdfExtraction {
+                text: "Scanned by".to_string(),
+                text_degraded_detected: false,
+                low_confidence_review_required: false,
+                quality_penalty: 0,
+            },
+            attempts: vec![ExtractionAttemptRecord::succeeded(
+                ExtractionStrategy::PdfLopdf,
+            )],
+        };
+
+        let error = extract_pdf_ocr_input_after_sparse_text(
+            sparse_text,
+            ExtractionAttempt::unavailable(
+                ExtractionStrategy::PdfOcr,
+                Some("OCR tooling unavailable".to_string()),
+            ),
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("sparse extractable text"));
+        assert!(error.to_string().contains("OCR tooling unavailable"));
     }
 
     #[test]
